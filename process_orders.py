@@ -19,8 +19,8 @@ from database import DatabaseManager
 class OrderProcessor:
     def __init__(self):
         self.gmail = GmailReceiver()
-        self.extractor = DataExtractor()
         self.db = DatabaseManager()
+        self.extractor = DataExtractor(db_manager=self.db)  # Pass DB for history lookups
         self.attachments_dir = "attachments"
         self.processed_orders = []
     
@@ -35,10 +35,12 @@ class OrderProcessor:
             print("❌ Impossible de se connecter à Gmail")
             return []
         
-        # Connect to database
-        if save_to_db:
-            self.db.connect()
-            self.db.init_database()
+        # Connect to database FIRST (needed for history lookups)
+        self.db.connect()
+        self.db.init_database()
+        
+        # Update extractor with connected database
+        self.extractor.set_database(self.db)
         
         try:
             # Get recent emails (using recent emails for testing)

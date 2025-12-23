@@ -1,0 +1,205 @@
+{% extends 'base.html' %}
+
+{% block title %}Analytics - Gestion Commandes{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-3xl font-bold text-gray-800">Analytics & Statistiques</h1>
+        <div class="flex space-x-3">
+            <a href="/export/excel" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
+                <i class="fas fa-file-excel"></i>
+                <span>Export Excel</span>
+            </a>
+            <a href="/export/csv" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
+                <i class="fas fa-file-csv"></i>
+                <span>Export CSV</span>
+            </a>
+            <a href="/export/pdf" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
+                <i class="fas fa-file-pdf"></i>
+                <span>Rapport PDF</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Alerts Banner -->
+    {% if alerts %}
+    <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+        <div class="flex items-center">
+            <i class="fas fa-exclamation-triangle text-red-500 text-xl mr-3"></i>
+            <div>
+                <p class="font-semibold text-red-800">{{ alerts|length }} alerte(s) active(s)</p>
+                <a href="/alerts" class="text-red-600 hover:underline text-sm">Voir les alertes →</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Stats Overview -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div class="bg-white rounded-xl shadow-md p-6 card-hover border-l-4 border-indigo-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Total Commandes</p>
+                    <p class="text-3xl font-bold text-gray-800">{{ stats.total_orders }}</p>
+                </div>
+                <i class="fas fa-shopping-cart text-indigo-500 text-3xl"></i>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-md p-6 card-hover border-l-4 border-green-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Chiffre d'Affaires</p>
+                    <p class="text-3xl font-bold text-green-600">{{ "%.0f"|format(stats.total_revenue) }}</p>
+                    <p class="text-sm text-gray-400">MAD</p>
+                </div>
+                <i class="fas fa-coins text-green-500 text-3xl"></i>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-md p-6 card-hover border-l-4 border-blue-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Quantité Totale</p>
+                    <p class="text-3xl font-bold text-blue-600">{{ "%.0f"|format(stats.total_quantity) }}</p>
+                    <p class="text-sm text-gray-400">unités</p>
+                </div>
+                <i class="fas fa-cubes text-blue-500 text-3xl"></i>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-md p-6 card-hover border-l-4 border-purple-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Valeur Moyenne</p>
+                    <p class="text-3xl font-bold text-purple-600">{{ "%.0f"|format(stats.avg_order_value) }}</p>
+                    <p class="text-sm text-gray-400">MAD/commande</p>
+                </div>
+                <i class="fas fa-chart-line text-purple-500 text-3xl"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Orders by Status -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Répartition par Statut</h3>
+            <div class="space-y-4">
+                {% for status, count in stats.orders_by_status.items() %}
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <span class="text-sm font-medium 
+                            {% if status == 'validee' %}text-green-600
+                            {% elif status == 'en_attente' %}text-yellow-600
+                            {% elif status == 'rejetee' %}text-red-600
+                            {% else %}text-gray-600{% endif %}">
+                            {{ status|replace('_', ' ')|title }}
+                        </span>
+                        <span class="text-sm text-gray-500">{{ count }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-3">
+                        <div class="h-3 rounded-full 
+                            {% if status == 'validee' %}bg-green-500
+                            {% elif status == 'en_attente' %}bg-yellow-500
+                            {% elif status == 'rejetee' %}bg-red-500
+                            {% else %}bg-gray-500{% endif %}" 
+                            style="width: {{ (count / stats.total_orders * 100) if stats.total_orders > 0 else 0 }}%">
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Orders by Product -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Commandes par Produit</h3>
+            <div class="space-y-4">
+                {% for product in stats.orders_by_product %}
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div>
+                        <p class="font-medium text-gray-800">{{ product.type }}</p>
+                        <p class="text-sm text-gray-500">{{ product.total_qty|int if product.total_qty else 0 }} unités</p>
+                    </div>
+                    <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full font-semibold">
+                        {{ product.count }} cmd
+                    </span>
+                </div>
+                {% else %}
+                <p class="text-gray-500 text-center py-4">Aucune donnée</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Clients -->
+    <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h3 class="text-lg font-semibold text-gray-800">Top Clients</h3>
+            <a href="/clients" class="text-indigo-600 hover:text-indigo-800">Voir tous →</a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Commandes</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Dépensé</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Valeur Client</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                    {% for client in stats.top_clients %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap text-gray-500">{{ loop.index }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{{ client.nom or 'N/A' }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full text-sm">
+                                {{ client.order_count }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">{{ "%.2f"|format(client.total_spent or 0) }} MAD</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% if (client.total_spent or 0) > 10000 %}
+                            <span class="bg-green-100 text-green-800 px-2 py-1 rounded-full text-sm">Premium</span>
+                            {% elif (client.total_spent or 0) > 1000 %}
+                            <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">Standard</span>
+                            {% else %}
+                            <span class="bg-gray-100 text-gray-800 px-2 py-1 rounded-full text-sm">Nouveau</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-8 text-center text-gray-500">Aucun client</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Monthly Trends -->
+    {% if stats.monthly_trends %}
+    <div class="bg-white rounded-xl shadow-md p-6">
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">Tendances Mensuelles</h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {% for month in stats.monthly_trends[:6] %}
+            <div class="text-center p-4 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg">
+                <p class="text-sm text-gray-500">{{ month.month }}</p>
+                <p class="text-2xl font-bold text-indigo-600">{{ month.count }}</p>
+                <p class="text-xs text-gray-400">commandes</p>
+                {% if month.revenue %}
+                <p class="text-sm text-green-600 mt-1">{{ "%.0f"|format(month.revenue) }} MAD</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

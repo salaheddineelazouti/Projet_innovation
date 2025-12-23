@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ client.nom }} - Client{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <a href="/clients" class="text-indigo-600 hover:text-indigo-800 mb-2 inline-block">
+                <i class="fas fa-arrow-left mr-2"></i>Retour aux clients
+            </a>
+            <h1 class="text-3xl font-bold text-gray-800">{{ client.nom }}</h1>
+        </div>
+        {% if client.preferences and client.preferences.total_spent > 10000 %}
+        <span class="bg-green-100 text-green-800 px-4 py-2 rounded-full font-medium">
+            <i class="fas fa-star mr-1"></i>Client Premium
+        </span>
+        {% endif %}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Client Info & Preferences -->
+        <div class="space-y-6">
+            <!-- Contact Info -->
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                    <i class="fas fa-user text-indigo-600 mr-2"></i>Informations
+                </h3>
+                <div class="space-y-3">
+                    <div>
+                        <p class="text-sm text-gray-500">Email</p>
+                        <p class="font-medium">{{ client.email or 'Non renseigné' }}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Téléphone</p>
+                        <p class="font-medium">{{ client.telephone or 'Non renseigné' }}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Adresse</p>
+                        <p class="font-medium">{{ client.adresse or 'Non renseignée' }}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Client depuis</p>
+                        <p class="font-medium">{{ client.created_at[:10] if client.created_at else 'N/A' }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preferences -->
+            {% if client.preferences %}
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                    <i class="fas fa-heart text-pink-600 mr-2"></i>Préférences
+                </h3>
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-indigo-50 p-3 rounded-lg text-center">
+                            <p class="text-2xl font-bold text-indigo-600">{{ client.preferences.total_orders }}</p>
+                            <p class="text-xs text-gray-500">Commandes</p>
+                        </div>
+                        <div class="bg-green-50 p-3 rounded-lg text-center">
+                            <p class="text-2xl font-bold text-green-600">{{ "%.0f"|format(client.preferences.total_spent) }}</p>
+                            <p class="text-xs text-gray-500">MAD dépensés</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-sm text-gray-500 mb-2">Quantité moyenne par commande</p>
+                        <p class="text-xl font-bold text-gray-800">{{ "%.0f"|format(client.preferences.average_quantity) }} unités</p>
+                    </div>
+
+                    {% if client.preferences.order_frequency_days %}
+                    <div>
+                        <p class="text-sm text-gray-500 mb-2">Fréquence de commande</p>
+                        <p class="text-xl font-bold text-blue-600">Tous les ~{{ client.preferences.order_frequency_days|int }} jours</p>
+                    </div>
+                    {% endif %}
+
+                    {% if client.preferences.favorite_products %}
+                    <div>
+                        <p class="text-sm text-gray-500 mb-2">Produits favoris</p>
+                        <div class="space-y-2">
+                            {% for product, count in client.preferences.favorite_products.items() %}
+                            <div class="flex justify-between items-center bg-purple-50 p-2 rounded">
+                                <span class="text-sm text-purple-800">{{ product }}</span>
+                                <span class="bg-purple-200 text-purple-800 px-2 py-1 rounded text-xs">{{ count }}x</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if client.preferences.typical_order %}
+                    <div class="bg-yellow-50 p-4 rounded-lg">
+                        <p class="text-sm font-medium text-yellow-800 mb-2">
+                            <i class="fas fa-magic mr-1"></i>Commande type suggérée
+                        </p>
+                        <p class="text-sm text-gray-700">
+                            {{ client.preferences.typical_order.quantite }} {{ client.preferences.typical_order.unite or 'unités' }}
+                            de {{ client.preferences.typical_order.produit_type or 'produit habituel' }}
+                        </p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Predictions -->
+            {% if prediction %}
+            <div class="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-md p-6 text-white">
+                <h3 class="text-lg font-semibold mb-4">
+                    <i class="fas fa-brain mr-2"></i>Prédictions IA
+                </h3>
+                <div class="space-y-3">
+                    {% if prediction.predicted_next_order_days %}
+                    <div class="bg-white/20 p-3 rounded-lg">
+                        <p class="text-sm opacity-80">Prochaine commande estimée</p>
+                        <p class="text-xl font-bold">Dans ~{{ prediction.predicted_next_order_days }} jours</p>
+                    </div>
+                    {% endif %}
+                    <div class="bg-white/20 p-3 rounded-lg">
+                        <p class="text-sm opacity-80">Quantité probable</p>
+                        <p class="text-xl font-bold">{{ "%.0f"|format(prediction.predicted_quantity) }} unités</p>
+                    </div>
+                    <div class="bg-white/20 p-3 rounded-lg">
+                        <p class="text-sm opacity-80">Valeur client</p>
+                        <p class="text-xl font-bold capitalize">{{ prediction.client_value }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Order History -->
+        <div class="lg:col-span-2">
+            <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold text-gray-800">
+                        <i class="fas fa-history text-indigo-600 mr-2"></i>Historique des commandes
+                    </h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">N° Commande</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Produit</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Quantité</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Statut</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            {% for order in orders %}
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    {{ order.created_at[:10] if order.created_at else 'N/A' }}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
+                                    {{ order.numero_commande or 'N/A' }}
+                                </td>
+                                <td class="px-6 py-4">
+                                    <p class="text-sm text-gray-900">{{ order.produit_type or 'N/A' }}</p>
+                                    <p class="text-xs text-gray-500">{{ (order.nature_produit or '')[:30] }}...</p>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    {{ order.quantite }} {{ order.unite or '' }}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    {% if order.statut == 'validee' %}
+                                    <span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">Validée</span>
+                                    {% elif order.statut == 'en_attente' %}
+                                    <span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">En attente</span>
+                                    {% elif order.statut == 'rejetee' %}
+                                    <span class="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs">Rejetée</span>
+                                    {% else %}
+                                    <span class="px-2 py-1 bg-gray-100 text-gray-800 rounded-full text-xs">{{ order.statut }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <a href="/orders/{{ order.id }}" class="text-indigo-600 hover:text-indigo-900">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="6" class="px-6 py-8 text-center text-gray-500">
+                                    Aucune commande pour ce client
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
