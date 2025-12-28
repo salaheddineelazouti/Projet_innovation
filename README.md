@@ -552,9 +552,14 @@ L'entreprise fabrique 4 types de produits d'emballage:
 - ✅ Extraction intelligente noms clients
 - ✅ Gestion multi-clients par téléphone
 - ✅ Notifications WhatsApp validation/rejet
+- ✅ Notifications Email HTML professionnelles
 - ✅ Progress bar traitement emails
 - ✅ Correction affichage "Il y a X min"
 - ✅ WAL checkpoint pour sync base de données
+- ✅ Système de sauvegarde hybride (auto + manuel)
+- ✅ Page de gestion des sauvegardes
+- ✅ Planificateur automatique (toutes les 6h)
+- ✅ Recherche et filtres sur page clients
 
 ### v1.1.0
 - ✅ Intégration WhatsApp/Twilio
@@ -578,4 +583,4 @@ projet scientifique
 
 ---
 
-*Documentation mise à jour le 28/12/202
+*Documentation mise à jour le 28/12/2025*

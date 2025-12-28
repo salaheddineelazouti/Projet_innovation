@@ -1,4 +1,4 @@
-# Environment variables
+# Environment variables (SECRETS - NE JAMAIS COMMIT)
 .env
 
 # Python
@@ -8,11 +8,43 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 ENV/
+env/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Logs
 *.log
+
+# Base de données (contient données clients)
+orders.db
+orders.db-wal
+orders.db-shm
+
+# Sauvegardes (peuvent être volumineuses)
+backups/*.db
+backups/*.db.gz
+backups/*.json
+
+# Médias téléchargés
+whatsapp_media/*
+!whatsapp_media/.gitkeep
+attachments/*
+!attachments/.gitkeep
+
+# Exports générés
+exports/*
+!exports/.gitkeep
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Tunnel ngrok
+ngrok.exe
+ngrok
