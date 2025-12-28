@@ -3,70 +3,376 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Gestion des Commandes{% endblock %}</title>
+    <title>{% block title %}OrderFlow Pro{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        brand: { 50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        .card-hover { transition: transform 0.2s, box-shadow 0.2s; }
-        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+        * { font-family: 'Inter', system-ui, sans-serif; }
+        .sidebar { width: 260px; transition: width 0.3s ease; }
+        .sidebar.collapsed { width: 72px; }
+        .sidebar.collapsed .nav-text, .sidebar.collapsed .logo-text, .sidebar.collapsed .section-title, .sidebar.collapsed .user-info, .sidebar.collapsed .nav-badge { display: none; }
+        .sidebar.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+        .nav-item { display: flex; align-items: center; padding: 10px 16px; margin: 2px 12px; border-radius: 8px; color: #94a3b8; transition: all 0.2s ease; font-size: 14px; font-weight: 500; text-decoration: none; }
+        .nav-item:hover { background: rgba(59, 130, 246, 0.1); color: #e2e8f0; }
+        .nav-item.active { background: #3b82f6; color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+        .nav-item i { width: 20px; text-align: center; font-size: 15px; }
+        .card { background: white; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .badge { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; }
+        .badge-pending { background: #fef3c7; color: #92400e; }
+        .badge-validated { background: #d1fae5; color: #065f46; }
+        .badge-rejected { background: #fee2e2; color: #991b1b; }
+        .table-pro th { background: #f8fafc; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+        .table-pro td { padding: 16px; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
+        .table-pro tbody tr:hover { background: #f8fafc; }
+        .btn-primary { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; font-weight: 500; padding: 10px 20px; border-radius: 8px; transition: all 0.2s; box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25); display: inline-flex; align-items: center; gap: 8px; text-decoration: none; border: none; cursor: pointer; font-size: 14px; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35); }
+        .btn-secondary { background: white; color: #374151; font-weight: 500; padding: 10px 20px; border-radius: 8px; border: 1px solid #d1d5db; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; cursor: pointer; font-size: 14px; }
+        .btn-secondary:hover { background: #f9fafb; border-color: #9ca3af; }
+        .btn-success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; font-weight: 500; padding: 10px 20px; border-radius: 8px; transition: all 0.2s; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25); display: inline-flex; align-items: center; gap: 8px; text-decoration: none; border: none; cursor: pointer; font-size: 14px; }
+        .btn-danger { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; font-weight: 500; padding: 10px 20px; border-radius: 8px; transition: all 0.2s; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25); display: inline-flex; align-items: center; gap: 8px; text-decoration: none; border: none; cursor: pointer; font-size: 14px; }
+        .input-pro { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; font-size: 14px; transition: all 0.2s; background: white; width: 100%; }
+        .input-pro:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .main-content { margin-left: 260px; transition: margin-left 0.3s ease; min-height: 100vh; background: #f8fafc; }
+        .sidebar.collapsed ~ .main-content { margin-left: 72px; }
+        .dropdown-menu { opacity: 0; visibility: hidden; transform: translateY(-10px); transition: all 0.2s ease; }
+        .dropdown:hover .dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+        .notification-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; background: #ef4444; color: white; font-size: 10px; font-weight: 600; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+        .pulse-dot { width: 8px; height: 8px; border-radius: 50%; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-    <!-- Navbar -->
-    <nav class="gradient-bg text-white shadow-lg">
-        <div class="max-w-7xl mx-auto px-4 py-4">
-            <div class="flex justify-between items-center">
-                <a href="/" class="flex items-center space-x-3">
-                    <i class="fas fa-box-open text-2xl"></i>
-                    <span class="text-xl font-bold">Gestion Commandes</span>
-                </a>
-                <div class="flex space-x-6">
-                    <a href="/" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fas fa-home"></i>
-                        <span>Dashboard</span>
-                    </a>
-                    <a href="/orders" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fas fa-list"></i>
-                        <span>Commandes</span>
-                    </a>
-                    <a href="/clients" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fas fa-users"></i>
-                        <span>Clients</span>
-                    </a>
-                    <a href="/analytics" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fas fa-chart-bar"></i>
-                        <span>Analytics</span>
-                    </a>
-                    <a href="/alerts" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fas fa-bell"></i>
-                        <span>Alertes</span>
-                    </a>
-                    <a href="/whatsapp" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fab fa-whatsapp"></i>
-                        <span>WhatsApp</span>
-                    </a>
-                    <a href="/process" class="hover:text-gray-200 flex items-center space-x-2">
-                        <i class="fas fa-envelope"></i>
-                        <span>Emails</span>
-                    </a>
+<body class="bg-slate-50">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar fixed left-0 top-0 h-full bg-slate-900 z-50 flex flex-col">
+        <div class="p-5 border-b border-slate-700/50">
+            <a href="/" class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-brand-500/30">
+                    <i class="fas fa-cube text-white text-lg"></i>
+                </div>
+                <div class="logo-text">
+                    <span class="text-white font-bold text-lg">OrderFlow</span>
+                    <span class="text-slate-500 text-xs block">Enterprise Edition</span>
+                </div>
+            </a>
+        </div>
+        
+        <nav class="flex-1 py-4 overflow-y-auto">
+            <div class="mb-3 px-5"><span class="section-title text-xs font-semibold text-slate-500 uppercase tracking-wider">Principal</span></div>
+            <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}"><i class="fas fa-chart-pie mr-3"></i><span class="nav-text">Tableau de bord</span></a>
+            <a href="/orders" class="nav-item {% if '/orders' in request.path %}active{% endif %}"><i class="fas fa-file-invoice mr-3"></i><span class="nav-text">Commandes</span></a>
+            <a href="/clients" class="nav-item {% if '/clients' in request.path %}active{% endif %}"><i class="fas fa-building mr-3"></i><span class="nav-text">Clients</span></a>
+            
+            <div class="my-4 px-5"><span class="section-title text-xs font-semibold text-slate-500 uppercase tracking-wider">Canaux</span></div>
+            <a href="/process" class="nav-item {% if '/process' in request.path %}active{% endif %}"><i class="fas fa-envelope mr-3"></i><span class="nav-text">Emails</span></a>
+            <a href="/whatsapp" class="nav-item {% if '/whatsapp' in request.path %}active{% endif %}"><i class="fab fa-whatsapp mr-3"></i><span class="nav-text">WhatsApp</span></a>
+            
+            <div class="my-4 px-5"><span class="section-title text-xs font-semibold text-slate-500 uppercase tracking-wider">Analytics</span></div>
+            <a href="/analytics" class="nav-item {% if '/analytics' in request.path %}active{% endif %}"><i class="fas fa-chart-line mr-3"></i><span class="nav-text">Statistiques</span></a>
+            <a href="/alerts" class="nav-item {% if '/alerts' in request.path %}active{% endif %}"><i class="fas fa-bell mr-3"></i><span class="nav-text">Alertes</span></a>
+        </nav>
+        
+        <div class="p-4 border-t border-slate-700/50">
+            <div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-slate-800 cursor-pointer transition">
+                <div class="w-9 h-9 bg-gradient-to-br from-brand-400 to-brand-600 rounded-full flex items-center justify-center flex-shrink-0">
+                    <span class="text-white text-sm font-semibold">AD</span>
+                </div>
+                <div class="user-info flex-1 min-w-0">
+                    <p class="text-white text-sm font-medium truncate">Administrateur</p>
+                    <p class="text-slate-500 text-xs truncate">Commercial</p>
                 </div>
             </div>
         </div>
-    </nav>
+        
+        <button onclick="toggleSidebar()" class="absolute -right-3 top-20 w-6 h-6 bg-slate-800 border border-slate-600 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition z-50">
+            <i id="collapseIcon" class="fas fa-chevron-left text-xs"></i>
+        </button>
+    </aside>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 py-8">
-        {% block content %}{% endblock %}
-    </main>
+    <div class="main-content">
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-40">
+            <div class="flex items-center justify-between px-6 py-4">
+                <div>
+                    <h1 class="text-xl font-bold text-slate-800">{% block page_title %}Tableau de bord{% endblock %}</h1>
+                    <nav class="text-sm text-slate-500 mt-0.5"><a href="/" class="hover:text-brand-600">Accueil</a>{% block breadcrumb %}{% endblock %}</nav>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <div class="relative hidden md:block">
+                        <input type="text" placeholder="Rechercher..." class="input-pro w-64 pl-10">
+                        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                    </div>
+                    
+                    <!-- Notification Bell -->
+                    <div class="relative" id="notificationBell">
+                        <button onclick="toggleNotifications()" class="relative p-2.5 rounded-lg hover:bg-slate-100 transition group">
+                            <i class="fas fa-bell text-slate-500 text-lg group-hover:text-brand-600 transition"></i>
+                            <span id="notifBadge" class="absolute -top-1 -right-1 min-w-[20px] h-[20px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-lg animate-pulse hidden">0</span>
+                        </button>
+                        <div id="notificationDropdown" class="hidden absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-2xl border border-slate-200 z-50">
+                            <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-brand-50 to-white rounded-t-xl">
+                                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                                    <i class="fas fa-bell text-brand-500"></i>
+                                    Notifications
+                                </h3>
+                                <button onclick="clearAllNotifications()" class="text-xs text-red-500 hover:text-red-600 font-medium">
+                                    <i class="fas fa-trash-alt mr-1"></i>Tout effacer
+                                </button>
+                            </div>
+                            <div id="notificationList" class="max-h-96 overflow-y-auto">
+                                <p class="text-center text-slate-400 py-8 text-sm">
+                                    <i class="fas fa-bell-slash text-3xl mb-2 block"></i>
+                                    Aucune notification
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="dropdown relative">
+                        <button class="btn-primary"><i class="fas fa-plus"></i><span>Actions</span><i class="fas fa-chevron-down text-xs"></i></button>
+                        <div class="dropdown-menu absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50">
+                            <a href="/process" class="flex items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"><i class="fas fa-envelope-open-text text-brand-500 w-8"></i>Traiter les emails</a>
+                            <a href="/orders?status=en_attente" class="flex items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"><i class="fas fa-clock text-amber-500 w-8"></i>Commandes en attente</a>
+                            <hr class="my-2 border-slate-100">
+                            <a href="/export/excel" class="flex items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"><i class="fas fa-file-excel text-green-600 w-8"></i>Exporter Excel</a>
+                            <a href="/export/pdf" class="flex items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"><i class="fas fa-file-pdf text-red-600 w-8"></i>Exporter PDF</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <main class="p-6">{% block content %}{% endblock %}</main>
+        
+        <footer class="bg-white border-t border-slate-200 px-6 py-4">
+            <div class="flex flex-col md:flex-row justify-between items-center text-sm text-slate-500">
+                <p>© 2025 <strong>OrderFlow Enterprise</strong> - Gestion Intelligente des Commandes</p>
+                <div class="flex items-center space-x-4 mt-2 md:mt-0">
+                    <span class="flex items-center"><span class="pulse-dot bg-green-500 mr-2"></span>Opérationnel</span>
+                    <span class="text-slate-400">v2.0</span>
+                </div>
+            </div>
+        </footer>
+    </div>
 
-    <!-- Footer -->
-    <footer class="bg-gray-800 text-gray-400 py-4 mt-auto">
-        <div class="max-w-7xl mx-auto px-4 text-center">
-            <p>&copy; 2025 - Agent IA de Gestion des Bons de Commande</p>
-        </div>
-    </footer>
-
+    <!-- Toast Container -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-[100] space-y-3"></div>
+    
+    <!-- Notification Sound -->
+    <audio id="notifSound" preload="auto">
+        <source src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZCqVqoAAAAAAAAAAAAAAAAAAAA//tQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//tQZB4P8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV" type="audio/mp3">
+    </audio>
+    
+    <script>
+        let notifications = JSON.parse(localStorage.getItem('orderflow_notifications') || '[]');
+        let lastOrderId = parseInt(localStorage.getItem('orderflow_lastOrderId') || '0');
+        
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('collapsed');
+            const icon = document.getElementById('collapseIcon');
+            icon.classList.toggle('fa-chevron-left');
+            icon.classList.toggle('fa-chevron-right');
+        }
+        
+        function toggleNotifications() {
+            const dropdown = document.getElementById('notificationDropdown');
+            const wasHidden = dropdown.classList.contains('hidden');
+            dropdown.classList.toggle('hidden');
+            
+            // Si on ouvre le dropdown, marquer toutes les notifications comme lues
+            if (wasHidden) {
+                markAllAsRead();
+            }
+        }
+        
+        function markAllAsRead() {
+            // Marquer toutes les notifications comme lues
+            notifications.forEach(n => n.read = true);
+            localStorage.setItem('orderflow_notifications', JSON.stringify(notifications));
+            // Mettre à jour le badge (le faire disparaître)
+            updateNotificationBadge();
+            // Re-render les notifications (sans le fond bleu)
+            renderNotifications();
+        }
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const bell = document.getElementById('notificationBell');
+            if (bell && !bell.contains(e.target)) {
+                document.getElementById('notificationDropdown').classList.add('hidden');
+            }
+        });
+        
+        function updateNotificationBadge() {
+            const badge = document.getElementById('notifBadge');
+            const unread = notifications.filter(n => !n.read).length;
+            if (unread > 0) {
+                badge.textContent = unread > 9 ? '9+' : unread;
+                badge.classList.remove('hidden');
+                badge.classList.add('animate-pulse');
+            } else {
+                badge.classList.add('hidden');
+                badge.classList.remove('animate-pulse');
+            }
+        }
+        
+        function renderNotifications() {
+            const list = document.getElementById('notificationList');
+            if (notifications.length === 0) {
+                list.innerHTML = `<p class="text-center text-slate-400 py-8 text-sm">
+                    <i class="fas fa-bell-slash text-3xl mb-2 block"></i>
+                    Aucune notification
+                </p>`;
+                return;
+            }
+            
+            list.innerHTML = notifications.slice(0, 10).map(n => `
+                <a href="/orders/${n.orderId}" class="block p-4 hover:bg-slate-50 border-b border-slate-100 transition ${n.read ? '' : 'bg-blue-50'}">
+                    <div class="flex items-start gap-3">
+                        <div class="w-10 h-10 ${n.source === 'whatsapp' ? 'bg-green-100' : 'bg-blue-100'} rounded-full flex items-center justify-center flex-shrink-0">
+                            <i class="${n.source === 'whatsapp' ? 'fab fa-whatsapp text-green-600' : 'fas fa-envelope text-blue-600'}"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-slate-800 text-sm">${n.title}</p>
+                            <p class="text-xs text-slate-500 mt-0.5">${n.message}</p>
+                            <p class="text-xs text-slate-400 mt-1">${formatTimeAgo(n.timestamp)}</p>
+                        </div>
+                        ${!n.read ? '<span class="w-2 h-2 bg-red-500 rounded-full flex-shrink-0 animate-pulse"></span>' : ''}
+                    </div>
+                </a>
+            `).join('');
+        }
+        
+        function formatTimeAgo(timestamp) {
+            const diff = Date.now() - new Date(timestamp).getTime();
+            const minutes = Math.floor(diff / 60000);
+            if (minutes < 1) return "À l'instant";
+            if (minutes < 60) return `Il y a ${minutes} min`;
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `Il y a ${hours}h`;
+            return `Il y a ${Math.floor(hours / 24)}j`;
+        }
+        
+        function showToast(title, message, source, orderId) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'bg-white rounded-xl shadow-2xl border border-slate-200 p-4 w-80 transform translate-x-full transition-transform duration-300';
+            toast.innerHTML = `
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 ${source === 'whatsapp' ? 'bg-green-100' : 'bg-blue-100'} rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="${source === 'whatsapp' ? 'fab fa-whatsapp text-green-600' : 'fas fa-envelope text-blue-600'} text-lg"></i>
+                    </div>
+                    <div class="flex-1">
+                        <p class="font-semibold text-slate-800">${title}</p>
+                        <p class="text-sm text-slate-500 mt-0.5">${message}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="text-slate-400 hover:text-slate-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="mt-3 flex gap-2">
+                    <a href="/orders/${orderId}" class="flex-1 text-center py-2 bg-brand-500 text-white text-sm font-medium rounded-lg hover:bg-brand-600 transition">Voir la commande</a>
+                    <button onclick="this.parentElement.parentElement.remove()" class="px-4 py-2 bg-slate-100 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-200 transition">Fermer</button>
+                </div>
+            `;
+            container.appendChild(toast);
+            
+            // Animate in
+            setTimeout(() => toast.classList.remove('translate-x-full'), 10);
+            
+            // Play sound
+            playNotificationSound();
+            
+            // Auto remove after 10s
+            setTimeout(() => {
+                toast.classList.add('translate-x-full');
+                setTimeout(() => toast.remove(), 300);
+            }, 10000);
+        }
+        
+        function playNotificationSound() {
+            const audio = document.getElementById('notifSound');
+            if (audio) {
+                audio.currentTime = 0;
+                audio.play().catch(() => {});
+            }
+        }
+        
+        function addNotification(notif) {
+            notifications.unshift(notif);
+            if (notifications.length > 50) notifications = notifications.slice(0, 50);
+            localStorage.setItem('orderflow_notifications', JSON.stringify(notifications));
+            updateNotificationBadge();
+            renderNotifications();
+            showToast(notif.title, notif.message, notif.source, notif.orderId);
+        }
+        
+        function clearAllNotifications() {
+            notifications = [];
+            localStorage.setItem('orderflow_notifications', '[]');
+            updateNotificationBadge();
+            renderNotifications();
+        }
+        
+        // Poll for new orders using ID-based tracking
+        function checkNewOrders() {
+            fetch('/api/notifications/check?last_id=' + lastOrderId)
+                .then(res => res.json())
+                .then(data => {
+                    // Update last ID
+                    if (data.last_id && data.last_id > lastOrderId) {
+                        lastOrderId = data.last_id;
+                        localStorage.setItem('orderflow_lastOrderId', lastOrderId.toString());
+                    }
+                    
+                    // Show notifications for new orders
+                    if (data.new_orders && data.new_orders.length > 0) {
+                        data.new_orders.forEach(order => {
+                            // Check if we already have this notification
+                            const existingIndex = notifications.findIndex(n => n.orderId === order.id);
+                            if (existingIndex === -1) {
+                                addNotification({
+                                    id: 'order_' + order.id,
+                                    orderId: order.id,
+                                    title: order.source === 'whatsapp' ? '📱 Nouvelle commande WhatsApp' : '📧 Nouvelle commande Email',
+                                    message: `${order.client || 'Client'} - ${order.produit || 'Produit'}`,
+                                    source: order.source || 'email',
+                                    timestamp: order.created_at || new Date().toISOString(),
+                                    read: false
+                                });
+                            }
+                        });
+                    }
+                })
+                .catch(err => console.log('Notification check error:', err));
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            updateNotificationBadge();
+            renderNotifications();
+            // Initial check to get current max ID
+            checkNewOrders();
+            // Check every 3 seconds
+            setInterval(checkNewOrders, 3000);
+        });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

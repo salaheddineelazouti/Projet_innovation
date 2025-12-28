@@ -169,11 +169,14 @@ class WhatsAppReceiver:
             print("   🎯 Transcription avec Whisper (Darija/Arabe supporté)...")
             
             with open(filepath, "rb") as audio_file:
-                # Whisper automatically detects language including Arabic dialects
+                # Whisper with prompt for better Darija/Moroccan Arabic recognition
+                # Include common business terms to help recognition
                 transcription = self.openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
-                    response_format="text"
+                    response_format="text",
+                    language="ar",  # Arabic base
+                    prompt="Ceci est une commande commerciale au Maroc. Termes courants: sachets, sac kraft, carton, papier, emballage, pièces, unités, commande, livraison, dirhams, MAD. Darija marocaine avec mots français: bghit, khassni, 3tini, sachet, sac, carton, kraft, fond plat, poignées, sandwich, tacos."
                 )
             
             if transcription:
@@ -295,18 +298,26 @@ class WhatsAppReceiver:
             # Get your Twilio WhatsApp number from environment or use sandbox
             from_number = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
             
+            # Clean up the to_number - remove existing whatsapp: prefix if present
+            clean_number = to_number.replace('whatsapp:', '').strip()
+            # Ensure it starts with +
+            if not clean_number.startswith('+'):
+                clean_number = '+' + clean_number
+            
+            to_whatsapp = f"whatsapp:{clean_number}"
+            
             msg = self.twilio_client.messages.create(
                 body=message,
                 from_=from_number,
-                to=f"whatsapp:{to_number}"
+                to=to_whatsapp
             )
             
-            print(f"   📤 Réponse envoyée: {message[:50]}...")
+            print(f"   📤 Réponse envoyée à {to_whatsapp}: {message[:50]}...")
             return msg.sid
             
         except Exception as e:
             print(f"   ❌ Erreur envoi réponse: {e}")
-            return None
+            raise e  # Re-raise to let caller know it failed
 
 
 def test_whatsapp():

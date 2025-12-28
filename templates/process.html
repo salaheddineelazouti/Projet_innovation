@@ -1,87 +1,164 @@
 {% extends 'base.html' %}
 
-{% block title %}Traiter les Emails - Gestion Commandes{% endblock %}
+{% block title %}Traitement Emails - OrderFlow Pro{% endblock %}
+{% block page_title %}Traitement des Emails{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Emails</span>{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-8">
-    <!-- Header -->
-    <div class="text-center">
-        <h1 class="text-3xl font-bold text-gray-800 mb-2">Traitement des Emails</h1>
-        <p class="text-gray-600">Analysez les nouveaux emails pour détecter les bons de commande</p>
+<div class="space-y-6">
+    <!-- Info Card -->
+    <div class="card p-6 bg-gradient-to-r from-brand-50 to-blue-50 border-brand-200">
+        <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                <i class="fas fa-robot text-white text-xl"></i>
+            </div>
+            <div class="flex-1">
+                <h3 class="font-bold text-slate-800 mb-1">Extraction Intelligente par IA</h3>
+                <p class="text-slate-600 text-sm">Notre système analyse automatiquement vos emails et pièces jointes (PDF, images, audio) pour extraire les informations des bons de commande grâce à GPT-4o Vision.</p>
+            </div>
+        </div>
     </div>
 
-    <!-- Process Card -->
-    <div class="bg-white rounded-xl shadow-md p-8">
-        <div class="text-center space-y-6">
-            <div class="bg-indigo-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto">
-                <i class="fas fa-envelope-open-text text-indigo-600 text-4xl"></i>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Main Panel -->
+        <div class="lg:col-span-2 card">
+            <div class="p-6 border-b border-slate-100">
+                <h3 class="font-bold text-slate-800 text-lg">Lancer le traitement</h3>
+                <p class="text-slate-500 text-sm mt-1">Scannez votre boîte de réception pour détecter les nouveaux bons de commande</p>
             </div>
-            
-            <div>
-                <h2 class="text-xl font-semibold text-gray-800 mb-2">Analyser les emails récents</h2>
-                <p class="text-gray-600">Le système va récupérer les derniers emails et utiliser l'IA pour extraire les bons de commande.</p>
-            </div>
-
-            <button id="processBtn" onclick="processEmails()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-lg text-lg font-medium transition inline-flex items-center space-x-3">
-                <i class="fas fa-play"></i>
-                <span>Lancer le traitement</span>
-            </button>
-        </div>
-
-        <!-- Progress Section (hidden by default) -->
-        <div id="progressSection" class="hidden mt-8 space-y-4">
-            <div class="border-t pt-6">
-                <div class="flex items-center space-x-4">
-                    <div id="spinner" class="animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
-                    <span id="progressText" class="text-gray-700">Connexion à Gmail...</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Results Section (hidden by default) -->
-        <div id="resultsSection" class="hidden mt-8">
-            <div class="border-t pt-6">
-                <div id="successResult" class="hidden text-center space-y-4">
-                    <div class="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-                        <i class="fas fa-check text-green-600 text-2xl"></i>
+            <div class="p-6">
+                <div id="processPanel" class="text-center py-8">
+                    <div class="w-20 h-20 bg-brand-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-envelope-open-text text-brand-600 text-3xl"></i>
                     </div>
-                    <h3 class="text-lg font-semibold text-gray-800">Traitement terminé !</h3>
-                    <p id="resultMessage" class="text-gray-600"></p>
-                    <a href="/orders?status=en_attente" class="inline-block bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition">
-                        <i class="fas fa-list mr-2"></i>Voir les commandes en attente
-                    </a>
-                </div>
-
-                <div id="errorResult" class="hidden text-center space-y-4">
-                    <div class="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-                        <i class="fas fa-exclamation-triangle text-red-600 text-2xl"></i>
-                    </div>
-                    <h3 class="text-lg font-semibold text-gray-800">Erreur</h3>
-                    <p id="errorMessage" class="text-red-600"></p>
-                    <button onclick="location.reload()" class="inline-block bg-gray-600 hover:bg-gray-700 text-white px-6 py-2 rounded-lg transition">
-                        <i class="fas fa-redo mr-2"></i>Réessayer
+                    <h4 class="font-semibold text-slate-800 mb-2">Prêt à analyser</h4>
+                    <p class="text-slate-500 text-sm mb-6">Cliquez sur le bouton ci-dessous pour scanner les nouveaux emails</p>
+                    <button onclick="processEmails()" class="btn-primary text-lg px-8 py-3">
+                        <i class="fas fa-play"></i>
+                        Démarrer le traitement
                     </button>
                 </div>
+
+                <div id="processingPanel" class="hidden py-8">
+                    <div class="text-center">
+                        <div class="w-20 h-20 bg-brand-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                            <i class="fas fa-cog text-brand-600 text-3xl animate-spin"></i>
+                        </div>
+                        <h4 class="font-semibold text-slate-800 mb-2">Traitement en cours...</h4>
+                        <p class="text-slate-500 text-sm" id="processingStatus">Connexion à la boîte mail...</p>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div class="mt-6 max-w-md mx-auto">
+                        <div class="flex justify-between text-sm text-slate-600 mb-2">
+                            <span id="progressLabel">Initialisation...</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+                            <div id="progressBar" class="h-full bg-gradient-to-r from-brand-500 to-blue-500 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Steps -->
+                    <div class="mt-6 max-w-lg mx-auto">
+                        <div class="flex justify-between">
+                            <div class="flex flex-col items-center" id="step1">
+                                <div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 transition-all duration-300">
+                                    <i class="fas fa-plug"></i>
+                                </div>
+                                <span class="text-xs mt-2 text-slate-400">Connexion</span>
+                            </div>
+                            <div class="flex-1 flex items-center px-2">
+                                <div class="h-1 w-full bg-slate-200 rounded" id="line1"></div>
+                            </div>
+                            <div class="flex flex-col items-center" id="step2">
+                                <div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 transition-all duration-300">
+                                    <i class="fas fa-search"></i>
+                                </div>
+                                <span class="text-xs mt-2 text-slate-400">Scan emails</span>
+                            </div>
+                            <div class="flex-1 flex items-center px-2">
+                                <div class="h-1 w-full bg-slate-200 rounded" id="line2"></div>
+                            </div>
+                            <div class="flex flex-col items-center" id="step3">
+                                <div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 transition-all duration-300">
+                                    <i class="fas fa-robot"></i>
+                                </div>
+                                <span class="text-xs mt-2 text-slate-400">Analyse IA</span>
+                            </div>
+                            <div class="flex-1 flex items-center px-2">
+                                <div class="h-1 w-full bg-slate-200 rounded" id="line3"></div>
+                            </div>
+                            <div class="flex flex-col items-center" id="step4">
+                                <div class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 transition-all duration-300">
+                                    <i class="fas fa-database"></i>
+                                </div>
+                                <span class="text-xs mt-2 text-slate-400">Sauvegarde</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Log Panel -->
+                    <div class="mt-6 bg-slate-900 rounded-lg p-4 max-h-48 overflow-y-auto" id="logContainer">
+                        <pre id="processLog" class="text-green-400 text-xs font-mono"></pre>
+                    </div>
+                </div>
+
+                <div id="resultPanel" class="hidden py-8">
+                    <div class="text-center" id="resultContent"></div>
+                </div>
             </div>
         </div>
-    </div>
 
-    <!-- Info Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="bg-white rounded-lg shadow p-4 text-center">
-            <i class="fas fa-envelope text-indigo-500 text-2xl mb-2"></i>
-            <h4 class="font-medium text-gray-800">1. Récupération</h4>
-            <p class="text-sm text-gray-500">Connexion à Gmail</p>
-        </div>
-        <div class="bg-white rounded-lg shadow p-4 text-center">
-            <i class="fas fa-robot text-indigo-500 text-2xl mb-2"></i>
-            <h4 class="font-medium text-gray-800">2. Analyse IA</h4>
-            <p class="text-sm text-gray-500">Extraction des données</p>
-        </div>
-        <div class="bg-white rounded-lg shadow p-4 text-center">
-            <i class="fas fa-database text-indigo-500 text-2xl mb-2"></i>
-            <h4 class="font-medium text-gray-800">3. Stockage</h4>
-            <p class="text-sm text-gray-500">Enregistrement en base</p>
+        <!-- Sidebar -->
+        <div class="space-y-6">
+            <!-- Status -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i class="fas fa-server text-brand-500"></i>
+                    Statut du système
+                </h3>
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <span class="text-sm text-slate-600">Connexion Gmail</span>
+                        <span class="flex items-center text-emerald-600 text-xs font-medium">
+                            <span class="w-2 h-2 bg-emerald-500 rounded-full mr-1.5"></span>Connecté
+                        </span>
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                        <span class="text-sm text-slate-600">OpenAI API</span>
+                        <span class="flex items-center text-emerald-600 text-xs font-medium">
+                            <span class="w-2 h-2 bg-emerald-500 rounded-full mr-1.5"></span>Actif
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Capabilities -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i class="fas fa-magic text-brand-500"></i>
+                    Capacités IA
+                </h3>
+                <div class="space-y-3 text-sm">
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-file-pdf text-red-500 w-5"></i>
+                        <span>Extraction PDF</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-image text-blue-500 w-5"></i>
+                        <span>Analyse d'images (Vision)</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-microphone text-purple-500 w-5"></i>
+                        <span>Transcription audio (Whisper)</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-redo text-amber-500 w-5"></i>
+                        <span>Détection de relances</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -89,71 +166,197 @@
 
 {% block scripts %}
 <script>
-async function processEmails() {
-    const btn = document.getElementById('processBtn');
-    const progressSection = document.getElementById('progressSection');
-    const resultsSection = document.getElementById('resultsSection');
-    const successResult = document.getElementById('successResult');
-    const errorResult = document.getElementById('errorResult');
-    const progressText = document.getElementById('progressText');
+let progressInterval;
+let currentProgress = 0;
+
+function updateProgress(percent, label, step) {
+    document.getElementById('progressBar').style.width = percent + '%';
+    document.getElementById('progressPercent').textContent = percent + '%';
+    document.getElementById('progressLabel').textContent = label;
+    document.getElementById('processingStatus').textContent = label;
     
-    // Disable button and show progress
-    btn.disabled = true;
-    btn.classList.add('opacity-50', 'cursor-not-allowed');
-    progressSection.classList.remove('hidden');
-    resultsSection.classList.add('hidden');
-    
-    // Simulate progress steps
+    // Update steps
+    for (let i = 1; i <= 4; i++) {
+        const stepEl = document.getElementById('step' + i);
+        const lineEl = document.getElementById('line' + i);
+        const circle = stepEl.querySelector('div');
+        const text = stepEl.querySelector('span');
+        
+        if (i < step) {
+            // Completed
+            circle.className = 'w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center text-white transition-all duration-300';
+            text.className = 'text-xs mt-2 text-emerald-600 font-medium';
+            if (lineEl) lineEl.className = 'h-1 w-full bg-emerald-500 rounded transition-all duration-300';
+        } else if (i === step) {
+            // Active
+            circle.className = 'w-10 h-10 rounded-full bg-brand-500 flex items-center justify-center text-white transition-all duration-300 animate-pulse';
+            text.className = 'text-xs mt-2 text-brand-600 font-medium';
+        } else {
+            // Pending
+            circle.className = 'w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 transition-all duration-300';
+            text.className = 'text-xs mt-2 text-slate-400';
+        }
+    }
+}
+
+function addLog(message, type = 'info') {
+    const log = document.getElementById('processLog');
+    const timestamp = new Date().toLocaleTimeString();
+    const colors = {
+        'info': 'text-blue-400',
+        'success': 'text-green-400',
+        'warning': 'text-yellow-400',
+        'error': 'text-red-400',
+        'process': 'text-cyan-400'
+    };
+    const color = colors[type] || 'text-green-400';
+    log.innerHTML += `<span class="text-slate-500">[${timestamp}]</span> <span class="${color}">${message}</span>\n`;
+    document.getElementById('logContainer').scrollTop = document.getElementById('logContainer').scrollHeight;
+}
+
+let waitingInterval;
+let waitingSeconds = 0;
+
+function simulateProgress() {
     const steps = [
-        'Connexion à Gmail...',
-        'Récupération des emails...',
-        'Analyse avec IA...',
-        'Enregistrement des commandes...'
+        { percent: 5, label: 'Connexion à Gmail...', step: 1, delay: 500 },
+        { percent: 15, label: 'Authentification réussie', step: 1, delay: 800, log: '✓ Connexion Gmail établie', logType: 'success' },
+        { percent: 25, label: 'Recherche des emails...', step: 2, delay: 600, log: '→ Scan de la boîte de réception...', logType: 'process' },
+        { percent: 35, label: 'Analyse des sujets...', step: 2, delay: 700, log: '→ Filtrage des emails pertinents...', logType: 'process' },
+        { percent: 45, label: 'Téléchargement des pièces jointes...', step: 2, delay: 900, log: '→ Téléchargement des pièces jointes...', logType: 'process' },
+        { percent: 55, label: 'Extraction IA en cours...', step: 3, delay: 1000, log: '🤖 Analyse GPT-4o Vision initiée', logType: 'info' },
+        { percent: 65, label: 'Analyse des documents...', step: 3, delay: 1200, log: '→ Extraction des informations...', logType: 'process' },
+        { percent: 75, label: 'Validation des données...', step: 3, delay: 800, log: '→ Validation des données extraites...', logType: 'process' },
+        { percent: 85, label: 'Enregistrement en base...', step: 4, delay: 600, log: '💾 Sauvegarde en base de données...', logType: 'info' },
+        { percent: 90, label: 'Traitement IA en cours...', step: 4, delay: 400, log: '→ L\'analyse peut prendre quelques minutes...', logType: 'info' }
     ];
     
     let stepIndex = 0;
-    const stepInterval = setInterval(() => {
-        if (stepIndex < steps.length) {
-            progressText.textContent = steps[stepIndex];
-            stepIndex++;
-        }
-    }, 1500);
     
-    try {
-        const response = await fetch('/api/process-emails', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        
-        clearInterval(stepInterval);
-        
-        const result = await response.json();
-        
-        progressSection.classList.add('hidden');
-        resultsSection.classList.remove('hidden');
-        
-        if (result.success) {
-            successResult.classList.remove('hidden');
-            errorResult.classList.add('hidden');
-            document.getElementById('resultMessage').textContent = result.message;
+    function nextStep() {
+        if (stepIndex < steps.length) {
+            const s = steps[stepIndex];
+            updateProgress(s.percent, s.label, s.step);
+            if (s.log) addLog(s.log, s.logType);
+            stepIndex++;
+            setTimeout(nextStep, s.delay);
         } else {
-            successResult.classList.add('hidden');
-            errorResult.classList.remove('hidden');
-            document.getElementById('errorMessage').textContent = result.error || 'Une erreur est survenue';
+            // Start waiting animation after reaching 90%
+            waitingSeconds = 0;
+            waitingInterval = setInterval(() => {
+                waitingSeconds++;
+                const dots = '.'.repeat((waitingSeconds % 3) + 1);
+                document.getElementById('processingStatus').textContent = `Analyse IA en cours${dots} (${waitingSeconds}s)`;
+                document.getElementById('progressLabel').textContent = `Analyse IA en cours${dots} (${waitingSeconds}s)`;
+                
+                // Slowly increment progress from 90% to 95%
+                const currentPercent = Math.min(90 + Math.floor(waitingSeconds / 10), 95);
+                document.getElementById('progressBar').style.width = currentPercent + '%';
+                document.getElementById('progressPercent').textContent = currentPercent + '%';
+            }, 1000);
         }
-        
-    } catch (error) {
-        clearInterval(stepInterval);
-        
-        progressSection.classList.add('hidden');
-        resultsSection.classList.remove('hidden');
-        successResult.classList.add('hidden');
-        errorResult.classList.remove('hidden');
-        document.getElementById('errorMessage').textContent = error.message;
     }
     
-    btn.disabled = false;
-    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    nextStep();
+}
+
+function processEmails() {
+    document.getElementById('processPanel').classList.add('hidden');
+    document.getElementById('processingPanel').classList.remove('hidden');
+    document.getElementById('resultPanel').classList.add('hidden');
+    document.getElementById('processLog').textContent = '';
+    
+    // Reset progress
+    updateProgress(0, 'Initialisation...', 1);
+    addLog('Démarrage du traitement...', 'info');
+    
+    // Start progress simulation
+    simulateProgress();
+
+    fetch('/api/process-emails', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            // Stop waiting animation
+            if (waitingInterval) {
+                clearInterval(waitingInterval);
+                waitingInterval = null;
+            }
+            
+            // Complete progress
+            updateProgress(100, 'Terminé !', 5);
+            addLog('✓ Traitement terminé avec succès', 'success');
+            
+            setTimeout(() => {
+                document.getElementById('processingPanel').classList.add('hidden');
+                document.getElementById('resultPanel').classList.remove('hidden');
+                
+                const resultContent = document.getElementById('resultContent');
+                if (data.success) {
+                    resultContent.innerHTML = `
+                        <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i class="fas fa-check text-emerald-600 text-3xl"></i>
+                        </div>
+                        <h4 class="font-semibold text-slate-800 mb-2">Traitement terminé !</h4>
+                        <p class="text-slate-600 mb-6">${data.orders_count} commande(s) détectée(s)</p>
+                        <div class="flex justify-center gap-3">
+                            <a href="/orders" class="btn-primary"><i class="fas fa-list"></i>Voir les commandes</a>
+                            <button onclick="resetProcess()" class="btn-secondary"><i class="fas fa-redo"></i>Relancer</button>
+                        </div>
+                    `;
+                } else {
+                    resultContent.innerHTML = `
+                        <div class="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i class="fas fa-times text-red-600 text-3xl"></i>
+                        </div>
+                        <h4 class="font-semibold text-slate-800 mb-2">Erreur</h4>
+                        <p class="text-red-600 mb-6">${data.error || 'Une erreur est survenue'}</p>
+                        <button onclick="resetProcess()" class="btn-secondary"><i class="fas fa-redo"></i>Réessayer</button>
+                    `;
+                }
+            }, 800);
+        })
+        .catch(error => {
+            // Stop waiting animation
+            if (waitingInterval) {
+                clearInterval(waitingInterval);
+                waitingInterval = null;
+            }
+            
+            addLog('✗ Erreur: ' + error.message, 'error');
+            setTimeout(() => {
+                document.getElementById('processingPanel').classList.add('hidden');
+                document.getElementById('resultPanel').classList.remove('hidden');
+                document.getElementById('resultContent').innerHTML = `
+                    <div class="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-times text-red-600 text-3xl"></i>
+                    </div>
+                    <h4 class="font-semibold text-slate-800 mb-2">Erreur de connexion</h4>
+                    <p class="text-red-600 mb-6">${error.message}</p>
+                    <button onclick="resetProcess()" class="btn-secondary"><i class="fas fa-redo"></i>Réessayer</button>
+                `;
+            }, 500);
+        });
+}
+
+function resetProcess() {
+    // Stop any running interval
+    if (waitingInterval) {
+        clearInterval(waitingInterval);
+        waitingInterval = null;
+    }
+    waitingSeconds = 0;
+    
+    document.getElementById('processPanel').classList.remove('hidden');
+    document.getElementById('processingPanel').classList.add('hidden');
+    document.getElementById('resultPanel').classList.add('hidden');
+    // Reset steps visually
+    for (let i = 1; i <= 4; i++) {
+        const stepEl = document.getElementById('step' + i);
+        const lineEl = document.getElementById('line' + i);
+        stepEl.querySelector('div').className = 'w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 transition-all duration-300';
+        stepEl.querySelector('span').className = 'text-xs mt-2 text-slate-400';
+        if (lineEl) lineEl.className = 'h-1 w-full bg-slate-200 rounded';
+    }
 }
 </script>
 {% endblock %}

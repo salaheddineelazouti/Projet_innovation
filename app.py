@@ -23,18 +23,46 @@ app.secret_key = os.urandom(24)
 
 db = DatabaseManager()
 
+# Initialize database once at startup
+db.connect()
+db.init_database()
+
 
 @app.before_request
 def before_request():
-    """Connect to database before each request."""
-    db.connect()
-    db.init_database()
+    """Ensure database connection before each request."""
+    if not db.connection:
+        db.connect()
 
 
-@app.teardown_request
-def teardown_request(exception):
-    """Disconnect from database after each request."""
-    db.disconnect()
+# Correction automatique des sources WhatsApp
+def fix_whatsapp_sources():
+    """Fix orders that came from WhatsApp but have wrong source."""
+    try:
+        cursor = db.connection.cursor()
+        # Corriger les commandes avec email_subject contenant "WhatsApp" mais source incorrecte
+        cursor.execute("""
+            UPDATE commandes 
+            SET source = 'whatsapp' 
+            WHERE (email_subject LIKE '%WhatsApp%' OR email_subject LIKE '%whatsapp%')
+            AND (source IS NULL OR source != 'whatsapp')
+        """)
+        # Spécifiquement corriger la commande #2
+        cursor.execute("UPDATE commandes SET source = 'whatsapp' WHERE id = 2")
+        db.connection.commit()
+        print("✅ Sources WhatsApp corrigées")
+    except Exception as e:
+        print(f"Erreur correction sources: {e}")
+
+# Exécuter la correction au démarrage
+fix_whatsapp_sources()
+
+
+# Don't disconnect after each request - keep connection alive
+# @app.teardown_request
+# def teardown_request(exception):
+#     """Disconnect from database after each request."""
+#     db.disconnect()
 
 
 # ============== PAGES ==============
@@ -42,9 +70,36 @@ def teardown_request(exception):
 @app.route('/')
 def index():
     """Dashboard page."""
+    from datetime import datetime, timedelta
+    import json
+    
     stats = db.get_stats()
     recent_orders = db.get_all_orders()[:5]
-    return render_template('index.html', stats=stats, recent_orders=recent_orders)
+    top_clients = db.get_top_clients(5)
+    top_products = db.get_top_products(5)
+    
+    # Get trend data for the last 7 days
+    trend_data = db.get_orders_trend(7)
+    
+    # Build labels and data for chart
+    today = datetime.now().date()
+    labels = []
+    data = []
+    trend_dict = {item['date']: item['count'] for item in trend_data}
+    
+    for i in range(6, -1, -1):
+        date = today - timedelta(days=i)
+        date_str = date.strftime('%Y-%m-%d')
+        labels.append(date.strftime('%d/%m'))
+        data.append(trend_dict.get(date_str, 0))
+    
+    return render_template('index.html', 
+                         stats=stats, 
+                         recent_orders=recent_orders,
+                         top_clients=top_clients,
+                         top_products=top_products,
+                         trend_labels=json.dumps(labels),
+                         trend_data=json.dumps(data))
 
 
 @app.route('/orders')
@@ -94,15 +149,30 @@ def api_process_emails():
 @app.route('/api/orders/<int:order_id>/validate', methods=['POST'])
 def api_validate_order(order_id):
     """Validate an order and send WhatsApp confirmation if applicable."""
-    validated_by = request.json.get('validated_by', 'Commercial')
+    validated_by = request.json.get('validated_by', 'Commercial') if request.json else 'Commercial'
     db.update_order_status(order_id, 'validee', validated_by)
     
     # Send WhatsApp confirmation if order came from WhatsApp
     order = db.get_order(order_id)
-    if order and order.get('email_subject', '').startswith('WhatsApp'):
-        phone = order.get('email_from', '')
+    whatsapp_sent = False
+    
+    if order and order.get('source') == 'whatsapp':
+        # Try to get phone from client_telephone or email_from
+        phone = order.get('client_telephone') or order.get('email_from', '')
+        
+        # Extract phone number if it's in the client name (Client WhatsApp +212...)
+        if not phone and order.get('client_nom', '').startswith('Client WhatsApp'):
+            import re
+            match = re.search(r'\+\d+', order.get('client_nom', ''))
+            if match:
+                phone = match.group()
+        
         if phone:
             try:
+                # Format phone for WhatsApp (remove + and add whatsapp: prefix)
+                phone_clean = phone.replace('+', '').replace(' ', '').replace('whatsapp:', '')
+                whatsapp_number = f"+{phone_clean}"
+                
                 message = f"""✅ *Commande Validée!*
 
 📋 *Détails:*
@@ -114,12 +184,18 @@ def api_validate_order(order_id):
 ✨ Merci pour votre confiance!
 📞 Pour toute question, contactez-nous."""
                 
-                whatsapp.send_reply(phone, message)
-                print(f"   📱 Confirmation WhatsApp envoyée à {phone}")
+                result = whatsapp.send_reply(whatsapp_number, message)
+                if result:
+                    whatsapp_sent = True
+                    print(f"   📱 Confirmation WhatsApp envoyée à {whatsapp_number}")
             except Exception as e:
                 print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
     
-    return jsonify({'success': True, 'message': 'Commande validée'})
+    return jsonify({
+        'success': True, 
+        'message': 'Commande validée',
+        'whatsapp_sent': whatsapp_sent
+    })
 
 
 @app.route('/api/orders/<int:order_id>/reject', methods=['POST'])
@@ -132,11 +208,26 @@ def api_reject_order(order_id):
     
     db.update_order_status(order_id, 'rejetee')
     
+    whatsapp_sent = False
+    
     # Send WhatsApp notification if order came from WhatsApp
-    if order and order.get('email_subject', '').startswith('WhatsApp'):
-        phone = order.get('email_from', '')
+    if order and order.get('source') == 'whatsapp':
+        # Try to get phone from client_telephone or email_from
+        phone = order.get('client_telephone') or order.get('email_from', '')
+        
+        # Extract phone number if it's in the client name (Client WhatsApp +212...)
+        if not phone and order.get('client_nom', '').startswith('Client WhatsApp'):
+            import re
+            match = re.search(r'\+\d+', order.get('client_nom', ''))
+            if match:
+                phone = match.group()
+        
         if phone:
             try:
+                # Format phone for WhatsApp
+                phone_clean = phone.replace('+', '').replace(' ', '').replace('whatsapp:', '')
+                whatsapp_number = f"+{phone_clean}"
+                
                 message = f"""❌ *Commande Non Validée*
 
 📋 *Détails:*
@@ -146,12 +237,20 @@ def api_reject_order(order_id):
 
 📞 Veuillez nous contacter pour plus d'informations."""
                 
-                whatsapp.send_reply(phone, message)
-                print(f"   📱 Notification rejet WhatsApp envoyée à {phone}")
+                result = whatsapp.send_reply(whatsapp_number, message)
+                if result:
+                    whatsapp_sent = True
+                    print(f"   📱 Notification rejet WhatsApp envoyée à {whatsapp_number}")
+            except Exception as e:
+                print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
             except Exception as e:
                 print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
     
-    return jsonify({'success': True, 'message': 'Commande rejetée'})
+    return jsonify({
+        'success': True, 
+        'message': 'Commande rejetée',
+        'whatsapp_sent': whatsapp_sent
+    })
 
 
 @app.route('/api/orders/<int:order_id>/update', methods=['POST'])
@@ -247,26 +346,130 @@ def alerts_page():
     return render_template('alerts.html', alerts=alerts)
 
 
+# ============== NOTIFICATIONS API ==============
+
+@app.route('/api/notifications/check')
+def check_notifications():
+    """Check for new orders since last check."""
+    last_id = request.args.get('last_id', '0')
+    
+    try:
+        cursor = db.connection.cursor()
+        
+        try:
+            last_id_int = int(last_id)
+        except:
+            last_id_int = 0
+        
+        if last_id_int > 0:
+            # Get orders with ID greater than last seen
+            cursor.execute("""
+                SELECT c.id, c.created_at, c.source, c.email_subject,
+                       cl.nom as client, p.type as produit, c.nature_produit
+                FROM commandes c
+                LEFT JOIN clients cl ON c.client_id = cl.id
+                LEFT JOIN produits p ON c.produit_id = p.id
+                WHERE c.id > ?
+                ORDER BY c.id DESC
+                LIMIT 10
+            """, (last_id_int,))
+        else:
+            # Get latest order ID only (for initialization)
+            cursor.execute("SELECT MAX(id) as max_id FROM commandes")
+            row = cursor.fetchone()
+            max_id = row['max_id'] if row and row['max_id'] else 0
+            return jsonify({'new_orders': [], 'last_id': max_id})
+        
+        new_orders = []
+        max_seen_id = last_id_int
+        
+        for row in cursor.fetchall():
+            order = dict(row)
+            # Track highest ID
+            if order['id'] > max_seen_id:
+                max_seen_id = order['id']
+            # Determine source
+            source = order.get('source', 'email')
+            if not source and order.get('email_subject'):
+                source = 'whatsapp' if 'whatsapp' in order['email_subject'].lower() else 'email'
+            order['source'] = source
+            # Use nature_produit as fallback for produit
+            if not order.get('produit'):
+                order['produit'] = order.get('nature_produit', 'Produit')
+            new_orders.append(order)
+        
+        return jsonify({'new_orders': new_orders, 'last_id': max_seen_id})
+    except Exception as e:
+        return jsonify({'new_orders': [], 'error': str(e), 'last_id': 0})
+
+
 @app.route('/whatsapp')
 def whatsapp_page():
     """WhatsApp integration page."""
     cursor = db.connection.cursor()
+    
+    # Get WhatsApp orders
     cursor.execute("""
-        SELECT c.*, cl.nom as client_nom, p.type as produit_type
+        SELECT c.*, cl.nom as client_nom, cl.telephone, p.type as produit_type
         FROM commandes c
         LEFT JOIN clients cl ON c.client_id = cl.id
         LEFT JOIN produits p ON c.produit_id = p.id
-        WHERE c.email_subject LIKE 'WhatsApp%'
+        WHERE c.source = 'whatsapp' OR c.email_subject LIKE 'WhatsApp%'
         ORDER BY c.created_at DESC
         LIMIT 20
     """)
     whatsapp_orders = [dict(row) for row in cursor.fetchall()]
+    
+    # WhatsApp stats
+    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp'")
+    total = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND statut = 'en_attente'")
+    pending = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND statut = 'validee'")
+    validated = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND DATE(created_at) = DATE('now')")
+    today = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND created_at >= DATE('now', '-7 days')")
+    this_week = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND created_at >= DATE('now', 'start of month')")
+    this_month = cursor.fetchone()[0]
+    
+    validation_rate = round((validated / total * 100) if total > 0 else 0)
+    
+    whatsapp_stats = {
+        'total': total,
+        'pending': pending,
+        'validated': validated,
+        'today': today,
+        'this_week': this_week,
+        'this_month': this_month,
+        'validation_rate': validation_rate
+    }
+    
+    # Top WhatsApp clients
+    cursor.execute("""
+        SELECT cl.id, cl.nom, COUNT(c.id) as total_orders
+        FROM clients cl
+        JOIN commandes c ON cl.id = c.client_id
+        WHERE c.source = 'whatsapp'
+        GROUP BY cl.id
+        ORDER BY total_orders DESC
+        LIMIT 5
+    """)
+    whatsapp_clients = [dict(row) for row in cursor.fetchall()]
     
     # Get ngrok URL from environment
     ngrok_url = os.getenv('NGROK_URL', 'https://rocio-unfoxy-liltingly.ngrok-free.dev')
     
     return render_template('whatsapp.html', 
                          whatsapp_orders=whatsapp_orders,
+                         whatsapp_stats=whatsapp_stats,
+                         whatsapp_clients=whatsapp_clients,
                          ngrok_url=ngrok_url)
 
 
@@ -361,8 +564,11 @@ def whatsapp_webhook():
         # Get message data from Twilio
         message_data = request.form.to_dict()
         
-        print(f"   De: {message_data.get('From', 'N/A')}")
-        print(f"   Body: {message_data.get('Body', '')[:50]}...")
+        from_number = message_data.get('From', 'N/A')
+        body = message_data.get('Body', '')
+        
+        print(f"   De: {from_number}")
+        print(f"   Body: {body[:50]}...")
         print(f"   Media: {message_data.get('NumMedia', 0)} fichier(s)")
         
         # Process the message
@@ -371,26 +577,34 @@ def whatsapp_webhook():
         # Format for extraction
         formatted = whatsapp.format_for_extraction(result)
         
-        # Extract order data using existing extractor
+        # Extract order data using existing extractor with main db connection
         extractor = DataExtractor(db_manager=db)
         order_data = extractor.extract_from_email(formatted)
         
         response_message = ""
         
         if order_data and order_data.get('est_bon_commande'):
-            # Save to database
+            # Save to database with source = whatsapp
             order_data['email_id'] = f"whatsapp_{result['timestamp']}"
-            order_data['email_subject'] = f"WhatsApp - {result['from']}"
-            order_data['email_from'] = result['from']
+            order_data['email_subject'] = f"WhatsApp - {from_number}"
+            order_data['email_from'] = from_number
+            order_data['source'] = 'whatsapp'
+            order_data['whatsapp_from'] = from_number
+            
+            # Ensure client name defaults to phone number if not extracted
+            if not order_data.get('entreprise_cliente'):
+                phone = from_number.replace('whatsapp:', '')
+                order_data['entreprise_cliente'] = f'Client WhatsApp {phone}'
             
             order_id = db.create_order(order_data)
             
             print(f"   ✅ Commande détectée et enregistrée (ID: {order_id})")
             
             # Prepare confirmation message
+            client_name = order_data.get('entreprise_cliente', from_number)
             response_message = f"""✅ Commande reçue !
 
-📦 Client: {order_data.get('entreprise_cliente', 'N/A')}
+📦 Client: {client_name}
 📋 Produit: {order_data.get('type_produit', 'N/A')}
 🔢 Quantité: {order_data.get('quantite', 'N/A')} {order_data.get('unite', '')}
 🎯 Confiance: {order_data.get('confiance', 0)}%
@@ -401,11 +615,7 @@ Votre commande est en attente de validation."""
             print("   ℹ️ Pas un bon de commande")
             response_message = "Message reçu. Si vous souhaitez passer une commande, veuillez préciser les détails (client, produit, quantité)."
         
-        # Send reply (optional)
-        if result.get('from'):
-            whatsapp.send_reply(result['from'], response_message)
-        
-        # Return TwiML response
+        # Return TwiML response (Twilio will automatically send this as reply)
         from twilio.twiml.messaging_response import MessagingResponse
         resp = MessagingResponse()
         resp.message(response_message)

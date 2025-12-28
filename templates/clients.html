@@ -1,97 +1,70 @@
 {% extends 'base.html' %}
 
-{% block title %}Clients - Gestion Commandes{% endblock %}
+{% block title %}Clients - OrderFlow Pro{% endblock %}
+{% block page_title %}Gestion des Clients{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Clients</span>{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Header -->
-    <div class="flex justify-between items-center">
-        <h1 class="text-3xl font-bold text-gray-800">Gestion des Clients</h1>
-        <p class="text-gray-500">{{ clients|length }} client(s) enregistré(s)</p>
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <p class="text-slate-500">Liste de vos clients et leurs commandes</p>
     </div>
 
-    <!-- Info Card -->
-    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg">
-        <div class="flex items-start">
-            <i class="fas fa-info-circle text-blue-500 text-xl mr-3 mt-1"></i>
-            <div>
-                <p class="font-semibold text-blue-800">Historique intelligent</p>
-                <p class="text-blue-600 text-sm">Le système mémorise les préférences de chaque client pour suggérer automatiquement les détails lors des prochaines commandes.</p>
-            </div>
+    <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full table-pro">
+                <thead>
+                    <tr>
+                        <th>Client</th>
+                        <th>Contact</th>
+                        <th>Commandes</th>
+                        <th>Dernière commande</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for client in clients %}
+                    <tr>
+                        <td>
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-brand-100 rounded-full flex items-center justify-center">
+                                    <span class="text-brand-600 font-bold">{{ (client.nom or 'N')[0]|upper }}</span>
+                                </div>
+                                <div>
+                                    <p class="font-semibold text-slate-800">{{ client.nom or 'N/A' }}</p>
+                                    <p class="text-xs text-slate-500">{{ client.entreprise or '' }}</p>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <p class="text-slate-700">{{ client.email or 'N/A' }}</p>
+                            <p class="text-xs text-slate-400">{{ client.telephone or '' }}</p>
+                        </td>
+                        <td>
+                            <span class="font-bold text-slate-800">{{ client.total_orders or 0 }}</span>
+                            <span class="text-slate-400 text-sm">commande(s)</span>
+                        </td>
+                        <td class="text-slate-600">{{ client.last_order_date[:10] if client.last_order_date else 'N/A' }}</td>
+                        <td>
+                            <a href="/clients/{{ client.id }}" class="text-brand-600 hover:text-brand-700 font-medium text-sm">
+                                <i class="fas fa-eye mr-1"></i>Voir
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center py-16">
+                            <div class="text-slate-400">
+                                <i class="fas fa-users text-5xl mb-4"></i>
+                                <p class="font-medium text-lg">Aucun client</p>
+                                <p class="text-sm">Les clients seront ajoutés automatiquement lors du traitement des commandes</p>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-    </div>
-
-    <!-- Clients Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {% for client in clients %}
-        <div class="bg-white rounded-xl shadow-md overflow-hidden card-hover">
-            <div class="p-6">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center">
-                        <div class="bg-indigo-100 p-3 rounded-full mr-4">
-                            <i class="fas fa-building text-indigo-600 text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-semibold text-gray-800">{{ client.nom }}</h3>
-                            <p class="text-sm text-gray-500">{{ client.email or 'Pas d\'email' }}</p>
-                        </div>
-                    </div>
-                </div>
-
-                {% if client.preferences %}
-                <div class="space-y-3 border-t pt-4">
-                    <div class="flex justify-between text-sm">
-                        <span class="text-gray-500">Total commandes</span>
-                        <span class="font-medium text-gray-800">{{ client.preferences.total_orders }}</span>
-                    </div>
-                    <div class="flex justify-between text-sm">
-                        <span class="text-gray-500">Total dépensé</span>
-                        <span class="font-medium text-green-600">{{ "%.0f"|format(client.preferences.total_spent) }} MAD</span>
-                    </div>
-                    <div class="flex justify-between text-sm">
-                        <span class="text-gray-500">Quantité moyenne</span>
-                        <span class="font-medium text-gray-800">{{ "%.0f"|format(client.preferences.average_quantity) }}</span>
-                    </div>
-                    {% if client.preferences.order_frequency_days %}
-                    <div class="flex justify-between text-sm">
-                        <span class="text-gray-500">Fréquence</span>
-                        <span class="font-medium text-blue-600">~{{ client.preferences.order_frequency_days|int }} jours</span>
-                    </div>
-                    {% endif %}
-
-                    {% if client.preferences.favorite_products %}
-                    <div class="pt-2">
-                        <p class="text-xs text-gray-500 mb-2">Produits favoris:</p>
-                        <div class="flex flex-wrap gap-1">
-                            {% for product, count in client.preferences.favorite_products.items() %}
-                            <span class="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs">
-                                {{ product[:20] }}{% if product|length > 20 %}...{% endif %}
-                            </span>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endif %}
-                </div>
-                {% else %}
-                <div class="text-center py-4 border-t">
-                    <p class="text-gray-400 text-sm">Nouveau client - pas d'historique</p>
-                </div>
-                {% endif %}
-
-                <div class="mt-4 pt-4 border-t">
-                    <a href="/clients/{{ client.id }}" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center justify-center transition">
-                        <i class="fas fa-eye mr-2"></i>Voir détails
-                    </a>
-                </div>
-            </div>
-        </div>
-        {% else %}
-        <div class="col-span-3 bg-white rounded-xl shadow-md p-12 text-center">
-            <i class="fas fa-users text-gray-300 text-6xl mb-4"></i>
-            <p class="text-gray-500 text-lg">Aucun client enregistré</p>
-            <p class="text-gray-400 text-sm mt-2">Les clients seront ajoutés automatiquement lors du traitement des commandes</p>
-        </div>
-        {% endfor %}
     </div>
 </div>
 {% endblock %}

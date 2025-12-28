@@ -29,12 +29,22 @@ class DatabaseManager:
     def __init__(self, db_file=DATABASE_FILE):
         self.db_file = db_file
         self.connection = None
+        self._initialized = False
     
     def connect(self):
         """Connect to the SQLite database."""
         try:
-            self.connection = sqlite3.connect(self.db_file)
+            if self.connection:
+                return True  # Already connected
+            self.connection = sqlite3.connect(
+                self.db_file, 
+                check_same_thread=False,
+                timeout=30.0  # Wait up to 30 seconds for locks
+            )
             self.connection.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrent access
+            self.connection.execute("PRAGMA journal_mode=WAL")
+            self.connection.execute("PRAGMA busy_timeout=30000")
             print(f"✅ Connexion à la base de données: {self.db_file}")
             return True
         except Exception as e:
@@ -44,8 +54,12 @@ class DatabaseManager:
     def disconnect(self):
         """Close the database connection."""
         if self.connection:
-            self.connection.close()
-            print("📤 Déconnexion de la base de données")
+            try:
+                self.connection.close()
+                self.connection = None
+                print("📤 Déconnexion de la base de données")
+            except:
+                pass
     
     def init_database(self):
         """Initialize database with required tables."""
@@ -95,16 +109,38 @@ class DatabaseManager:
                 informations_supplementaires TEXT,
                 confiance INTEGER,
                 statut TEXT DEFAULT 'en_attente',
+                source TEXT DEFAULT 'email',
                 email_id TEXT,
                 email_subject TEXT,
                 email_from TEXT,
+                whatsapp_from TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 validated_at TIMESTAMP,
                 validated_by TEXT,
+                motif_rejet TEXT,
                 FOREIGN KEY (client_id) REFERENCES clients(id),
                 FOREIGN KEY (produit_id) REFERENCES produits(id)
             )
         """)
+        
+        # Add source column if it doesn't exist (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE commandes ADD COLUMN source TEXT DEFAULT 'email'")
+            self.connection.commit()
+        except:
+            pass
+        
+        try:
+            cursor.execute("ALTER TABLE commandes ADD COLUMN whatsapp_from TEXT")
+            self.connection.commit()
+        except:
+            pass
+        
+        try:
+            cursor.execute("ALTER TABLE commandes ADD COLUMN motif_rejet TEXT")
+            self.connection.commit()
+        except:
+            pass
         
         # Create Logs table
         cursor.execute("""
@@ -141,33 +177,63 @@ class DatabaseManager:
         self.connection.commit()
     
     # Client operations
-    def get_or_create_client(self, nom, email=None):
+    def get_or_create_client(self, nom, email=None, telephone=None):
         """Get existing client or create new one."""
         cursor = self.connection.cursor()
+        
+        # Default name if None or empty
+        if not nom or nom.strip() == '':
+            nom = email or telephone or 'Client Inconnu'
         
         # Try to find by name
         cursor.execute("SELECT * FROM clients WHERE nom = ?", (nom,))
         client = cursor.fetchone()
         
         if client:
+            # Update telephone if not set
+            if telephone and not client['telephone']:
+                cursor.execute("UPDATE clients SET telephone = ? WHERE id = ?", (telephone, client['id']))
+                self.connection.commit()
             return dict(client)
         
-        # Create new client
+        # Try to find by email if provided
+        if email:
+            cursor.execute("SELECT * FROM clients WHERE email = ?", (email,))
+            client = cursor.fetchone()
+            if client:
+                return dict(client)
+        
+        # Try to find by telephone if provided
+        if telephone:
+            cursor.execute("SELECT * FROM clients WHERE telephone = ?", (telephone,))
+            client = cursor.fetchone()
+            if client:
+                return dict(client)
+        
+        # Create new client with telephone
         cursor.execute("""
-            INSERT INTO clients (nom, email)
-            VALUES (?, ?)
-        """, (nom, email))
+            INSERT INTO clients (nom, email, telephone)
+            VALUES (?, ?, ?)
+        """, (nom, email, telephone))
         self.connection.commit()
         
         client_id = cursor.lastrowid
         self._log_action("CREATE", "clients", client_id, f"Created client: {nom}")
         
-        return {"id": client_id, "nom": nom, "email": email}
+        return {"id": client_id, "nom": nom, "email": email, "telephone": telephone}
     
     def get_all_clients(self):
-        """Get all clients."""
+        """Get all clients with order statistics."""
         cursor = self.connection.cursor()
-        cursor.execute("SELECT * FROM clients ORDER BY nom")
+        cursor.execute("""
+            SELECT c.*, 
+                   COUNT(cmd.id) as total_orders,
+                   MAX(cmd.created_at) as last_order_date
+            FROM clients c
+            LEFT JOIN commandes cmd ON c.id = cmd.client_id
+            GROUP BY c.id
+            ORDER BY c.nom
+        """)
         return [dict(row) for row in cursor.fetchall()]
     
     # Product operations
@@ -207,9 +273,23 @@ class DatabaseManager:
                 print(f"   ⚠️ Email déjà traité (ID: {existing[0]})")
                 return existing[0]
         
-        # Get or create client
-        client_name = order_data.get('entreprise_cliente', 'Client Inconnu')
-        client = self.get_or_create_client(client_name, order_data.get('email_from'))
+        # Get or create client - use whatsapp number or email as fallback
+        client_name = order_data.get('entreprise_cliente')
+        client_email = order_data.get('email_from') or order_data.get('whatsapp_from')
+        
+        # Extract phone number for WhatsApp orders
+        client_phone = None
+        if order_data.get('whatsapp_from'):
+            client_phone = order_data.get('whatsapp_from', '').replace('whatsapp:', '')
+        
+        # If no client name, use whatsapp number formatted nicely
+        if not client_name or client_name.strip() == '':
+            if client_phone:
+                client_name = f'Client WhatsApp {client_phone}'
+            else:
+                client_name = client_email or 'Client Inconnu'
+        
+        client = self.get_or_create_client(client_name, client_email, client_phone)
         
         # Get product
         product = None
@@ -222,8 +302,8 @@ class DatabaseManager:
                 numero_commande, client_id, produit_id, nature_produit,
                 quantite, unite, prix_unitaire, prix_total, devise,
                 date_commande, date_livraison, informations_supplementaires,
-                confiance, email_id, email_subject, email_from
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confiance, source, email_id, email_subject, email_from, whatsapp_from
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             order_data.get('numero_commande'),
             client['id'],
@@ -238,9 +318,11 @@ class DatabaseManager:
             order_data.get('date_livraison'),
             order_data.get('informations_supplementaires'),
             order_data.get('confiance'),
+            order_data.get('source', 'email'),
             order_data.get('email_id'),
             order_data.get('email_subject'),
-            order_data.get('email_from')
+            order_data.get('email_from'),
+            order_data.get('whatsapp_from')
         ))
         
         self.connection.commit()
@@ -256,7 +338,7 @@ class DatabaseManager:
         """Get order by ID with client and product info."""
         cursor = self.connection.cursor()
         cursor.execute("""
-            SELECT c.*, cl.nom as client_nom, p.type as produit_type
+            SELECT c.*, cl.nom as client_nom, cl.telephone as client_telephone, p.type as produit_type
             FROM commandes c
             LEFT JOIN clients cl ON c.client_id = cl.id
             LEFT JOIN produits p ON c.produit_id = p.id
@@ -353,7 +435,69 @@ class DatabaseManager:
         cursor.execute("SELECT COUNT(*) FROM clients")
         stats['total_clients'] = cursor.fetchone()[0]
         
+        # WhatsApp stats
+        cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp'")
+        stats['whatsapp_total'] = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND statut = 'en_attente'")
+        stats['whatsapp_pending'] = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND statut = 'validee'")
+        stats['whatsapp_validated'] = cursor.fetchone()[0]
+        
+        # Email stats
+        cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'email' OR source IS NULL")
+        stats['email_total'] = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM commandes WHERE (source = 'email' OR source IS NULL) AND statut = 'en_attente'")
+        stats['email_pending'] = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM commandes WHERE (source = 'email' OR source IS NULL) AND statut = 'validee'")
+        stats['email_validated'] = cursor.fetchone()[0]
+        
         return stats
+    
+    def get_top_clients(self, limit=5):
+        """Get top clients by order count and quantity."""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT cl.id, cl.nom, COUNT(c.id) as total_orders, SUM(c.quantite) as total_quantity
+            FROM clients cl
+            LEFT JOIN commandes c ON cl.id = c.client_id
+            WHERE cl.nom IS NOT NULL AND cl.nom != ''
+            GROUP BY cl.id
+            HAVING total_orders > 0
+            ORDER BY total_orders DESC, total_quantity DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def get_top_products(self, limit=5):
+        """Get top products by order count."""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT p.id, p.type, COUNT(c.id) as order_count
+            FROM produits p
+            LEFT JOIN commandes c ON p.id = c.produit_id
+            WHERE p.type IS NOT NULL AND p.type != ''
+            GROUP BY p.id
+            HAVING order_count > 0
+            ORDER BY order_count DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def get_orders_trend(self, days=7):
+        """Get order count per day for the last N days."""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT DATE(created_at) as date, COUNT(*) as count
+            FROM commandes
+            WHERE created_at >= DATE('now', ?)
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        """, (f'-{days} days',))
+        return [dict(row) for row in cursor.fetchall()]
     
     def get_logs(self, limit=50):
         """Get recent logs."""

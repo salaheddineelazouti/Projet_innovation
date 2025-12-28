@@ -1,187 +1,214 @@
 {% extends 'base.html' %}
 
-{% block title %}Commande #{{ order.id }} - Validation{% endblock %}
+{% block title %}Commande #{{ order.id }} - OrderFlow Pro{% endblock %}
+{% block page_title %}Détail de la Commande{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><a href="/orders" class="hover:text-brand-600">Commandes</a><span class="mx-2">/</span><span>#{{ order.id }}</span>{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
     <!-- Header -->
-    <div class="flex justify-between items-center">
-        <div>
-            <a href="/orders" class="text-indigo-600 hover:text-indigo-800 mb-2 inline-block">
-                <i class="fas fa-arrow-left mr-2"></i>Retour aux commandes
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div class="flex items-center gap-4">
+            <a href="/orders" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
+                <i class="fas fa-arrow-left text-slate-600"></i>
             </a>
-            <h1 class="text-3xl font-bold text-gray-800">Commande #{{ order.id }}</h1>
+            <div>
+                <div class="flex items-center gap-3">
+                    <h2 class="text-2xl font-bold text-slate-800">{{ order.numero_commande or 'Commande #' ~ order.id }}</h2>
+                    {% if order.statut == 'en_attente' %}
+                    <span class="badge badge-pending"><i class="fas fa-clock mr-1"></i>En attente</span>
+                    {% elif order.statut == 'validee' %}
+                    <span class="badge badge-validated"><i class="fas fa-check mr-1"></i>Validée</span>
+                    {% elif order.statut == 'rejetee' %}
+                    <span class="badge badge-rejected"><i class="fas fa-times mr-1"></i>Rejetée</span>
+                    {% endif %}
+                </div>
+                <p class="text-slate-500 text-sm mt-1">Reçue le {{ order.date_reception[:10] if order.date_reception else 'N/A' }}</p>
+            </div>
         </div>
-        <div class="flex items-center space-x-2">
-            {% if order.statut == 'en_attente' %}
-            <span class="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-full font-medium">
-                <i class="fas fa-clock mr-2"></i>En attente de validation
-            </span>
-            {% elif order.statut == 'validee' %}
-            <span class="px-4 py-2 bg-green-100 text-green-800 rounded-full font-medium">
-                <i class="fas fa-check-circle mr-2"></i>Validée
-            </span>
-            {% elif order.statut == 'rejetee' %}
-            <span class="px-4 py-2 bg-red-100 text-red-800 rounded-full font-medium">
-                <i class="fas fa-times-circle mr-2"></i>Rejetée
-            </span>
-            {% endif %}
+        {% if order.statut == 'en_attente' %}
+        <div class="flex items-center gap-3">
+            <button onclick="rejectOrder()" class="btn-danger"><i class="fas fa-times"></i>Rejeter</button>
+            <button onclick="validateOrder()" class="btn-success"><i class="fas fa-check"></i>Valider</button>
         </div>
+        {% endif %}
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Main Form -->
+        <!-- Main Info -->
         <div class="lg:col-span-2 space-y-6">
-            <!-- Order Details Card -->
-            <div class="bg-white rounded-xl shadow-md p-6">
-                <h2 class="text-xl font-semibold text-gray-800 mb-6 flex items-center">
-                    <i class="fas fa-file-invoice text-indigo-600 mr-3"></i>
-                    Détails de la commande
-                </h2>
-                
-                <form id="orderForm" class="space-y-6">
+            <!-- Order Details -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-file-invoice text-brand-500"></i>
+                        Informations de la commande
+                    </h3>
+                </div>
+                <div class="p-5">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">N° Commande</label>
-                            <input type="text" name="numero_commande" value="{{ order.numero_commande or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Produit</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.produit_type or 'Non spécifié' }}</p>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Date Commande</label>
-                            <input type="date" name="date_commande" value="{{ order.date_commande or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Client</label>
-                        <input type="text" name="client_nom" value="{{ order.client_nom or '' }}" 
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Type de produit</label>
-                        <select name="produit_id" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                            {% for product in products %}
-                            <option value="{{ product.id }}" {% if order.produit_id == product.id %}selected{% endif %}>
-                                {{ product.type }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Nature du produit</label>
-                        <textarea name="nature_produit" rows="2" 
-                                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">{{ order.nature_produit or '' }}</textarea>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Quantité</label>
-                            <input type="number" name="quantite" value="{{ order.quantite or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantité</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ "{:,.0f}".format(order.quantite or 0) }} {{ order.unite or 'unités' }}</p>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Unité</label>
-                            <input type="text" name="unite" value="{{ order.unite or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dimensions</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.dimensions or 'Non spécifiées' }}</p>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Date Livraison</label>
-                            <input type="date" name="date_livraison" value="{{ order.date_livraison or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Impression</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.impression or 'Non spécifiée' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Matière</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.matiere or 'Non spécifiée' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Source</label>
+                            <p class="mt-1">
+                                {% if order.source == 'whatsapp' %}
+                                <span class="inline-flex items-center px-3 py-1 bg-green-100 text-green-700 rounded-lg text-sm font-medium">
+                                    <i class="fab fa-whatsapp mr-2"></i>WhatsApp
+                                </span>
+                                {% else %}
+                                <span class="inline-flex items-center px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium">
+                                    <i class="fas fa-envelope mr-2"></i>Email
+                                </span>
+                                {% endif %}
+                            </p>
                         </div>
                     </div>
+                    {% if order.details_supplementaires %}
+                    <div class="mt-6 pt-6 border-t border-slate-100">
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Détails supplémentaires</label>
+                        <p class="text-slate-700 mt-2 bg-slate-50 p-4 rounded-lg">{{ order.details_supplementaires }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Edit Form -->
+            {% if order.statut == 'en_attente' %}
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-edit text-brand-500"></i>
+                        Modifier les informations
+                    </h3>
+                </div>
+                <form id="editForm" class="p-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Prix Unitaire</label>
-                            <input type="number" step="0.01" name="prix_unitaire" value="{{ order.prix_unitaire or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Prix Total</label>
-                            <input type="number" step="0.01" name="prix_total" value="{{ order.prix_total or '' }}" 
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Devise</label>
-                            <select name="devise" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-                                <option value="MAD" {% if order.devise == 'MAD' %}selected{% endif %}>MAD</option>
-                                <option value="EUR" {% if order.devise == 'EUR' %}selected{% endif %}>EUR</option>
-                                <option value="USD" {% if order.devise == 'USD' %}selected{% endif %}>USD</option>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Produit</label>
+                            <select name="produit_type" class="input-pro">
+                                <option value="">Sélectionner...</option>
+                                {% for product in products %}
+                                <option value="{{ product.type }}" {% if order.produit_type == product.type %}selected{% endif %}>{{ product.type }}</option>
+                                {% endfor %}
                             </select>
                         </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Quantité</label>
+                            <input type="number" name="quantite" value="{{ order.quantite or '' }}" class="input-pro">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Dimensions</label>
+                            <input type="text" name="dimensions" value="{{ order.dimensions or '' }}" class="input-pro" placeholder="ex: 30x40 cm">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Impression</label>
+                            <input type="text" name="impression" value="{{ order.impression or '' }}" class="input-pro" placeholder="ex: 2 couleurs">
+                        </div>
                     </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Informations supplémentaires</label>
-                        <textarea name="informations_supplementaires" rows="3" 
-                                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">{{ order.informations_supplementaires or '' }}</textarea>
-                    </div>
-
-                    <div class="flex justify-end">
-                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg transition">
-                            <i class="fas fa-save mr-2"></i>Sauvegarder les modifications
-                        </button>
+                    <div class="mt-4">
+                        <button type="submit" class="btn-primary"><i class="fas fa-save"></i>Enregistrer</button>
                     </div>
                 </form>
             </div>
+            {% endif %}
         </div>
 
         <!-- Sidebar -->
         <div class="space-y-6">
-            <!-- Confidence Card -->
-            <div class="bg-white rounded-xl shadow-md p-6">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">Niveau de confiance IA</h3>
-                <div class="text-center">
-                    <div class="relative inline-flex items-center justify-center w-32 h-32">
-                        <svg class="w-32 h-32 transform -rotate-90">
-                            <circle cx="64" cy="64" r="56" stroke="#e5e7eb" stroke-width="12" fill="none"/>
-                            <circle cx="64" cy="64" r="56" 
-                                    stroke="{% if order.confiance >= 80 %}#22c55e{% elif order.confiance >= 50 %}#eab308{% else %}#ef4444{% endif %}" 
-                                    stroke-width="12" fill="none"
-                                    stroke-dasharray="{{ (order.confiance or 0) * 3.52 }} 352"
-                                    stroke-linecap="round"/>
-                        </svg>
-                        <span class="absolute text-3xl font-bold {% if order.confiance >= 80 %}text-green-600{% elif order.confiance >= 50 %}text-yellow-600{% else %}text-red-600{% endif %}">
-                            {{ order.confiance or 0 }}%
-                        </span>
+            <!-- Client Info -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-building text-brand-500"></i>
+                        Client
+                    </h3>
+                </div>
+                <div class="p-5">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 bg-brand-100 rounded-full flex items-center justify-center">
+                            <span class="text-brand-600 font-bold text-lg">{{ (order.client_nom or 'N')[0]|upper }}</span>
+                        </div>
+                        <div>
+                            <p class="font-semibold text-slate-800">{{ order.client_nom or 'Non spécifié' }}</p>
+                            <p class="text-sm text-slate-500">{{ order.client_entreprise or '' }}</p>
+                        </div>
+                    </div>
+                    <div class="space-y-3 text-sm">
+                        {% if order.client_email %}
+                        <div class="flex items-center gap-2 text-slate-600">
+                            <i class="fas fa-envelope w-5 text-slate-400"></i>
+                            <span>{{ order.client_email }}</span>
+                        </div>
+                        {% endif %}
+                        {% if order.client_telephone %}
+                        <div class="flex items-center gap-2 text-slate-600">
+                            <i class="fas fa-phone w-5 text-slate-400"></i>
+                            <span>{{ order.client_telephone }}</span>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
 
-            <!-- Actions Card -->
-            {% if order.statut == 'en_attente' %}
-            <div class="bg-white rounded-xl shadow-md p-6">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">Actions</h3>
-                <div class="space-y-3">
-                    <button onclick="validateOrder()" class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded-lg transition flex items-center justify-center">
-                        <i class="fas fa-check-circle mr-2"></i>Valider la commande
-                    </button>
-                    <button onclick="rejectOrder()" class="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg transition flex items-center justify-center">
-                        <i class="fas fa-times-circle mr-2"></i>Rejeter la commande
-                    </button>
+            <!-- Timeline -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-history text-brand-500"></i>
+                        Historique
+                    </h3>
                 </div>
-            </div>
-            {% endif %}
-
-            <!-- Email Info Card -->
-            <div class="bg-white rounded-xl shadow-md p-6">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">Source Email</h3>
-                <div class="space-y-3 text-sm">
-                    <div>
-                        <span class="text-gray-500">De:</span>
-                        <p class="text-gray-800">{{ order.email_from or 'N/A' }}</p>
-                    </div>
-                    <div>
-                        <span class="text-gray-500">Sujet:</span>
-                        <p class="text-gray-800">{{ order.email_subject or 'N/A' }}</p>
-                    </div>
-                    <div>
-                        <span class="text-gray-500">Traité le:</span>
-                        <p class="text-gray-800">{{ order.created_at or 'N/A' }}</p>
+                <div class="p-5">
+                    <div class="space-y-4">
+                        <div class="flex gap-3">
+                            <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-inbox text-blue-600 text-xs"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">Commande reçue</p>
+                                <p class="text-xs text-slate-500">{{ order.date_reception or 'N/A' }}</p>
+                            </div>
+                        </div>
+                        {% if order.statut == 'validee' %}
+                        <div class="flex gap-3">
+                            <div class="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-check text-emerald-600 text-xs"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">Validée</p>
+                                <p class="text-xs text-slate-500">Par {{ order.validated_by or 'Commercial' }}</p>
+                            </div>
+                        </div>
+                        {% elif order.statut == 'rejetee' %}
+                        <div class="flex gap-3">
+                            <div class="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-times text-red-600 text-xs"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">Rejetée</p>
+                                <p class="text-xs text-slate-500">{{ order.motif_rejet or 'Aucun motif' }}</p>
+                            </div>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -189,93 +216,146 @@
     </div>
 </div>
 
-<!-- Toast Notification -->
-<div id="toast" class="fixed bottom-4 right-4 transform translate-y-full opacity-0 transition-all duration-300">
-    <div class="bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-3">
-        <i id="toast-icon" class="fas fa-check-circle text-green-400"></i>
-        <span id="toast-message">Message</span>
+<!-- Modal de Confirmation Validation -->
+<div id="validateModal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="closeModal('validateModal')"></div>
+    <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="relative w-full max-w-md mx-4 animate-modal pointer-events-auto">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden">
+                <div class="p-6 text-center">
+                    <div class="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-check text-emerald-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">Valider la commande</h3>
+                    <p class="text-slate-500">Êtes-vous sûr de vouloir valider cette commande ?<br>Cette action confirmera la commande au client.</p>
+                </div>
+                <div class="flex border-t border-slate-100">
+                    <button onclick="closeModal('validateModal')" class="flex-1 py-4 text-slate-600 font-semibold hover:bg-slate-50 transition">
+                        Annuler
+                    </button>
+                    <button onclick="confirmValidation()" class="flex-1 py-4 bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition">
+                        <i class="fas fa-check mr-2"></i>Confirmer
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
+
+<!-- Modal de Rejet -->
+<div id="rejectModal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="closeModal('rejectModal')"></div>
+    <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="relative w-full max-w-md mx-4 animate-modal pointer-events-auto">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden">
+                <div class="p-6">
+                    <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-times text-red-600 text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-800 mb-2 text-center">Rejeter la commande</h3>
+                    <p class="text-slate-500 text-center mb-4">Veuillez indiquer le motif du rejet</p>
+                    <textarea id="rejectReason" rows="3" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent transition resize-none" placeholder="Motif du rejet..."></textarea>
+                </div>
+                <div class="flex border-t border-slate-100">
+                    <button onclick="closeModal('rejectModal')" class="flex-1 py-4 text-slate-600 font-semibold hover:bg-slate-50 transition">
+                        Annuler
+                    </button>
+                    <button onclick="confirmRejection()" class="flex-1 py-4 bg-red-500 text-white font-semibold hover:bg-red-600 transition">
+                        <i class="fas fa-times mr-2"></i>Rejeter
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Succès -->
+<div id="successModal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="relative w-full max-w-sm mx-4 animate-modal pointer-events-auto">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden p-8 text-center">
+                <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-check-circle text-emerald-500 text-4xl"></i>
+                </div>
+                <h3 id="successTitle" class="text-xl font-bold text-slate-800 mb-2">Succès</h3>
+                <p id="successMessage" class="text-slate-500">Opération effectuée avec succès</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    @keyframes modalIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    .animate-modal { animation: modalIn 0.2s ease-out; }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const orderId = {{ order.id }};
-
-function showToast(message, isSuccess = true) {
-    const toast = document.getElementById('toast');
-    const icon = document.getElementById('toast-icon');
-    const msg = document.getElementById('toast-message');
-    
-    msg.textContent = message;
-    icon.className = isSuccess ? 'fas fa-check-circle text-green-400' : 'fas fa-exclamation-circle text-red-400';
-    
-    toast.classList.remove('translate-y-full', 'opacity-0');
-    
-    setTimeout(() => {
-        toast.classList.add('translate-y-full', 'opacity-0');
-    }, 3000);
+function validateOrder() {
+    document.getElementById('validateModal').classList.remove('hidden');
 }
 
-document.getElementById('orderForm').addEventListener('submit', async (e) => {
+function rejectOrder() {
+    document.getElementById('rejectModal').classList.remove('hidden');
+}
+
+function closeModal(id) {
+    document.getElementById(id).classList.add('hidden');
+}
+
+function showSuccess(title, message) {
+    document.getElementById('successTitle').textContent = title;
+    document.getElementById('successMessage').textContent = message;
+    const modal = document.getElementById('successModal');
+    modal.classList.remove('hidden');
+    setTimeout(() => location.reload(), 1500);
+}
+
+function confirmValidation() {
+    closeModal('validateModal');
+    fetch('/api/orders/{{ order.id }}/validate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({validated_by: 'Commercial'})
+    }).then(() => showSuccess('Commande validée', 'La commande a été validée avec succès'));
+}
+
+function confirmRejection() {
+    const reason = document.getElementById('rejectReason').value.trim();
+    if(!reason) {
+        document.getElementById('rejectReason').classList.add('ring-2', 'ring-red-500');
+        return;
+    }
+    closeModal('rejectModal');
+    fetch('/api/orders/{{ order.id }}/reject', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({reason: reason, rejected_by: 'Commercial'})
+    }).then(() => showSuccess('Commande rejetée', 'La commande a été rejetée'));
+}
+
+document.getElementById('editForm')?.addEventListener('submit', function(e) {
     e.preventDefault();
-    
-    const formData = new FormData(e.target);
+    const formData = new FormData(this);
     const data = Object.fromEntries(formData);
     
-    try {
-        const response = await fetch(`/api/orders/${orderId}/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        
-        const result = await response.json();
-        showToast(result.message, result.success);
-    } catch (error) {
-        showToast('Erreur lors de la sauvegarde', false);
-    }
+    fetch('/api/orders/{{ order.id }}/update', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    }).then(() => showSuccess('Enregistré', 'Les modifications ont été enregistrées'));
 });
 
-async function validateOrder() {
-    if (!confirm('Voulez-vous valider cette commande ?')) return;
-    
-    try {
-        const response = await fetch(`/api/orders/${orderId}/validate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ validated_by: 'Commercial' })
-        });
-        
-        const result = await response.json();
-        showToast(result.message, result.success);
-        
-        if (result.success) {
-            setTimeout(() => location.reload(), 1000);
-        }
-    } catch (error) {
-        showToast('Erreur lors de la validation', false);
+// Fermer modales avec Escape
+document.addEventListener('keydown', e => {
+    if(e.key === 'Escape') {
+        document.querySelectorAll('#validateModal, #rejectModal').forEach(m => m.classList.add('hidden'));
     }
-}
-
-async function rejectOrder() {
-    if (!confirm('Voulez-vous rejeter cette commande ?')) return;
-    
-    try {
-        const response = await fetch(`/api/orders/${orderId}/reject`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        
-        const result = await response.json();
-        showToast(result.message, result.success);
-        
-        if (result.success) {
-            setTimeout(() => location.reload(), 1000);
-        }
-    } catch (error) {
-        showToast('Erreur lors du rejet', false);
-    }
-}
+});
 </script>
 {% endblock %}

@@ -267,18 +267,32 @@ CONTENU:
         """Use OpenAI to extract structured data from content."""
         
         prompt = f"""Tu es un assistant spécialisé dans l'extraction de données de bons de commande.
+Tu comprends le français, l'arabe et la darija marocaine (dialecte marocain).
+
+IMPORTANT - Vocabulaire Darija/Arabe pour commandes:
+- "bghit" / "بغيت" = je veux
+- "khassni" / "خصني" = j'ai besoin de
+- "3tini" / "عطيني" = donne-moi
+- "sachet" / "ساشي" / "ساشة" = sachets
+- "carton" / "كرتون" / "قرطون" = carton
+- "kraft" = papier kraft
+- "sandwich" / "سندويش" = sandwich
+- "tacos" / "طاكوس" = tacos
+- "pièces" / "قطعة" = pièces
 
 L'entreprise fabrique 4 types de produits d'emballage:
-1. Sachets fond plat
-2. Sac fond carré sans poignées
-3. Sac fond carré avec poignées plates
-4. Sac fond carré avec poignées torsadées
+1. Sachets fond plat - pour sandwichs, tacos, viennoiseries
+2. Sac fond carré sans poignées - emballage standard
+3. Sac fond carré avec poignées plates - sacs shopping
+4. Sac fond carré avec poignées torsadées - sacs premium
 
 Analyse le contenu suivant et extrais les informations du bon de commande.
+MÊME si le message est informel ou en darija, essaie d'identifier s'il s'agit d'une demande de commande.
+
 Retourne les données au format JSON avec les champs suivants:
-- numero_commande: string (numéro du bon de commande)
-- entreprise_cliente: string (nom de l'entreprise qui passe la commande)
-- type_produit: string (un des 4 types listés ci-dessus, ou null si non identifiable)
+- numero_commande: string (numéro du bon de commande, peut être null)
+- entreprise_cliente: string (nom du client ou source du message)
+- type_produit: string (un des 4 types listés ci-dessus, déduis le type approprié)
 - nature_produit: string (détails spécifiques du produit)
 - quantite: number (quantité commandée)
 - unite: string (unité de mesure: pièces, kg, etc.)
@@ -286,10 +300,12 @@ Retourne les données au format JSON avec les champs suivants:
 - date_livraison: string (date de livraison souhaitée, si mentionnée)
 - prix_unitaire: number (prix unitaire si mentionné)
 - prix_total: number (prix total si mentionné)
-- devise: string (EUR, MAD, USD, etc.)
-- informations_supplementaires: string (autres informations pertinentes)
+- devise: string (EUR, MAD, USD, etc. - défaut MAD au Maroc)
+- informations_supplementaires: string (autres informations pertinentes, garde le texte original aussi)
 - confiance: number (niveau de confiance de 0 à 100)
-- est_bon_commande: boolean (true si c'est bien un bon de commande)
+- est_bon_commande: boolean (true si c'est une demande de produits/commande, même informelle)
+
+RÈGLE IMPORTANTE: Si quelqu'un demande des sachets, sacs, ou emballages avec une quantité, c'est une commande (est_bon_commande: true).
 
 Si une information n'est pas trouvée, utilise null.
 
@@ -302,7 +318,7 @@ Réponds UNIQUEMENT avec le JSON, sans texte additionnel."""
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "Tu es un expert en extraction de données de documents commerciaux. Tu réponds uniquement en JSON valide."},
+                    {"role": "system", "content": "Tu es un expert en extraction de données de documents commerciaux au Maroc. Tu comprends le français, l'arabe standard et la darija marocaine. Tu réponds uniquement en JSON valide."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,
