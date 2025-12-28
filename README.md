@@ -1,4 +1,4 @@
-# 🚀 Système d'Automatisation des Bons de Commande
+# 🚀 OrderFlow - Système d'Automatisation des Bons de Commande
 
 ## 📋 Description du Projet
 
@@ -8,8 +8,9 @@ Système intelligent d'automatisation de la saisie des bons de commande utilisan
 - Automatiser la réception et l'extraction des commandes depuis **Email** et **WhatsApp**
 - Utiliser l'IA pour extraire les données structurées (client, produit, quantité, prix...)
 - Détecter automatiquement les **relances/renouvellements** de commandes
-- Fournir une interface web pour la validation par l'équipe commerciale
-- Envoyer des confirmations automatiques aux clients
+- Supporter le **Darija marocain** (dialecte arabe) pour les commandes vocales
+- Fournir une interface web moderne pour la validation par l'équipe commerciale
+- Envoyer des confirmations automatiques aux clients via WhatsApp
 
 ---
 
@@ -25,25 +26,27 @@ Système intelligent d'automatisation de la saisie des bons de commande utilisan
 ┌─────────────────────────────────────────┐
 │         DATA EXTRACTOR (OpenAI)         │
 │  - GPT-4o pour extraction texte         │
-│  - Vision pour images                   │
-│  - Whisper pour audio (Darija)          │
+│  - Vision pour images/PDF               │
+│  - Whisper pour audio (Darija/Arabe)    │
 │  - Détection relances automatique       │
+│  - Extraction noms clients intelligente │
 └────────────────────┬────────────────────┘
                      │
                      ▼
 ┌─────────────────────────────────────────┐
 │           BASE DE DONNÉES               │
-│  - SQLite (orders.db)                   │
+│  - SQLite avec WAL mode                 │
 │  - Clients, Produits, Commandes         │
 │  - Historique pour auto-remplissage     │
+│  - Gestion multi-connexions             │
 └────────────────────┬────────────────────┘
                      │
                      ▼
 ┌─────────────────────────────────────────┐
 │         INTERFACE WEB (Flask)           │
-│  - Dashboard & Analytics                │
+│  - Dashboard avec stats par canal       │
+│  - Notifications temps réel             │
 │  - Validation/Rejet des commandes       │
-│  - Gestion clients & alertes            │
 │  - Export Excel/PDF/CSV                 │
 └─────────────────────────────────────────┘
 ```
@@ -56,31 +59,31 @@ Système intelligent d'automatisation de la saisie des bons de commande utilisan
 Projet_innovation/
 ├── app.py                  # Application Flask principale
 ├── gmail_receiver.py       # Réception emails via IMAP
-├── whatsapp_receiver.py    # Intégration WhatsApp/Twilio
-├── data_extractor.py       # Extraction IA (OpenAI)
+├── whatsapp_receiver.py    # Intégration WhatsApp/Twilio + Whisper
+├── data_extractor.py       # Extraction IA (OpenAI GPT-4o)
 ├── database.py             # Gestion base de données SQLite
-├── process_orders.py       # Orchestration du traitement
+├── process_orders.py       # Orchestration du traitement emails
 ├── analytics.py            # Statistiques & rapports
 ├── orders.db               # Base de données SQLite
 ├── .env                    # Variables d'environnement (secrets)
 ├── requirements.txt        # Dépendances Python
 ├── ngrok.exe               # Tunnel pour webhook WhatsApp
 │
-├── templates/              # Templates HTML (Jinja2)
-│   ├── base.html           # Template de base
-│   ├── index.html          # Dashboard
+├── templates/              # Templates HTML (Jinja2 + TailwindCSS)
+│   ├── base.html           # Template de base avec notifications
+│   ├── index.html          # Dashboard avec stats par canal
 │   ├── orders.html         # Liste des commandes
 │   ├── order_detail.html   # Détail & validation
 │   ├── clients.html        # Gestion clients
-│   ├── client_detail.html  # Détail client
+│   ├── client_detail.html  # Détail client avec historique
 │   ├── analytics.html      # Tableau de bord avancé
 │   ├── alerts.html         # Système d'alertes
-│   ├── whatsapp.html       # Configuration WhatsApp
-│   └── process.html        # Traitement emails
+│   ├── whatsapp.html       # Stats WhatsApp
+│   └── process.html        # Traitement emails avec progress bar
 │
 ├── whatsapp_media/         # Médias WhatsApp téléchargés
 ├── attachments/            # Pièces jointes emails
-└── reports/                # Rapports générés
+└── exports/                # Fichiers exportés
 ```
 
 ---
@@ -145,14 +148,18 @@ python app.py
 
 L'application sera disponible sur: **http://localhost:5000**
 
-### 4. Configurer WhatsApp (optionnel)
+### 4. Configurer WhatsApp
 
 ```bash
 # Démarrer le tunnel ngrok
 .\ngrok.exe http 5000
 
-# Copier l'URL ngrok dans Twilio Console > WhatsApp Sandbox
-# Webhook: https://xxxxx.ngrok-free.dev/webhook/whatsapp
+# Configurer dans Twilio Console > Messaging > WhatsApp Sandbox:
+# - When a message comes in: https://xxxxx.ngrok-free.dev/webhook/whatsapp
+# - Status callback URL: (optionnel)
+
+# Pour recevoir les messages, les utilisateurs doivent d'abord envoyer:
+# "join <sandbox-keyword>" au numéro WhatsApp Twilio
 ```
 
 ---
@@ -160,41 +167,99 @@ L'application sera disponible sur: **http://localhost:5000**
 ## 📱 Fonctionnalités
 
 ### 1. Extraction Email
-- Connexion IMAP à Gmail
-- Récupération des emails récents
+- Connexion IMAP sécurisée à Gmail
+- Récupération intelligente des emails (évite les doublons)
 - Extraction du texte des pièces jointes (PDF, images)
 - Analyse IA pour détecter les bons de commande
+- Progress bar temps réel pendant le traitement
 
 ### 2. Extraction WhatsApp
 - Réception via webhook Twilio
 - Support des messages:
-  - **Texte** - Extraction directe
+  - **Texte** - Extraction directe avec patterns Darija
   - **Images** - OCR avec GPT-4o Vision
-  - **Audio** - Transcription Whisper (Darija/Arabe supporté)
-  - **Documents PDF** - Extraction PyPDF2
+  - **Audio** - Transcription Whisper optimisée Darija/Arabe
+  - **Documents PDF** - Extraction PyPDF2 + Vision
+- Confirmation automatique au client
 
-### 3. Détection de Relances
-Le système détecte automatiquement les expressions comme:
+### 3. Support Darija Marocain 🇲🇦
+
+Le système comprend le vocabulaire marocain:
+- "bghit" / "بغيت" = je veux
+- "khassni" / "خصني" = j'ai besoin de
+- "3tini" / "عطيني" = donne-moi
+- "sachet" / "ساشي" = sachets
+- "ana restaurant X" = identification client
+
+**Prompt Whisper optimisé** pour la transcription audio en Darija.
+
+### 4. Extraction Intelligente des Noms de Clients
+
+Le système détecte le nom du client depuis plusieurs patterns:
+- "Commande pour [CLIENT]" → Ecole Mohamadia des Ingénieurs
+- "ana [nom]" / "أنا [nom]" → Restaurant Salah Eddine
+- "de la part de [nom]" → Café Central
+
+**Important**: Le numéro de téléphone n'est pas utilisé comme identifiant unique - un même numéro peut commander pour différentes entreprises.
+
+### 5. Détection de Relances Automatique
+
+Le système détecte les expressions comme:
 - "kif dima", "b7al dima", "comme d'habitude"
 - "même commande", "relancer", "renouveler"
-- "comme toujours", "pareil", "comme avant"
+- "comme toujours", "pareil", "comme la dernière fois"
 
-Et remplit automatiquement les détails depuis l'historique client.
+Et remplit automatiquement depuis l'historique:
+- Produit commandé précédemment
+- Quantité habituelle
+- Prix négocié
 
-### 4. Interface Web
+### 6. Notifications WhatsApp
+
+Lors de la **validation** d'une commande:
+```
+✅ Commande Validée!
+
+Votre commande a été validée avec succès.
+📦 Produit: Sachets fond plat
+🔢 Quantité: 5000 pièces
+
+Merci pour votre confiance!
+```
+
+Lors du **rejet** d'une commande:
+```
+❌ Commande Non Validée
+
+Votre commande n'a pas pu être validée.
+Raison: [motif de rejet]
+
+Veuillez nous contacter pour plus d'informations.
+```
+
+### 7. Interface Web Moderne
 
 | Route | Description |
 |-------|-------------|
-| `/` | Dashboard principal |
-| `/orders` | Liste des commandes |
-| `/orders/<id>` | Détail & validation |
+| `/` | Dashboard avec stats Email/WhatsApp, graphique tendances |
+| `/orders` | Liste des commandes avec filtres |
+| `/orders/<id>` | Détail, modification & validation |
 | `/clients` | Gestion des clients |
+| `/clients/<id>` | Détail client avec historique commandes |
 | `/analytics` | Statistiques avancées |
 | `/alerts` | Système d'alertes |
-| `/whatsapp` | Configuration WhatsApp |
-| `/process` | Traitement des emails |
+| `/whatsapp` | Stats et KPIs WhatsApp |
+| `/process` | Traitement des emails avec progress bar |
 
-### 5. API REST
+### 8. Dashboard
+
+- **Stats par canal**: Commandes Email vs WhatsApp
+- **Graphique tendances**: Évolution sur 30 jours
+- **Top clients**: Les plus actifs
+- **Top produits**: Les plus commandés
+- **Notifications temps réel**: Toast + son
+
+### 9. API REST
 
 | Endpoint | Méthode | Description |
 |----------|---------|-------------|
@@ -202,15 +267,15 @@ Et remplit automatiquement les détails depuis l'historique client.
 | `/api/orders/<id>/validate` | POST | Valider une commande |
 | `/api/orders/<id>/reject` | POST | Rejeter une commande |
 | `/api/orders/<id>/update` | POST | Modifier une commande |
-| `/api/stats` | GET | Statistiques |
-| `/api/whatsapp/status` | GET | Statut WhatsApp |
+| `/api/stats` | GET | Statistiques globales |
+| `/api/notifications/check` | GET | Polling nouvelles commandes |
 | `/webhook/whatsapp` | POST | Webhook Twilio |
 
-### 6. Exports
+### 10. Exports
 
-- **Excel** - `/export/excel`
-- **PDF** - `/export/pdf`
-- **CSV** - `/export/csv`
+- **Excel** - `/export/excel` - Toutes les commandes
+- **PDF** - `/export/pdf` - Rapport formaté
+- **CSV** - `/export/csv` - Données brutes
 
 ---
 
@@ -218,33 +283,67 @@ Et remplit automatiquement les détails depuis l'historique client.
 
 L'entreprise fabrique 4 types de produits d'emballage:
 
-1. **Sachets fond plat**
-2. **Sac fond carré sans poignées**
-3. **Sac fond carré avec poignées plates**
-4. **Sac fond carré avec poignées torsadées**
+| Type | Description |
+|------|-------------|
+| Sachets fond plat | Pour sandwichs, tacos, viennoiseries |
+| Sac fond carré sans poignées | Emballage standard |
+| Sac fond carré avec poignées plates | Sacs shopping |
+| Sac fond carré avec poignées torsadées | Sacs premium |
 
 ---
 
 ## 🗄️ Base de Données
 
+### Configuration SQLite
+- **Mode WAL** pour accès concurrent
+- **Busy timeout** 30 secondes
+- **check_same_thread=False** pour Flask
+
 ### Tables
 
 **`clients`**
-- id, nom, email, telephone, adresse, created_at
+```sql
+- id INTEGER PRIMARY KEY
+- nom TEXT NOT NULL
+- email TEXT
+- telephone TEXT
+- adresse TEXT
+- created_at TIMESTAMP
+```
 
 **`produits`**
-- id, type, description
+```sql
+- id INTEGER PRIMARY KEY
+- type TEXT NOT NULL
+- description TEXT
+```
 
 **`commandes`**
-- id, numero_commande, client_id, produit_id
-- nature_produit, quantite, unite
-- prix_unitaire, prix_total, devise
-- date_livraison, email_id, email_subject, email_from
-- confiance, statut, validated_by, validated_at
-- created_at
-
-**`logs`**
-- id, action, details, created_at
+```sql
+- id INTEGER PRIMARY KEY
+- numero_commande TEXT
+- client_id INTEGER (FK)
+- produit_id INTEGER (FK)
+- nature_produit TEXT
+- quantite REAL
+- unite TEXT
+- prix_unitaire REAL
+- prix_total REAL
+- devise TEXT DEFAULT 'MAD'
+- date_commande TEXT
+- date_livraison TEXT
+- email_id TEXT UNIQUE
+- email_subject TEXT
+- email_from TEXT
+- whatsapp_from TEXT
+- source TEXT DEFAULT 'email'
+- confiance INTEGER
+- statut TEXT DEFAULT 'en_attente'
+- validated_by TEXT
+- validated_at TIMESTAMP
+- rejection_reason TEXT
+- created_at TIMESTAMP
+```
 
 ---
 
@@ -254,24 +353,33 @@ L'entreprise fabrique 4 types de produits d'emballage:
 1. EMAIL/WHATSAPP REÇU
         │
         ▼
-2. DÉTECTION RELANCE ?
+2. VÉRIFICATION DOUBLON
+   Email déjà traité? → Skip
+        │
+        ▼
+3. DÉTECTION RELANCE ?
    ├── OUI → Recherche historique client
    │         Auto-remplissage des champs
+   │         Nom client exact depuis BDD
    │         Confiance boostée à 85%
    │
    └── NON → Extraction standard OpenAI
+             Détection nom client dans message
              Confiance calculée par l'IA
         │
         ▼
-3. ENREGISTREMENT BASE DE DONNÉES
-   Statut: "en_attente"
+4. ENREGISTREMENT BASE DE DONNÉES
+   - Création/récupération client
+   - Statut: "en_attente"
+   - Notification temps réel UI
         │
         ▼
-4. VALIDATION COMMERCIALE (Interface web)
+5. VALIDATION COMMERCIALE (Interface web)
    ├── VALIDER → Statut: "validee"
    │             Notification WhatsApp ✅
    │
    └── REJETER → Statut: "rejetee"
+                 Motif enregistré
                  Notification WhatsApp ❌
 ```
 
@@ -279,12 +387,13 @@ L'entreprise fabrique 4 types de produits d'emballage:
 
 ## 📊 Statistiques & Analytics
 
-- Nombre de commandes par statut
-- Volume total des commandes
-- Clients les plus actifs
-- Produits les plus commandés
-- Taux de validation
-- Alertes automatiques (anomalies, retards...)
+- **Par statut**: En attente, Validées, Rejetées
+- **Par canal**: Email vs WhatsApp
+- **Par période**: Aujourd'hui, semaine, mois
+- **Top clients**: Volume et fréquence
+- **Top produits**: Les plus commandés
+- **Taux de validation**: Ratio validées/total
+- **Graphique tendances**: Chart.js
 
 ---
 
@@ -294,6 +403,7 @@ L'entreprise fabrique 4 types de produits d'emballage:
 - Mots de passe d'application Gmail (pas le mot de passe principal)
 - Authentification Twilio pour les médias
 - Validation côté serveur des données
+- Timeout OpenAI configurable (120s)
 
 ---
 
@@ -301,34 +411,52 @@ L'entreprise fabrique 4 types de produits d'emballage:
 
 | Technologie | Usage |
 |-------------|-------|
-| **Python 3.x** | Langage principal |
-| **Flask** | Framework web |
-| **OpenAI GPT-4o** | Extraction IA |
-| **OpenAI Whisper** | Transcription audio |
+| **Python 3.11+** | Langage principal |
+| **Flask 3.x** | Framework web |
+| **OpenAI GPT-4o** | Extraction IA texte/vision |
+| **OpenAI Whisper** | Transcription audio Darija |
 | **Twilio** | WhatsApp API |
-| **SQLite** | Base de données |
-| **TailwindCSS** | Styling UI |
+| **SQLite** | Base de données (WAL mode) |
+| **TailwindCSS** | Styling UI moderne |
+| **Chart.js** | Graphiques |
 | **Font Awesome** | Icônes |
-| **Jinja2** | Templates |
+| **Jinja2** | Templates HTML |
 
 ---
 
-## 📞 Support
+## 🐛 Résolution de Problèmes
 
-Pour toute question ou problème:
-- Vérifier les logs dans la console Flask
-- Consulter la page `/whatsapp` pour le statut
-- Tester avec `/api/whatsapp/status`
+### WhatsApp ne reçoit pas les notifications
+1. Vérifier que le client a rejoint le sandbox Twilio
+2. Vérifier le format du numéro (whatsapp:+212...)
+3. Consulter les logs Twilio
+
+### Emails traités en double
+- Le système utilise `email_id` unique
+- WAL checkpoint force la synchronisation
+
+### Transcription audio incorrecte
+- Whisper est configuré avec `language="ar"` et prompt Darija
+- Les fichiers audio sont téléchargés localement avant transcription
+
+### Nom client incorrect
+- Vérifier que le message contient le nom (patterns supportés)
+- Le numéro de téléphone seul → "Client WhatsApp +XXX"
 
 ---
 
 ## 📝 Changelog
 
-### v1.0.0
-- ✅ Extraction emails Gmail
-- ✅ Interface web de validation
-- ✅ Base de données SQLite
-- ✅ Analytics & exports
+### v2.0.0 (28/12/2024)
+- ✅ Dashboard redesigné avec stats par canal
+- ✅ Notifications temps réel avec toast et son
+- ✅ Support complet Darija marocain (Whisper + GPT-4)
+- ✅ Extraction intelligente noms clients
+- ✅ Gestion multi-clients par téléphone
+- ✅ Notifications WhatsApp validation/rejet
+- ✅ Progress bar traitement emails
+- ✅ Correction affichage "Il y a X min"
+- ✅ WAL checkpoint pour sync base de données
 
 ### v1.1.0
 - ✅ Intégration WhatsApp/Twilio
@@ -336,12 +464,21 @@ Pour toute question ou problème:
 - ✅ Notifications validation/rejet
 - ✅ Détection automatique des relances
 
+### v1.0.0
+- ✅ Extraction emails Gmail
+- ✅ Interface web de validation
+- ✅ Base de données SQLite
+- ✅ Analytics & exports
+
 ---
 
 ## 👥 Auteurs
 
 Projet développé dans le cadre d'un projet d'innovation.
 
+**Encadré par**: [Nom de l'encadrant]  
+**Réalisé par**: Salah Eddine ELAZZOUTI
+
 ---
 
-*Documentation générée le 27/12/2024*
+*Documentation mise à jour le 28/12/2024*

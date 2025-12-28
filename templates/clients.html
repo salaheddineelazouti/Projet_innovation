@@ -8,11 +8,65 @@
 <div class="space-y-6">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <p class="text-slate-500">Liste de vos clients et leurs commandes</p>
+        <div class="flex items-center gap-2">
+            <span class="text-sm text-slate-500">{{ clients|length }} client(s)</span>
+        </div>
+    </div>
+
+    <!-- Search and Filters -->
+    <div class="card p-4">
+        <div class="flex flex-col lg:flex-row gap-4">
+            <!-- Search -->
+            <div class="flex-1">
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                    <input type="text" id="searchInput" placeholder="Rechercher par nom, email ou téléphone..." 
+                           class="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition">
+                </div>
+            </div>
+            
+            <!-- Filters -->
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Filter by order count -->
+                <select id="filterOrders" class="px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm">
+                    <option value="">Toutes les commandes</option>
+                    <option value="0">Sans commande</option>
+                    <option value="1-5">1-5 commandes</option>
+                    <option value="5-10">5-10 commandes</option>
+                    <option value="10+">10+ commandes</option>
+                </select>
+                
+                <!-- Filter by source -->
+                <select id="filterSource" class="px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm">
+                    <option value="">Toutes les sources</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="email">Email</option>
+                </select>
+                
+                <!-- Sort -->
+                <select id="sortBy" class="px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm">
+                    <option value="name">Trier par nom</option>
+                    <option value="orders-desc">Plus de commandes</option>
+                    <option value="orders-asc">Moins de commandes</option>
+                    <option value="recent">Plus récent</option>
+                </select>
+                
+                <!-- Reset -->
+                <button onclick="resetFilters()" class="px-4 py-2.5 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition text-sm">
+                    <i class="fas fa-undo mr-1"></i>Réinitialiser
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results info -->
+    <div id="resultsInfo" class="hidden text-sm text-slate-500">
+        <span id="resultsCount">0</span> résultat(s) trouvé(s)
     </div>
 
     <div class="card overflow-hidden">
         <div class="overflow-x-auto">
-            <table class="w-full table-pro">
+            <table class="w-full table-pro" id="clientsTable">
                 <thead>
                     <tr>
                         <th>Client</th>
@@ -22,9 +76,15 @@
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="clientsBody">
                     {% for client in clients %}
-                    <tr>
+                    <tr class="client-row" 
+                        data-name="{{ (client.nom or '')|lower }}"
+                        data-email="{{ (client.email or '')|lower }}"
+                        data-phone="{{ client.telephone or '' }}"
+                        data-orders="{{ client.total_orders or 0 }}"
+                        data-source="{{ 'whatsapp' if client.telephone and 'whatsapp' in (client.email or '') else ('whatsapp' if client.telephone else 'email') }}"
+                        data-date="{{ client.last_order_date or '' }}">
                         <td>
                             <div class="flex items-center gap-3">
                                 <div class="w-10 h-10 bg-brand-100 rounded-full flex items-center justify-center">
@@ -52,7 +112,7 @@
                         </td>
                     </tr>
                     {% else %}
-                    <tr>
+                    <tr id="emptyRow">
                         <td colspan="5" class="text-center py-16">
                             <div class="text-slate-400">
                                 <i class="fas fa-users text-5xl mb-4"></i>
@@ -65,6 +125,131 @@
                 </tbody>
             </table>
         </div>
+        
+        <!-- No results message -->
+        <div id="noResults" class="hidden text-center py-16">
+            <div class="text-slate-400">
+                <i class="fas fa-search text-5xl mb-4"></i>
+                <p class="font-medium text-lg">Aucun résultat</p>
+                <p class="text-sm">Essayez de modifier vos critères de recherche</p>
+            </div>
+        </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const searchInput = document.getElementById('searchInput');
+    const filterOrders = document.getElementById('filterOrders');
+    const filterSource = document.getElementById('filterSource');
+    const sortBy = document.getElementById('sortBy');
+    const clientRows = document.querySelectorAll('.client-row');
+    const noResults = document.getElementById('noResults');
+    const resultsInfo = document.getElementById('resultsInfo');
+    const resultsCount = document.getElementById('resultsCount');
+    const tbody = document.getElementById('clientsBody');
+    
+    function applyFilters() {
+        const search = searchInput.value.toLowerCase().trim();
+        const orderFilter = filterOrders.value;
+        const sourceFilter = filterSource.value;
+        const sort = sortBy.value;
+        
+        let visibleCount = 0;
+        let rowsArray = Array.from(clientRows);
+        
+        // Filter
+        rowsArray.forEach(row => {
+            const name = row.dataset.name;
+            const email = row.dataset.email;
+            const phone = row.dataset.phone;
+            const orders = parseInt(row.dataset.orders) || 0;
+            const source = row.dataset.source;
+            
+            let show = true;
+            
+            // Search filter
+            if (search) {
+                const searchMatch = name.includes(search) || 
+                                   email.includes(search) || 
+                                   phone.includes(search);
+                if (!searchMatch) show = false;
+            }
+            
+            // Order count filter
+            if (orderFilter && show) {
+                if (orderFilter === '0' && orders !== 0) show = false;
+                else if (orderFilter === '1-5' && (orders < 1 || orders > 5)) show = false;
+                else if (orderFilter === '5-10' && (orders < 5 || orders > 10)) show = false;
+                else if (orderFilter === '10+' && orders < 10) show = false;
+            }
+            
+            // Source filter
+            if (sourceFilter && show) {
+                if (sourceFilter === 'whatsapp' && !phone) show = false;
+                else if (sourceFilter === 'email' && phone && !email.includes('@')) show = false;
+            }
+            
+            row.style.display = show ? '' : 'none';
+            if (show) visibleCount++;
+        });
+        
+        // Sort visible rows
+        const visibleRows = rowsArray.filter(row => row.style.display !== 'none');
+        
+        visibleRows.sort((a, b) => {
+            switch(sort) {
+                case 'name':
+                    return a.dataset.name.localeCompare(b.dataset.name);
+                case 'orders-desc':
+                    return (parseInt(b.dataset.orders) || 0) - (parseInt(a.dataset.orders) || 0);
+                case 'orders-asc':
+                    return (parseInt(a.dataset.orders) || 0) - (parseInt(b.dataset.orders) || 0);
+                case 'recent':
+                    return (b.dataset.date || '').localeCompare(a.dataset.date || '');
+                default:
+                    return 0;
+            }
+        });
+        
+        // Reorder DOM
+        visibleRows.forEach(row => tbody.appendChild(row));
+        rowsArray.filter(row => row.style.display === 'none').forEach(row => tbody.appendChild(row));
+        
+        // Show/hide no results
+        if (visibleCount === 0 && clientRows.length > 0) {
+            noResults.classList.remove('hidden');
+            document.querySelector('.overflow-x-auto').classList.add('hidden');
+        } else {
+            noResults.classList.add('hidden');
+            document.querySelector('.overflow-x-auto').classList.remove('hidden');
+        }
+        
+        // Update results count
+        if (search || orderFilter || sourceFilter) {
+            resultsInfo.classList.remove('hidden');
+            resultsCount.textContent = visibleCount;
+        } else {
+            resultsInfo.classList.add('hidden');
+        }
+    }
+    
+    function resetFilters() {
+        searchInput.value = '';
+        filterOrders.value = '';
+        filterSource.value = '';
+        sortBy.value = 'name';
+        applyFilters();
+    }
+    
+    // Event listeners
+    searchInput.addEventListener('input', applyFilters);
+    filterOrders.addEventListener('change', applyFilters);
+    filterSource.addEventListener('change', applyFilters);
+    sortBy.addEventListener('change', applyFilters);
+    
+    // Initial sort
+    applyFilters();
+</script>
 {% endblock %}

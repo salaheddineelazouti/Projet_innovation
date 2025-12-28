@@ -16,6 +16,7 @@ from process_orders import OrderProcessor
 from analytics import Analytics, AlertSystem, ReportGenerator, ClientHistory, AIPredictor
 from whatsapp_receiver import WhatsAppReceiver
 from data_extractor import DataExtractor
+from email_sender import email_sender
 
 app = Flask(__name__)
 whatsapp = WhatsAppReceiver()
@@ -148,32 +149,41 @@ def api_process_emails():
 
 @app.route('/api/orders/<int:order_id>/validate', methods=['POST'])
 def api_validate_order(order_id):
-    """Validate an order and send WhatsApp confirmation if applicable."""
+    """Validate an order and send WhatsApp/Email confirmation if applicable."""
     validated_by = request.json.get('validated_by', 'Commercial') if request.json else 'Commercial'
     db.update_order_status(order_id, 'validee', validated_by)
     
     # Send WhatsApp confirmation if order came from WhatsApp
     order = db.get_order(order_id)
     whatsapp_sent = False
+    email_sent = False
     
-    if order and order.get('source') == 'whatsapp':
-        # Try to get phone from client_telephone or email_from
-        phone = order.get('client_telephone') or order.get('email_from', '')
+    if order:
+        # Send Email confirmation
+        try:
+            email_sent = email_sender.send_validation_email(order)
+        except Exception as e:
+            print(f"   ⚠️ Erreur envoi email: {e}")
         
-        # Extract phone number if it's in the client name (Client WhatsApp +212...)
-        if not phone and order.get('client_nom', '').startswith('Client WhatsApp'):
-            import re
-            match = re.search(r'\+\d+', order.get('client_nom', ''))
-            if match:
-                phone = match.group()
-        
-        if phone:
-            try:
-                # Format phone for WhatsApp (remove + and add whatsapp: prefix)
-                phone_clean = phone.replace('+', '').replace(' ', '').replace('whatsapp:', '')
-                whatsapp_number = f"+{phone_clean}"
-                
-                message = f"""✅ *Commande Validée!*
+        # Send WhatsApp confirmation if order came from WhatsApp
+        if order.get('source') == 'whatsapp':
+            # Try to get phone from client_telephone or email_from
+            phone = order.get('client_telephone') or order.get('email_from', '')
+            
+            # Extract phone number if it's in the client name (Client WhatsApp +212...)
+            if not phone and order.get('client_nom', '').startswith('Client WhatsApp'):
+                import re
+                match = re.search(r'\+\d+', order.get('client_nom', ''))
+                if match:
+                    phone = match.group()
+            
+            if phone:
+                try:
+                    # Format phone for WhatsApp (remove + and add whatsapp: prefix)
+                    phone_clean = phone.replace('+', '').replace(' ', '').replace('whatsapp:', '')
+                    whatsapp_number = f"+{phone_clean}"
+                    
+                    message = f"""✅ *Commande Validée!*
 
 📋 *Détails:*
 • Client: {order.get('client_nom', 'N/A')}
@@ -183,24 +193,25 @@ def api_validate_order(order_id):
 
 ✨ Merci pour votre confiance!
 📞 Pour toute question, contactez-nous."""
-                
-                result = whatsapp.send_reply(whatsapp_number, message)
-                if result:
-                    whatsapp_sent = True
-                    print(f"   📱 Confirmation WhatsApp envoyée à {whatsapp_number}")
-            except Exception as e:
-                print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
+                    
+                    result = whatsapp.send_reply(whatsapp_number, message)
+                    if result:
+                        whatsapp_sent = True
+                        print(f"   📱 Confirmation WhatsApp envoyée à {whatsapp_number}")
+                except Exception as e:
+                    print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
     
     return jsonify({
         'success': True, 
         'message': 'Commande validée',
-        'whatsapp_sent': whatsapp_sent
+        'whatsapp_sent': whatsapp_sent,
+        'email_sent': email_sent
     })
 
 
 @app.route('/api/orders/<int:order_id>/reject', methods=['POST'])
 def api_reject_order(order_id):
-    """Reject an order and send WhatsApp notification if applicable."""
+    """Reject an order and send WhatsApp/Email notification if applicable."""
     reason = request.json.get('reason', '') if request.json else ''
     
     # Get order before updating status
@@ -209,26 +220,34 @@ def api_reject_order(order_id):
     db.update_order_status(order_id, 'rejetee')
     
     whatsapp_sent = False
+    email_sent = False
     
-    # Send WhatsApp notification if order came from WhatsApp
-    if order and order.get('source') == 'whatsapp':
-        # Try to get phone from client_telephone or email_from
-        phone = order.get('client_telephone') or order.get('email_from', '')
+    if order:
+        # Send Email notification
+        try:
+            email_sent = email_sender.send_rejection_email(order, reason)
+        except Exception as e:
+            print(f"   ⚠️ Erreur envoi email: {e}")
         
-        # Extract phone number if it's in the client name (Client WhatsApp +212...)
-        if not phone and order.get('client_nom', '').startswith('Client WhatsApp'):
-            import re
-            match = re.search(r'\+\d+', order.get('client_nom', ''))
-            if match:
-                phone = match.group()
-        
-        if phone:
-            try:
-                # Format phone for WhatsApp
-                phone_clean = phone.replace('+', '').replace(' ', '').replace('whatsapp:', '')
-                whatsapp_number = f"+{phone_clean}"
-                
-                message = f"""❌ *Commande Non Validée*
+        # Send WhatsApp notification if order came from WhatsApp
+        if order.get('source') == 'whatsapp':
+            # Try to get phone from client_telephone or email_from
+            phone = order.get('client_telephone') or order.get('email_from', '')
+            
+            # Extract phone number if it's in the client name (Client WhatsApp +212...)
+            if not phone and order.get('client_nom', '').startswith('Client WhatsApp'):
+                import re
+                match = re.search(r'\+\d+', order.get('client_nom', ''))
+                if match:
+                    phone = match.group()
+            
+            if phone:
+                try:
+                    # Format phone for WhatsApp
+                    phone_clean = phone.replace('+', '').replace(' ', '').replace('whatsapp:', '')
+                    whatsapp_number = f"+{phone_clean}"
+                    
+                    message = f"""❌ *Commande Non Validée*
 
 📋 *Détails:*
 • Client: {order.get('client_nom', 'N/A')}
@@ -236,20 +255,19 @@ def api_reject_order(order_id):
 {f'• Raison: {reason}' if reason else ''}
 
 📞 Veuillez nous contacter pour plus d'informations."""
-                
-                result = whatsapp.send_reply(whatsapp_number, message)
-                if result:
-                    whatsapp_sent = True
-                    print(f"   📱 Notification rejet WhatsApp envoyée à {whatsapp_number}")
-            except Exception as e:
-                print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
-            except Exception as e:
-                print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
+                    
+                    result = whatsapp.send_reply(whatsapp_number, message)
+                    if result:
+                        whatsapp_sent = True
+                        print(f"   📱 Notification rejet WhatsApp envoyée à {whatsapp_number}")
+                except Exception as e:
+                    print(f"   ⚠️ Erreur envoi WhatsApp: {e}")
     
     return jsonify({
         'success': True, 
         'message': 'Commande rejetée',
-        'whatsapp_sent': whatsapp_sent
+        'whatsapp_sent': whatsapp_sent,
+        'email_sent': email_sent
     })
 
 
