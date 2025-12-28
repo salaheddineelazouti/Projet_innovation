@@ -71,6 +71,23 @@ Projet_innovation/
 ├── requirements.txt        # Dépendances Python
 ├── ngrok.exe               # Tunnel pour webhook WhatsApp
 │
+├── tests/                  # Tests unitaires et d'intégration
+│   ├── conftest.py         # Fixtures pytest partagées
+│   ├── test_database.py    # Tests base de données
+│   ├── test_data_extractor.py  # Tests extraction IA
+│   ├── test_backup.py      # Tests système de sauvegarde
+│   ├── test_email.py       # Tests envoi emails
+│   ├── test_api.py         # Tests API Flask
+│   ├── test_whatsapp.py    # Tests WhatsApp/Twilio
+│   ├── test_gmail.py       # Tests réception Gmail
+│   ├── test_integration.py # Tests d'intégration
+│   └── test_workflows.py   # Tests workflows GitHub Actions
+│
+├── .github/workflows/      # CI/CD GitHub Actions
+│   ├── ci.yml              # Pipeline CI (lint, test, security, build)
+│   ├── backup.yml          # Sauvegarde automatique quotidienne
+│   └── deploy.yml          # Déploiement staging/production
+│
 ├── templates/              # Templates HTML (Jinja2 + TailwindCSS)
 │   ├── base.html           # Template de base avec notifications
 │   ├── index.html          # Dashboard avec stats par canal
@@ -119,7 +136,7 @@ NGROK_URL=https://xxxxx.ngrok-free.dev
 ```
 python-dotenv==1.0.0
 openai==1.6.1
-PyPDF2==3.0.1
+pypdf>=4.0.0
 Pillow==10.1.0
 flask==3.0.0
 pandas==2.1.4
@@ -128,6 +145,9 @@ reportlab==4.0.8
 matplotlib==3.8.2
 twilio==8.10.0
 requests==2.31.0
+pytest>=8.0.0
+pytest-cov>=4.0.0
+PyYAML>=6.0
 ```
 
 ---
@@ -155,7 +175,22 @@ python app.py
 
 L'application sera disponible sur: **http://localhost:5000**
 
-### 4. Configurer WhatsApp
+### 4. Lancer les tests
+
+```bash
+# Exécuter tous les tests
+pytest
+
+# Avec couverture de code
+pytest --cov=. --cov-report=html
+
+# Tests spécifiques
+pytest tests/test_database.py -v
+pytest tests/test_api.py -v
+pytest tests/test_workflows.py -v
+```
+
+### 5. Configurer WhatsApp
 
 ```bash
 # Démarrer le tunnel ngrok
