@@ -10,7 +10,7 @@ import base64
 import json
 from dotenv import load_dotenv
 from openai import OpenAI
-import PyPDF2
+import pypdf
 from PIL import Image
 import io
 
@@ -375,7 +375,7 @@ Réponds UNIQUEMENT avec le JSON, sans texte additionnel."""
         try:
             text = ""
             with open(pdf_path, "rb") as f:
-                reader = PyPDF2.PdfReader(f)
+                reader = pypdf.PdfReader(f)
                 for page in reader.pages:
                     text += page.extract_text() + "\n"
             return text.strip()

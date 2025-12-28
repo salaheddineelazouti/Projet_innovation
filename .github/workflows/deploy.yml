@@ -1,0 +1,65 @@
+# Deployment Workflow for OrderFlow
+# Deploy to production or staging environment
+
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'production' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run tests before deployment
+        run: |
+          pip install pytest
+          pytest tests/ -v --tb=short
+      
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          cp -r *.py deploy/
+          cp -r templates deploy/
+          cp requirements.txt deploy/
+          echo "VERSION=$(git describe --tags --always)" > deploy/version.txt
+          tar -czvf orderflow-${{ github.sha }}.tar.gz deploy/
+      
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: orderflow-*.tar.gz
+      
+      - name: Deploy notification
+        run: |
+          echo "🚀 Deployment package created for ${{ github.event.inputs.environment || 'production' }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Ref: ${{ github.ref }}"
