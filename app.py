@@ -5,6 +5,8 @@ Interface for commercial team to view, edit, and validate orders.
 
 import os
 import sys
+import threading
+import time
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
 from datetime import datetime
 
@@ -17,6 +19,7 @@ from analytics import Analytics, AlertSystem, ReportGenerator, ClientHistory, AI
 from whatsapp_receiver import WhatsAppReceiver
 from data_extractor import DataExtractor
 from email_sender import email_sender
+from backup_database import create_backup, list_backups, restore_backup, get_db_stats, delete_old_backups, export_to_json
 
 app = Flask(__name__)
 whatsapp = WhatsAppReceiver()
@@ -27,6 +30,77 @@ db = DatabaseManager()
 # Initialize database once at startup
 db.connect()
 db.init_database()
+
+# ============== AUTOMATIC BACKUP SCHEDULER ==============
+class BackupScheduler:
+    """Automatic backup scheduler running in background."""
+    
+    def __init__(self, interval_hours=6, keep_backups=20):
+        self.interval_hours = interval_hours
+        self.keep_backups = keep_backups
+        self.running = False
+        self.thread = None
+        self.last_backup = None
+        self.next_backup = None
+    
+    def start(self):
+        """Start the backup scheduler."""
+        if self.running:
+            return
+        
+        self.running = True
+        self.thread = threading.Thread(target=self._run_scheduler, daemon=True)
+        self.thread.start()
+        print(f"🔄 Planificateur de sauvegarde démarré (toutes les {self.interval_hours}h)")
+    
+    def stop(self):
+        """Stop the backup scheduler."""
+        self.running = False
+    
+    def _run_scheduler(self):
+        """Background thread that runs scheduled backups."""
+        while self.running:
+            try:
+                # Calculate next backup time
+                self.next_backup = datetime.now().replace(
+                    hour=(datetime.now().hour // self.interval_hours + 1) * self.interval_hours % 24,
+                    minute=0, second=0, microsecond=0
+                )
+                
+                # Sleep until next backup
+                sleep_seconds = (self.next_backup - datetime.now()).total_seconds()
+                if sleep_seconds > 0:
+                    # Sleep in small increments to allow clean shutdown
+                    for _ in range(int(sleep_seconds)):
+                        if not self.running:
+                            return
+                        time.sleep(1)
+                
+                # Perform backup
+                if self.running:
+                    print(f"\n⏰ Sauvegarde automatique programmée...")
+                    backup_path = create_backup(compress=True)
+                    if backup_path:
+                        self.last_backup = datetime.now()
+                        # Clean old backups
+                        delete_old_backups(keep_count=self.keep_backups)
+                    
+            except Exception as e:
+                print(f"❌ Erreur planificateur backup: {e}")
+                time.sleep(60)  # Wait a minute before retrying
+    
+    def get_status(self):
+        """Get scheduler status."""
+        return {
+            'running': self.running,
+            'interval_hours': self.interval_hours,
+            'last_backup': self.last_backup.isoformat() if self.last_backup else None,
+            'next_backup': self.next_backup.isoformat() if self.next_backup else None,
+            'keep_backups': self.keep_backups
+        }
+
+# Initialize and start backup scheduler
+backup_scheduler = BackupScheduler(interval_hours=6, keep_backups=20)
 
 
 @app.before_request
@@ -665,10 +739,196 @@ def whatsapp_status():
         return jsonify({'connected': False, 'error': str(e)})
 
 
+# ============== BACKUP API ROUTES ==============
+
+@app.route('/api/backup/create', methods=['POST'])
+def api_create_backup():
+    """Create a manual backup."""
+    try:
+        compress = request.json.get('compress', True) if request.json else True
+        backup_path = create_backup(compress=compress)
+        
+        if backup_path:
+            return jsonify({
+                'success': True,
+                'message': 'Sauvegarde créée avec succès',
+                'path': backup_path,
+                'filename': os.path.basename(backup_path)
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Erreur lors de la création'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/backup/list')
+def api_list_backups():
+    """List all available backups."""
+    try:
+        backups = list_backups()
+        stats = get_db_stats()
+        scheduler_status = backup_scheduler.get_status()
+        
+        return jsonify({
+            'success': True,
+            'backups': backups,
+            'db_stats': stats,
+            'scheduler': scheduler_status
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/backup/download/<filename>')
+def api_download_backup(filename):
+    """Download a specific backup file."""
+    try:
+        # Security: prevent directory traversal
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+        
+        backup_path = os.path.join('backups', filename)
+        
+        if not os.path.exists(backup_path):
+            return jsonify({'error': 'Backup not found'}), 404
+        
+        return send_file(
+            backup_path,
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/backup/download-latest')
+def api_download_latest_backup():
+    """Create a fresh backup and download it immediately."""
+    try:
+        # Create a new backup
+        backup_path = create_backup(compress=True)
+        
+        if not backup_path:
+            return jsonify({'error': 'Failed to create backup'}), 500
+        
+        return send_file(
+            backup_path,
+            as_attachment=True,
+            download_name=os.path.basename(backup_path)
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/backup/restore/<filename>', methods=['POST'])
+def api_restore_backup(filename):
+    """Restore database from a backup."""
+    try:
+        # Security: prevent directory traversal
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+        
+        success = restore_backup(filename)
+        
+        if success:
+            # Reconnect to restored database
+            db.disconnect()
+            db.connect()
+            
+            return jsonify({
+                'success': True,
+                'message': f'Base de données restaurée depuis {filename}'
+            })
+        else:
+            return jsonify({'success': False, 'message': 'Erreur lors de la restauration'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/backup/delete/<filename>', methods=['DELETE'])
+def api_delete_backup(filename):
+    """Delete a specific backup."""
+    try:
+        # Security: prevent directory traversal
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+        
+        backup_path = os.path.join('backups', filename)
+        
+        if not os.path.exists(backup_path):
+            return jsonify({'error': 'Backup not found'}), 404
+        
+        os.remove(backup_path)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Sauvegarde {filename} supprimée'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/backup/export-json')
+def api_export_json():
+    """Export database to JSON and download."""
+    try:
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_file = f'export_{timestamp}.json'
+        export_path = export_to_json(output_file)
+        
+        if export_path:
+            return send_file(
+                export_path,
+                as_attachment=True,
+                download_name=output_file
+            )
+        else:
+            return jsonify({'error': 'Failed to export'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/backup/scheduler/status')
+def api_scheduler_status():
+    """Get backup scheduler status."""
+    return jsonify(backup_scheduler.get_status())
+
+@app.route('/api/backup/scheduler/configure', methods=['POST'])
+def api_configure_scheduler():
+    """Configure backup scheduler."""
+    try:
+        data = request.json
+        if 'interval_hours' in data:
+            backup_scheduler.interval_hours = int(data['interval_hours'])
+        if 'keep_backups' in data:
+            backup_scheduler.keep_backups = int(data['keep_backups'])
+        
+        return jsonify({
+            'success': True,
+            'message': 'Configuration mise à jour',
+            'status': backup_scheduler.get_status()
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============== BACKUP PAGE ==============
+
+@app.route('/backups')
+def backups_page():
+    """Backup management page."""
+    backups = list_backups()
+    stats = get_db_stats()
+    scheduler_status = backup_scheduler.get_status()
+    
+    return render_template('backups.html',
+                         backups=backups,
+                         db_stats=stats,
+                         scheduler=scheduler_status)
+
+
 if __name__ == '__main__':
     print("=" * 50)
     print("🚀 Démarrage de l'interface de validation")
     print("=" * 50)
     print("📍 URL: http://localhost:5000")
+    
+    # Start automatic backup scheduler
+    backup_scheduler.start()
+    
     print("=" * 50)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)

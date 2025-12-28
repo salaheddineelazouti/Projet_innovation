@@ -64,6 +64,8 @@ Projet_innovation/
 ├── database.py             # Gestion base de données SQLite
 ├── process_orders.py       # Orchestration du traitement emails
 ├── analytics.py            # Statistiques & rapports
+├── email_sender.py         # Envoi emails HTML (validation/rejet)
+├── backup_database.py      # Système de sauvegarde hybride
 ├── orders.db               # Base de données SQLite
 ├── .env                    # Variables d'environnement (secrets)
 ├── requirements.txt        # Dépendances Python
@@ -74,12 +76,17 @@ Projet_innovation/
 │   ├── index.html          # Dashboard avec stats par canal
 │   ├── orders.html         # Liste des commandes
 │   ├── order_detail.html   # Détail & validation
-│   ├── clients.html        # Gestion clients
+│   ├── clients.html        # Gestion clients avec recherche
 │   ├── client_detail.html  # Détail client avec historique
 │   ├── analytics.html      # Tableau de bord avancé
 │   ├── alerts.html         # Système d'alertes
+│   ├── backups.html        # Gestion des sauvegardes
 │   ├── whatsapp.html       # Stats WhatsApp
 │   └── process.html        # Traitement emails avec progress bar
+│
+├── backups/                # Dossier des sauvegardes
+│   ├── backup_*.db.gz      # Sauvegardes compressées
+│   └── backup_history.json # Historique
 │
 ├── whatsapp_media/         # Médias WhatsApp téléchargés
 ├── attachments/            # Pièces jointes emails
@@ -244,12 +251,13 @@ Veuillez nous contacter pour plus d'informations.
 | `/` | Dashboard avec stats Email/WhatsApp, graphique tendances |
 | `/orders` | Liste des commandes avec filtres |
 | `/orders/<id>` | Détail, modification & validation |
-| `/clients` | Gestion des clients |
+| `/clients` | Gestion des clients avec recherche et filtres |
 | `/clients/<id>` | Détail client avec historique commandes |
 | `/analytics` | Statistiques avancées |
 | `/alerts` | Système d'alertes |
 | `/whatsapp` | Stats et KPIs WhatsApp |
 | `/process` | Traitement des emails avec progress bar |
+| `/backups` | Gestion des sauvegardes de base de données |
 
 ### 8. Dashboard
 
@@ -276,6 +284,96 @@ Veuillez nous contacter pour plus d'informations.
 - **Excel** - `/export/excel` - Toutes les commandes
 - **PDF** - `/export/pdf` - Rapport formaté
 - **CSV** - `/export/csv` - Données brutes
+
+### 11. Système de Sauvegarde Hybride 💾
+
+Le système implémente une stratégie de sauvegarde **hybride** optimale pour protéger vos données :
+
+#### Sauvegarde Automatique (Backend)
+- **Intervalle** : Toutes les 6 heures (configurable)
+- **Rétention** : 20 dernières sauvegardes conservées
+- **Compression** : Fichiers `.db.gz` pour économiser l'espace
+- **Sécurité SQLite** : Utilise l'API `sqlite3.backup()` (compatible mode WAL)
+
+#### Sauvegarde Manuelle (Frontend)
+Interface accessible via **Sidebar → Système → Sauvegardes** (`/backups`)
+
+| Action | Description |
+|--------|-------------|
+| **Nouvelle sauvegarde** | Créer une sauvegarde immédiate |
+| **Télécharger backup** | Télécharger une copie fraîche sur votre PC |
+| **Restaurer** | Restaurer depuis une sauvegarde (backup pré-restauration auto) |
+| **Exporter JSON** | Export complet de toutes les données en JSON |
+| **Supprimer** | Supprimer une sauvegarde obsolète |
+
+#### API Backup
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/api/backup/create` | POST | Créer une sauvegarde |
+| `/api/backup/list` | GET | Lister les sauvegardes |
+| `/api/backup/download/<filename>` | GET | Télécharger une sauvegarde |
+| `/api/backup/download-latest` | GET | Créer et télécharger immédiatement |
+| `/api/backup/restore/<filename>` | POST | Restaurer une sauvegarde |
+| `/api/backup/delete/<filename>` | DELETE | Supprimer une sauvegarde |
+| `/api/backup/export-json` | GET | Exporter en JSON |
+
+#### Ligne de Commande
+
+```bash
+# Créer une sauvegarde
+python backup_database.py backup
+
+# Lister les sauvegardes
+python backup_database.py list
+
+# Restaurer une sauvegarde (interactif)
+python backup_database.py restore
+
+# Nettoyer anciennes sauvegardes (garder 10)
+python backup_database.py clean 10
+
+# Statistiques de la base
+python backup_database.py stats
+
+# Exporter en JSON
+python backup_database.py export
+```
+
+#### Fichiers de Sauvegarde
+
+```
+backups/
+├── backup_20251228_032504.db.gz    # Sauvegarde compressée
+├── backup_20251228_090000.db.gz    # Sauvegarde auto 6h
+├── pre_restore_20251228_120000.db  # Backup avant restauration
+├── export_20251228_150000.json     # Export JSON
+└── backup_history.json             # Historique des sauvegardes
+```
+
+### 12. Notifications Email Professionnelles 📧
+
+Le système envoie des emails HTML professionnels lors de la validation/rejet des commandes :
+
+#### Email de Validation (Vert)
+- Design moderne avec header dégradé vert
+- Récapitulatif de la commande
+- Timeline de suivi (Validée → Préparation → Expédition)
+- Footer professionnel
+
+#### Email de Rejet (Neutre)
+- Design sobre avec header gris
+- Détails de la demande
+- Motif de la décision
+- Conseils pour procéder
+
+#### Configuration SMTP
+
+```env
+# Dans .env
+GMAIL_EMAIL=votre-email@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+```
 
 ---
 
@@ -475,10 +573,9 @@ L'entreprise fabrique 4 types de produits d'emballage:
 ## 👥 Auteurs
 
 Projet développé dans le cadre d'un projet d'innovation.
-
-**Encadré par**: [Nom de l'encadrant]  
-**Réalisé par**: Salah Eddine ELAZZOUTI
+projet scientifique
+**Réalisé par**:equipe de projet scientifique
 
 ---
 
-*Documentation mise à jour le 28/12/2024*
+*Documentation mise à jour le 28/12/202
