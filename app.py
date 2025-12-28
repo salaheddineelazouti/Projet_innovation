@@ -631,7 +631,6 @@ def whatsapp_webhook():
 📦 Client: {client_name}
 📋 Produit: {order_data.get('type_produit', 'N/A')}
 🔢 Quantité: {order_data.get('quantite', 'N/A')} {order_data.get('unite', '')}
-🎯 Confiance: {order_data.get('confiance', 0)}%
 
 Votre commande est en attente de validation."""
             
