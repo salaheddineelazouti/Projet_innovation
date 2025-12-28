@@ -396,6 +396,12 @@ def check_notifications():
             # Use nature_produit as fallback for produit
             if not order.get('produit'):
                 order['produit'] = order.get('nature_produit', 'Produit')
+            # Convert created_at to ISO format for JavaScript
+            if order.get('created_at'):
+                order['timestamp'] = order['created_at']
+            else:
+                from datetime import datetime
+                order['timestamp'] = datetime.now().isoformat()
             new_orders.append(order)
         
         return jsonify({'new_orders': new_orders, 'last_id': max_seen_id})

@@ -170,13 +170,13 @@ class WhatsAppReceiver:
             
             with open(filepath, "rb") as audio_file:
                 # Whisper with prompt for better Darija/Moroccan Arabic recognition
-                # Include common business terms to help recognition
+                # Include common business terms and client introduction patterns
                 transcription = self.openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
                     response_format="text",
                     language="ar",  # Arabic base
-                    prompt="Ceci est une commande commerciale au Maroc. Termes courants: sachets, sac kraft, carton, papier, emballage, pièces, unités, commande, livraison, dirhams, MAD. Darija marocaine avec mots français: bghit, khassni, 3tini, sachet, sac, carton, kraft, fond plat, poignées, sandwich, tacos."
+                    prompt="Commande commerciale au Maroc. Introduction client: ana restaurant, ana snack, ana café, أنا ريستوران, أنا سناك. Termes: sachets, sac kraft, carton, papier, emballage, pièces, unités, commande, livraison, dirhams. Darija: bghit, khassni, 3tini, sachet, sac, carton, kraft, fond plat, poignées, sandwich, tacos. Noms: Salah Eddine, Mohamed, Ahmed, Hassan, Youssef."
                 )
             
             if transcription:

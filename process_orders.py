@@ -58,6 +58,12 @@ class OrderProcessor:
                 print(f"\n{'─' * 60}")
                 print(f"📧 Email {i}/{len(emails)}: {email_data['subject'][:50]}...")
                 
+                # Check if email already processed BEFORE calling GPT-4
+                email_id = email_data.get('id')
+                if email_id and self.db.is_email_processed(email_id):
+                    print(f"   ⏭️ Email déjà traité, ignoré")
+                    continue
+                
                 order = self.process_single_email(email_data)
                 if order and order.get('est_bon_commande'):
                     orders.append(order)

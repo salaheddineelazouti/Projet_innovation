@@ -178,23 +178,53 @@ class DatabaseManager:
     
     # Client operations
     def get_or_create_client(self, nom, email=None, telephone=None):
-        """Get existing client or create new one."""
+        """Get existing client or create new one.
+        
+        Logic: 
+        - If we have a real client name (not generic), search by name first
+        - Phone number is just contact info, NOT a unique client identifier
+        - Multiple clients can share the same phone (e.g., same person ordering for different companies)
+        """
         cursor = self.connection.cursor()
         
         # Default name if None or empty
         if not nom or nom.strip() == '':
             nom = email or telephone or 'Client Inconnu'
         
-        # Try to find by name
-        cursor.execute("SELECT * FROM clients WHERE nom = ?", (nom,))
-        client = cursor.fetchone()
+        # Check if the provided name is a "real" name (not a generic WhatsApp placeholder)
+        is_real_name = nom and not nom.startswith('Client WhatsApp') and not nom.startswith('Client Inconnu')
         
-        if client:
-            # Update telephone if not set
-            if telephone and not client['telephone']:
-                cursor.execute("UPDATE clients SET telephone = ? WHERE id = ?", (telephone, client['id']))
-                self.connection.commit()
-            return dict(client)
+        if is_real_name:
+            # For real names, search by name first (case insensitive)
+            cursor.execute("SELECT * FROM clients WHERE LOWER(nom) = LOWER(?)", (nom,))
+            client = cursor.fetchone()
+            
+            if client:
+                # Update telephone if not set
+                if telephone and not client['telephone']:
+                    cursor.execute("UPDATE clients SET telephone = ? WHERE id = ?", (telephone, client['id']))
+                    self.connection.commit()
+                return dict(client)
+            
+            # Not found by name - create new client with this real name
+            cursor.execute("""
+                INSERT INTO clients (nom, email, telephone)
+                VALUES (?, ?, ?)
+            """, (nom, email, telephone))
+            self.connection.commit()
+            
+            client_id = cursor.lastrowid
+            self._log_action("CREATE", "clients", client_id, f"Created client: {nom}")
+            print(f"   👤 Nouveau client créé: {nom}")
+            
+            return {"id": client_id, "nom": nom, "email": email, "telephone": telephone}
+        
+        # For generic names (Client WhatsApp...), try to find by telephone
+        if telephone:
+            cursor.execute("SELECT * FROM clients WHERE telephone = ?", (telephone,))
+            client = cursor.fetchone()
+            if client:
+                return dict(client)
         
         # Try to find by email if provided
         if email:
@@ -203,14 +233,7 @@ class DatabaseManager:
             if client:
                 return dict(client)
         
-        # Try to find by telephone if provided
-        if telephone:
-            cursor.execute("SELECT * FROM clients WHERE telephone = ?", (telephone,))
-            client = cursor.fetchone()
-            if client:
-                return dict(client)
-        
-        # Create new client with telephone
+        # Create new client
         cursor.execute("""
             INSERT INTO clients (nom, email, telephone)
             VALUES (?, ?, ?)
@@ -251,6 +274,20 @@ class DatabaseManager:
         return [dict(row) for row in cursor.fetchall()]
     
     # Order operations
+    def is_email_processed(self, email_id):
+        """Check if an email has already been processed."""
+        if not email_id or not self.connection:
+            return False
+        cursor = self.connection.cursor()
+        # Force WAL checkpoint to see most recent data from other connections
+        try:
+            cursor.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except:
+            pass
+        cursor.execute("SELECT id FROM commandes WHERE email_id = ?", (email_id,))
+        result = cursor.fetchone()
+        return result is not None
+    
     def create_order(self, order_data):
         """Create a new order from extracted data."""
         cursor = self.connection.cursor()
@@ -327,6 +364,12 @@ class DatabaseManager:
         
         self.connection.commit()
         order_id = cursor.lastrowid
+        
+        # Force WAL sync so other connections see this immediately (use new cursor)
+        try:
+            self.connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except:
+            pass
         
         self._log_action("CREATE", "commandes", order_id, 
                         f"Created order: {order_data.get('numero_commande')}")

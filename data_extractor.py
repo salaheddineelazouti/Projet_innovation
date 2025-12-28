@@ -37,7 +37,7 @@ REORDER_PATTERNS = [
 
 class DataExtractor:
     def __init__(self, db_manager=None):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=60.0)
         self.model = "gpt-4o"
         self.db = db_manager
     
@@ -242,6 +242,9 @@ CONTENU:
             last_order = self.get_client_last_order(reorder_info['client_name'])
             
             if last_order:
+                # Use the exact client name from database
+                actual_client_name = last_order.get('client_nom') or reorder_info['client_name']
+                
                 print(f"   📦 Dernière commande trouvée: {last_order.get('numero_commande') or 'ID-' + str(last_order.get('id'))}")
                 print(f"      - Produit: {last_order.get('produit_type')}")
                 print(f"      - Quantité: {last_order.get('quantite')} {last_order.get('unite', '')}")
@@ -250,7 +253,8 @@ CONTENU:
                 extracted = self._extract_with_openai(email_content)
                 
                 if extracted:
-                    extracted['entreprise_cliente'] = reorder_info['client_name']
+                    # Use the EXACT client name from database, not the detected one
+                    extracted['entreprise_cliente'] = actual_client_name
                     extracted = self.fill_from_history(extracted, last_order)
                     # Force as valid order since we have history
                     extracted['est_bon_commande'] = True
@@ -279,6 +283,28 @@ IMPORTANT - Vocabulaire Darija/Arabe pour commandes:
 - "sandwich" / "سندويش" = sandwich
 - "tacos" / "طاكوس" = tacos
 - "pièces" / "قطعة" = pièces
+- "ana" / "أنا" = je suis (introduction du client)
+- "restaurant" / "ريستوران" = restaurant
+- "snack" / "سناك" = snack
+- "café" / "قهوة" = café
+
+IMPORTANT - Identification du client:
+Le NOM DU CLIENT est la personne/entreprise QUI PASSE ou POUR QUI la commande est faite.
+Patterns à reconnaître:
+- "Commande pour [CLIENT]" → entreprise_cliente = CLIENT
+- "pour [CLIENT]" au début → entreprise_cliente = CLIENT  
+- "ana [nom]" / "أنا [nom]" → entreprise_cliente = nom
+- "je suis [nom]" / "c'est [nom]" → entreprise_cliente = nom
+- "de la part de [nom]" → entreprise_cliente = nom
+
+Exemples:
+- "Commande pour ecole mohamadia des ingénieurs" → entreprise_cliente: "Ecole Mohamadia des Ingénieurs"
+- "pour restaurant la plaza 100 sachets" → entreprise_cliente: "Restaurant La Plaza"
+- "أنا ريستوران صالح الدين" → entreprise_cliente: "Restaurant Salah Eddine"
+- "ana snack beldi" → entreprise_cliente: "Snack Beldi"
+- "c'est café central" → entreprise_cliente: "Café Central"
+
+⚠️ NE PAS utiliser le numéro de téléphone comme nom de client. Cherche toujours le nom mentionné dans le message!
 
 L'entreprise fabrique 4 types de produits d'emballage:
 1. Sachets fond plat - pour sandwichs, tacos, viennoiseries
@@ -291,7 +317,7 @@ MÊME si le message est informel ou en darija, essaie d'identifier s'il s'agit d
 
 Retourne les données au format JSON avec les champs suivants:
 - numero_commande: string (numéro du bon de commande, peut être null)
-- entreprise_cliente: string (nom du client ou source du message)
+- entreprise_cliente: string (NOM DU CLIENT mentionné dans le message - TRÈS IMPORTANT!)
 - type_produit: string (un des 4 types listés ci-dessus, déduis le type approprié)
 - nature_produit: string (détails spécifiques du produit)
 - quantite: number (quantité commandée)
@@ -337,8 +363,11 @@ Réponds UNIQUEMENT avec le JSON, sans texte additionnel."""
             import json
             return json.loads(result)
             
+        except json.JSONDecodeError as e:
+            print(f"   ❌ Erreur JSON: {e}")
+            return None
         except Exception as e:
-            print(f"❌ Erreur OpenAI: {e}")
+            print(f"   ❌ Erreur OpenAI: {e}")
             return None
     
     def extract_text_from_pdf(self, pdf_path):

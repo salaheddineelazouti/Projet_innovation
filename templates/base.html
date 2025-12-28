@@ -260,13 +260,39 @@
         }
         
         function formatTimeAgo(timestamp) {
-            const diff = Date.now() - new Date(timestamp).getTime();
-            const minutes = Math.floor(diff / 60000);
-            if (minutes < 1) return "À l'instant";
+            if (!timestamp) return "À l'instant";
+            
+            // Handle SQLite datetime format (YYYY-MM-DD HH:MM:SS) which is in UTC
+            let date;
+            if (typeof timestamp === 'string') {
+                // Add 'Z' to indicate UTC if not already present
+                let isoTimestamp = timestamp.replace(' ', 'T');
+                if (!isoTimestamp.endsWith('Z') && !isoTimestamp.includes('+')) {
+                    isoTimestamp += 'Z';  // SQLite stores in UTC
+                }
+                date = new Date(isoTimestamp);
+            } else {
+                date = new Date(timestamp);
+            }
+            
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                return "À l'instant";
+            }
+            
+            const diff = Date.now() - date.getTime();
+            const seconds = Math.floor(diff / 1000);
+            
+            if (seconds < 60) return "À l'instant";
+            
+            const minutes = Math.floor(seconds / 60);
             if (minutes < 60) return `Il y a ${minutes} min`;
+            
             const hours = Math.floor(minutes / 60);
             if (hours < 24) return `Il y a ${hours}h`;
-            return `Il y a ${Math.floor(hours / 24)}j`;
+            
+            const days = Math.floor(hours / 24);
+            return `Il y a ${days}j`;
         }
         
         function showToast(title, message, source, orderId) {
