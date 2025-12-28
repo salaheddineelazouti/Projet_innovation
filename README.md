@@ -1,8 +1,19 @@
-# 🚀 OrderFlow - Système d'Automatisation des Bons de Commande
+# 🌿 TECPAP - Système d'Automatisation des Bons de Commande
+
+<p align="center">
+  <strong>Fabrication de sacs en papier Kraft - 100% biodégradables, 100% recyclables</strong>
+</p>
 
 ## 📋 Description du Projet
 
-Système intelligent d'automatisation de la saisie des bons de commande utilisant l'IA (OpenAI GPT-4o) pour extraire et valider les informations depuis les emails et messages WhatsApp.
+Système intelligent d'automatisation de la saisie des bons de commande pour **TECPAP**, utilisant l'IA (OpenAI GPT-4o) pour extraire et valider les informations depuis les emails et messages WhatsApp.
+
+### 🏢 À propos de TECPAP
+- **Localisation** : Parc Industriel CFCIM Bouskoura, Casablanca, Maroc
+- **Activité** : Fabrication de sacs en papier Kraft
+- **Capacité** : 900 000 000 sacs/an | 10 lignes de production | 7 000 m²
+- **Contact** : +212 (0)5 22 86 56 83 | info@tecpap.net
+- **Site web** : [www.tecpap.ma](https://www.tecpap.ma)
 
 ### 🎯 Objectifs
 - Automatiser la réception et l'extraction des commandes depuis **Email** et **WhatsApp**
@@ -412,16 +423,22 @@ GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 
 ---
 
-## 📦 Produits Supportés
+## 📦 Produits TECPAP
 
-L'entreprise fabrique 4 types de produits d'emballage:
+TECPAP fabrique 4 types de sacs en papier Kraft:
 
-| Type | Description |
-|------|-------------|
-| Sachets fond plat | Pour sandwichs, tacos, viennoiseries |
-| Sac fond carré sans poignées | Emballage standard |
-| Sac fond carré avec poignées plates | Sacs shopping |
-| Sac fond carré avec poignées torsadées | Sacs premium |
+| Type | Description | Utilisation |
+|------|-------------|-------------|
+| **Sachets fond plat** | Sacs simples à fond plat | Sandwichs, viennoiseries, snacks |
+| **Sac fond carré sans poignées** | Emballage standard SOS | Boulangeries, pharmacies |
+| **Sac fond carré avec poignées plates** | Sacs shopping pratiques | Boutiques, magasins |
+| **Sac fond carré avec poignées torsadées** | Sacs premium élégants | Luxe, cadeaux, mode |
+
+### Caractéristiques
+- ✅ **100% biodégradables**
+- ✅ **100% recyclables**
+- 🎨 **Impression jusqu'à 6 couleurs**
+- 👨‍🎨 **Équipe de créatifs dédiée** pour maquettes personnalisées
 
 ---
 

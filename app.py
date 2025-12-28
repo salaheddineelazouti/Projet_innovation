@@ -1,6 +1,7 @@
 """
-Flask Web Application for Purchase Order Validation
-Interface for commercial team to view, edit, and validate orders.
+TECPAP - Application Web de Gestion des Commandes
+Interface pour l'équipe commerciale pour visualiser, éditer et valider les commandes.
+Fabrication de sacs en papier Kraft - www.tecpap.ma
 """
 
 import os
@@ -59,22 +60,37 @@ class BackupScheduler:
     
     def _run_scheduler(self):
         """Background thread that runs scheduled backups."""
+        # Wait a bit before first run to let the app start
+        time.sleep(5)
+        
         while self.running:
             try:
-                # Calculate next backup time
-                self.next_backup = datetime.now().replace(
-                    hour=(datetime.now().hour // self.interval_hours + 1) * self.interval_hours % 24,
-                    minute=0, second=0, microsecond=0
-                )
+                # Calculate next backup time (every 6 hours: 0h, 6h, 12h, 18h)
+                now = datetime.now()
+                current_hour = now.hour
+                next_hour = ((current_hour // self.interval_hours) + 1) * self.interval_hours
                 
-                # Sleep until next backup
+                if next_hour >= 24:
+                    # Next backup is tomorrow at 00:00
+                    self.next_backup = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    self.next_backup = self.next_backup.replace(day=now.day + 1)
+                else:
+                    self.next_backup = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+                
+                # Calculate sleep time
                 sleep_seconds = (self.next_backup - datetime.now()).total_seconds()
-                if sleep_seconds > 0:
-                    # Sleep in small increments to allow clean shutdown
-                    for _ in range(int(sleep_seconds)):
-                        if not self.running:
-                            return
-                        time.sleep(1)
+                
+                # Minimum wait of 1 hour to prevent rapid backups
+                if sleep_seconds < 3600:
+                    sleep_seconds = 3600
+                
+                print(f"📅 Prochaine sauvegarde prévue dans {int(sleep_seconds/3600)}h{int((sleep_seconds%3600)/60)}m")
+                
+                # Sleep until next backup (check every minute for clean shutdown)
+                sleep_count = 0
+                while sleep_count < sleep_seconds and self.running:
+                    time.sleep(60)  # Sleep 1 minute at a time
+                    sleep_count += 60
                 
                 # Perform backup
                 if self.running:
@@ -87,7 +103,7 @@ class BackupScheduler:
                     
             except Exception as e:
                 print(f"❌ Erreur planificateur backup: {e}")
-                time.sleep(60)  # Wait a minute before retrying
+                time.sleep(300)  # Wait 5 minutes before retrying
     
     def get_status(self):
         """Get scheduler status."""
@@ -101,6 +117,9 @@ class BackupScheduler:
 
 # Initialize and start backup scheduler
 backup_scheduler = BackupScheduler(interval_hours=6, keep_backups=20)
+
+# Flag to prevent multiple scheduler starts in debug mode
+_scheduler_started = False
 
 
 @app.before_request
@@ -922,13 +941,16 @@ def backups_page():
 
 
 if __name__ == '__main__':
+    import os
+    
     print("=" * 50)
     print("🚀 Démarrage de l'interface de validation")
     print("=" * 50)
     print("📍 URL: http://localhost:5000")
     
-    # Start automatic backup scheduler
-    backup_scheduler.start()
+    # Start automatic backup scheduler only once (prevent duplicate in debug mode)
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        backup_scheduler.start()
     
     print("=" * 50)
-    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+    app.run(debug=True, host='0.0.0.0', port=5000)

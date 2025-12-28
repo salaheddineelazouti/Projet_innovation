@@ -14,6 +14,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from gmail_receiver import GmailReceiver
 from data_extractor import DataExtractor
 from database import DatabaseManager
+from email_sender import email_sender
 
 
 class OrderProcessor:
@@ -71,7 +72,13 @@ class OrderProcessor:
                     
                     # Save to database
                     if save_to_db:
-                        self.db.create_order(order)
+                        order_id = self.db.create_order(order)
+                        order['id'] = order_id
+                        
+                        # Send confirmation email to client
+                        if order.get('email_from') and '@' in order.get('email_from', ''):
+                            print(f"   📧 Envoi confirmation de réception...")
+                            email_sender.send_order_received_email(order)
                 else:
                     print("   ℹ️ Pas un bon de commande")
             

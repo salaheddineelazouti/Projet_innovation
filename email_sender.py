@@ -1,5 +1,5 @@
 """
-Email Sender Module for OrderFlow
+Email Sender Module for TECPAP
 Sends professional HTML emails for order validation/rejection notifications.
 """
 import smtplib
@@ -18,7 +18,7 @@ class EmailSender:
         self.smtp_port = 587
         self.email = os.getenv("GMAIL_EMAIL")
         self.password = os.getenv("GMAIL_APP_PASSWORD")
-        self.company_name = "OrderFlow Enterprise"
+        self.company_name = "TECPAP"
         self.company_email = self.email
         
     def send_email(self, to_email, subject, html_content, text_content=None):
@@ -76,7 +76,7 @@ class EmailSender:
         if delivery_date == 'None' or delivery_date is None:
             delivery_date = 'À confirmer'
         
-        subject = f"Confirmation de votre commande {order_number} - OrderFlow"
+        subject = f"Confirmation de votre commande {order_number} - TECPAP"
         
         html_content = f"""
 <!DOCTYPE html>
@@ -91,9 +91,12 @@ class EmailSender:
             <td align="center" style="padding: 40px 20px;">
                 <table role="presentation" style="width: 100%; max-width: 600px; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
                     
-                    <!-- Header -->
+                    <!-- Header TECPAP -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, #059669 0%, #047857 100%); padding: 48px 40px; text-align: center;">
+                        <td style="background: linear-gradient(135deg, #7CB342 0%, #5D4037 100%); padding: 48px 40px; text-align: center;">
+                            <div style="margin-bottom: 16px;">
+                                <span style="font-size: 28px; color: #ffffff; font-weight: 700;">TECPAP</span>
+                            </div>
                             <div style="width: 72px; height: 72px; background-color: rgba(255,255,255,0.15); border-radius: 50%; margin: 0 auto 24px; line-height: 72px;">
                                 <span style="font-size: 32px; color: #ffffff;">&#10003;</span>
                             </div>
@@ -187,8 +190,14 @@ class EmailSender:
                             <p style="color: #64748b; font-size: 14px; margin: 0 0 8px; font-weight: 500;">
                                 Merci pour votre confiance
                             </p>
-                            <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-                                © {datetime.now().year} OrderFlow Enterprise
+                            <p style="color: #5D4037; font-size: 13px; margin: 0 0 4px; font-weight: 600;">
+                                TECPAP - Sacs en Papier Kraft
+                            </p>
+                            <p style="color: #94a3b8; font-size: 11px; margin: 0;">
+                                100% biodégradables - 100% recyclables
+                            </p>
+                            <p style="color: #94a3b8; font-size: 11px; margin: 8px 0 0;">
+                                Bouskoura, Casablanca | +212 5 22 86 56 83 | www.tecpap.ma
                             </p>
                         </td>
                     </tr>
@@ -202,7 +211,7 @@ class EmailSender:
 """
         
         text_content = f"""
-COMMANDE CONFIRMÉE
+COMMANDE CONFIRMÉE - TECPAP
 
 Bonjour {client_name},
 
@@ -222,7 +231,8 @@ SUIVI:
 Pour toute question, notre équipe reste à votre disposition.
 
 Merci pour votre confiance,
-OrderFlow Enterprise
+TECPAP - Sacs en Papier Kraft
+www.tecpap.ma | +212 5 22 86 56 83
 """
         
         return self.send_email(to_email, subject, html_content, text_content)
@@ -243,7 +253,7 @@ OrderFlow Enterprise
         
         reason_text = reason if reason else "Informations insuffisantes pour traiter la commande"
         
-        subject = f"Information concernant votre demande {order_number} - OrderFlow"
+        subject = f"Information concernant votre demande {order_number} - TECPAP"
         
         html_content = f"""
 <!DOCTYPE html>
@@ -258,9 +268,12 @@ OrderFlow Enterprise
             <td align="center" style="padding: 40px 20px;">
                 <table role="presentation" style="width: 100%; max-width: 600px; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
                     
-                    <!-- Header -->
+                    <!-- Header TECPAP -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, #64748b 0%, #475569 100%); padding: 48px 40px; text-align: center;">
+                        <td style="background: linear-gradient(135deg, #64748b 0%, #5D4037 100%); padding: 48px 40px; text-align: center;">
+                            <div style="margin-bottom: 16px;">
+                                <span style="font-size: 28px; color: #ffffff; font-weight: 700;">TECPAP</span>
+                            </div>
                             <div style="width: 72px; height: 72px; background-color: rgba(255,255,255,0.15); border-radius: 50%; margin: 0 auto 24px; line-height: 72px;">
                                 <span style="font-size: 28px; color: #ffffff;">&#9432;</span>
                             </div>
@@ -328,8 +341,11 @@ OrderFlow Enterprise
                             <p style="color: #64748b; font-size: 14px; margin: 0 0 8px; font-weight: 500;">
                                 Nous restons à votre écoute
                             </p>
-                            <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-                                © {datetime.now().year} OrderFlow Enterprise
+                            <p style="color: #5D4037; font-size: 13px; margin: 0 0 4px; font-weight: 600;">
+                                TECPAP - Sacs en Papier Kraft
+                            </p>
+                            <p style="color: #94a3b8; font-size: 11px; margin: 8px 0 0;">
+                                Bouskoura, Casablanca | +212 5 22 86 56 83 | www.tecpap.ma
                             </p>
                         </td>
                     </tr>
@@ -343,7 +359,7 @@ OrderFlow Enterprise
 """
         
         text_content = f"""
-INFORMATION IMPORTANTE
+INFORMATION IMPORTANTE - TECPAP
 
 Bonjour {client_name},
 
@@ -365,7 +381,146 @@ COMMENT PROCÉDER:
 Notre équipe reste à votre disposition.
 
 Cordialement,
-OrderFlow Enterprise
+TECPAP - Sacs en Papier Kraft
+www.tecpap.ma | +212 5 22 86 56 83
+"""
+        
+        return self.send_email(to_email, subject, html_content, text_content)
+
+    def send_order_received_email(self, order):
+        """Send order received confirmation email."""
+        to_email = order.get('email_from', '')
+        
+        # Skip if no valid email
+        if not to_email or '@' not in to_email:
+            return False
+        
+        client_name = order.get('client_nom', 'Cher client')
+        product = order.get('produit_type', order.get('nature_produit', 'N/A'))
+        quantity = order.get('quantite', 'N/A')
+        unit = order.get('unite', '')
+        order_number = order.get('numero_commande') or f"CMD-{order.get('id')}"
+        
+        subject = f"Commande reçue {order_number} - TECPAP"
+        
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
+                    
+                    <!-- Header TECPAP -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 48px 40px; text-align: center;">
+                            <div style="margin-bottom: 16px;">
+                                <span style="font-size: 28px; color: #ffffff; font-weight: 700;">TECPAP</span>
+                            </div>
+                            <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.5px;">Commande Reçue</h1>
+                            <p style="color: rgba(255,255,255,0.85); margin: 12px 0 0; font-size: 15px; font-weight: 400;">Nous avons bien reçu votre commande</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Body -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 24px;">
+                                Bonjour <strong>{client_name}</strong>,
+                            </p>
+                            <p style="color: #64748b; font-size: 15px; line-height: 1.7; margin: 0 0 32px;">
+                                Nous avons bien reçu votre demande de commande. Notre équipe commerciale va l'examiner dans les plus brefs délais et vous tiendra informé de la suite.
+                            </p>
+                            
+                            <!-- Order Details Box -->
+                            <div style="background-color: #f8fafc; border-radius: 12px; padding: 28px; margin-bottom: 32px; border: 1px solid #e2e8f0;">
+                                <h3 style="color: #0f172a; margin: 0 0 20px; font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Détails de votre commande</h3>
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <tr>
+                                        <td style="padding: 14px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">Référence</td>
+                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e2e8f0;">{order_number}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 14px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">Produit</td>
+                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e2e8f0;">{product}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 14px 0; color: #64748b; font-size: 14px;">Quantité</td>
+                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{quantity} {unit}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            
+                            <!-- Status Info -->
+                            <div style="background-color: #eff6ff; border-radius: 12px; padding: 24px; margin-bottom: 32px; border: 1px solid #bfdbfe;">
+                                <h4 style="color: #1d4ed8; margin: 0 0 12px; font-size: 14px; font-weight: 600;">Prochaines étapes</h4>
+                                <ul style="color: #1e40af; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                                    <li>Examen de votre commande par notre équipe</li>
+                                    <li>Confirmation de validation sous 24-48h</li>
+                                    <li>Notification par email du statut final</li>
+                                </ul>
+                            </div>
+                            
+                            <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 0; padding-top: 16px; border-top: 1px solid #e2e8f0;">
+                                Pour toute question, n'hésitez pas à nous contacter. Merci pour votre confiance !
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f8fafc; padding: 32px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                            <p style="color: #64748b; font-size: 14px; margin: 0 0 8px; font-weight: 500;">
+                                Merci pour votre confiance
+                            </p>
+                            <p style="color: #5D4037; font-size: 13px; margin: 0 0 4px; font-weight: 600;">
+                                TECPAP - Sacs en Papier Kraft
+                            </p>
+                            <p style="color: #94a3b8; font-size: 11px; margin: 0;">
+                                100% biodégradables - 100% recyclables
+                            </p>
+                            <p style="color: #94a3b8; font-size: 11px; margin: 8px 0 0;">
+                                Bouskoura, Casablanca | +212 5 22 86 56 83 | www.tecpap.ma
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+"""
+        
+        text_content = f"""
+COMMANDE REÇUE - TECPAP
+
+Bonjour {client_name},
+
+Nous avons bien reçu votre demande de commande.
+Notre équipe commerciale va l'examiner dans les plus brefs délais.
+
+DÉTAILS:
+• Référence: {order_number}
+• Produit: {product}
+• Quantité: {quantity} {unit}
+
+PROCHAINES ÉTAPES:
+1. Examen de votre commande par notre équipe
+2. Confirmation de validation sous 24-48h
+3. Notification par email du statut final
+
+Pour toute question, n'hésitez pas à nous contacter.
+
+Merci pour votre confiance,
+TECPAP - Sacs en Papier Kraft
+www.tecpap.ma | +212 5 22 86 56 83
 """
         
         return self.send_email(to_email, subject, html_content, text_content)

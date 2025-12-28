@@ -19,13 +19,23 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
 
-# Product types for the company
+# Product types for TECPAP - Sacs en papier Kraft
 PRODUCT_TYPES = [
     "Sachets fond plat",
     "Sac fond carré sans poignées",
     "Sac fond carré avec poignées plates",
     "Sac fond carré avec poignées torsadées"
 ]
+
+# TECPAP Company Info
+COMPANY_INFO = {
+    "name": "TECPAP",
+    "description": "Fabrication de sacs en papier Kraft",
+    "address": "Parc Industriel CFCIM Bouskoura, Lot n°85, Casablanca",
+    "phone": "+212 (0)5 22 86 56 83",
+    "email": "info@tecpap.net",
+    "website": "www.tecpap.ma"
+}
 
 # Reorder patterns in different languages (French, Arabic transliteration, etc.)
 REORDER_PATTERNS = [
