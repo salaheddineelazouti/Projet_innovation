@@ -447,7 +447,7 @@ class DatabaseManager:
         """Get order by ID with client and product info."""
         cursor = self.connection.cursor()
         cursor.execute("""
-            SELECT c.*, cl.nom as client_nom, cl.telephone as client_telephone, p.type as produit_type
+            SELECT c.*, cl.nom as client_nom, cl.email as client_email, cl.telephone as client_telephone, p.type as produit_type
             FROM commandes c
             LEFT JOIN clients cl ON c.client_id = cl.id
             LEFT JOIN produits p ON c.produit_id = p.id

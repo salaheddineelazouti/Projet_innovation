@@ -23,7 +23,7 @@
                     <span class="badge badge-rejected"><i class="fas fa-times mr-1"></i>Rejetée</span>
                     {% endif %}
                 </div>
-                <p class="text-slate-500 text-sm mt-1">Reçue le {{ order.date_reception[:10] if order.date_reception else 'N/A' }}</p>
+                <p class="text-slate-500 text-sm mt-1">Reçue le {{ order.created_at[:10] if order.created_at else 'N/A' }}</p>
             </div>
         </div>
         {% if order.statut == 'en_attente' %}
@@ -316,7 +316,7 @@
                             </div>
                             <div>
                                 <p class="text-sm font-medium text-slate-800">Commande reçue</p>
-                                <p class="text-xs text-slate-500">{{ order.date_reception or 'N/A' }}</p>
+                                <p class="text-xs text-slate-500">{{ order.created_at or 'N/A' }}</p>
                             </div>
                         </div>
                         {% if order.statut == 'validee' %}

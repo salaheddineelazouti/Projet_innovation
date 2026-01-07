@@ -311,6 +311,10 @@ def api_reject_order(order_id):
     order = db.get_order(order_id)
     
     db.update_order_status(order_id, 'rejetee')
+
+    # Enregistrer le motif de rejet
+    if reason:
+        db.update_order(order_id, {'motif_rejet': reason})
     
     whatsapp_sent = False
     email_sent = False
@@ -847,7 +851,7 @@ def whatsapp_page():
 @app.route('/export/excel')
 def export_excel():
     """Export orders to Excel."""
-    reporter = ReportGenerator(db)
+    from pdf_report_improved import generate_pdf_report_improved
     filters = {}
     if request.args.get('status'):
         filters['status'] = request.args.get('status')
@@ -863,7 +867,7 @@ def export_excel():
 @app.route('/export/excel/sage')
 def export_excel_sage():
     """Export orders to Excel in SAGE X3 compatible format."""
-    reporter = ReportGenerator(db)
+    from pdf_report_improved import generate_pdf_report_improved
     filters = {}
     if request.args.get('status'):
         filters['status'] = request.args.get('status')
@@ -879,7 +883,7 @@ def export_excel_sage():
 @app.route('/export/csv')
 def export_csv():
     """Export orders to CSV."""
-    reporter = ReportGenerator(db)
+    from pdf_report_improved import generate_pdf_report_improved
     filters = {}
     if request.args.get('status'):
         filters['status'] = request.args.get('status')
@@ -891,8 +895,8 @@ def export_csv():
 @app.route('/export/pdf')
 def export_pdf():
     """Generate PDF report."""
-    reporter = ReportGenerator(db)
-    filepath = reporter.generate_pdf_report()
+    from pdf_report_improved import generate_pdf_report_improved
+    filepath = generate_pdf_report_improved(db)
     return send_file(filepath, as_attachment=True, download_name='rapport_commandes.pdf')
 
 

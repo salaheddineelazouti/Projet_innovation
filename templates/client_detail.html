@@ -44,7 +44,7 @@
                                 <td><a href="/orders/{{ order.id }}" class="text-brand-600 font-medium">{{ order.numero_commande or '#' ~ order.id }}</a></td>
                                 <td>{{ order.produit_type or 'N/A' }}</td>
                                 <td>{{ "{:,.0f}".format(order.quantite or 0) }} {{ order.unite or '' }}</td>
-                                <td>{{ order.date_reception[:10] if order.date_reception else 'N/A' }}</td>
+                                <td>{{ order.created_at[:10] if order.created_at else 'N/A' }}</td>
                                 <td>
                                     {% if order.statut == 'en_attente' %}
                                     <span class="badge badge-pending">En attente</span>
