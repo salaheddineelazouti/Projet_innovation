@@ -53,7 +53,7 @@ ngrok
 orders_output.json
 
 # Données locales (base, sauvegardes, médias hors des dossiers par défaut)
-data/
+/data/
 
 # Outils de qualité et de test
 .ruff_cache/

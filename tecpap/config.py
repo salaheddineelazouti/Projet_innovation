@@ -119,7 +119,7 @@ class Settings:
     chatbot_enabled: bool = True
     rag_enabled: bool = True
     rag_top_k: int = 4
-    rag_min_score: float = 0.25
+    rag_min_score: float = 0.23
     whatsapp_rate_limit_per_minute: int = 10
     max_media_bytes: int = 16 * 1024 * 1024
 

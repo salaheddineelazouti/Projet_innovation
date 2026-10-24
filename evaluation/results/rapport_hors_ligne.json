@@ -1,0 +1,1207 @@
+{
+  "report": "hors_ligne",
+  "run_date": "2026-10-25",
+  "package_version": "3.0.0",
+  "dataset": {
+    "path": "evaluation/dataset/messages.jsonl",
+    "sha256": "09c7adc05b0fac57c73b3d467d7b808e28d4f128b49ba529eb8a8c63c6aedf5e",
+    "items": 89,
+    "email": 24,
+    "whatsapp": 65,
+    "orders": 41,
+    "reorders": 7,
+    "injections": 18,
+    "traps": 10,
+    "by_language": {
+      "fr": {
+        "items": 34,
+        "email": 16,
+        "whatsapp": 18,
+        "orders": 17,
+        "reorders": 2,
+        "injections": 8,
+        "traps": 6
+      },
+      "darija_latin": {
+        "items": 20,
+        "email": 0,
+        "whatsapp": 20,
+        "orders": 9,
+        "reorders": 2,
+        "injections": 3,
+        "traps": 1
+      },
+      "darija_ar": {
+        "items": 13,
+        "email": 0,
+        "whatsapp": 13,
+        "orders": 5,
+        "reorders": 1,
+        "injections": 1,
+        "traps": 0
+      },
+      "ar": {
+        "items": 10,
+        "email": 3,
+        "whatsapp": 7,
+        "orders": 5,
+        "reorders": 1,
+        "injections": 2,
+        "traps": 1
+      },
+      "en": {
+        "items": 12,
+        "email": 5,
+        "whatsapp": 7,
+        "orders": 5,
+        "reorders": 1,
+        "injections": 4,
+        "traps": 2
+      }
+    }
+  },
+  "language": {
+    "component": "tecpap.nlp.language.detect_language",
+    "reply_component": "tecpap.nlp.language.reply_language",
+    "items": 89,
+    "code": {
+      "correct": 89,
+      "total": 89,
+      "rate": 1.0
+    },
+    "reply_language": {
+      "correct": 89,
+      "total": 89,
+      "rate": 1.0
+    },
+    "by_language": {
+      "fr": {
+        "code": {
+          "correct": 34,
+          "total": 34,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 34,
+          "total": 34,
+          "rate": 1.0
+        }
+      },
+      "darija_latin": {
+        "code": {
+          "correct": 20,
+          "total": 20,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 20,
+          "total": 20,
+          "rate": 1.0
+        }
+      },
+      "darija_ar": {
+        "code": {
+          "correct": 13,
+          "total": 13,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 13,
+          "total": 13,
+          "rate": 1.0
+        }
+      },
+      "ar": {
+        "code": {
+          "correct": 10,
+          "total": 10,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 10,
+          "total": 10,
+          "rate": 1.0
+        }
+      },
+      "en": {
+        "code": {
+          "correct": 12,
+          "total": 12,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 12,
+          "total": 12,
+          "rate": 1.0
+        }
+      }
+    },
+    "confusion_matrix": {
+      "rows": [
+        "fr",
+        "darija_latin",
+        "darija_ar",
+        "ar",
+        "en"
+      ],
+      "columns": [
+        "fr",
+        "darija_latin",
+        "darija_ar",
+        "ar",
+        "en",
+        "unknown"
+      ],
+      "counts": {
+        "fr": {
+          "fr": 34,
+          "darija_latin": 0,
+          "darija_ar": 0,
+          "ar": 0,
+          "en": 0,
+          "unknown": 0
+        },
+        "darija_latin": {
+          "fr": 0,
+          "darija_latin": 20,
+          "darija_ar": 0,
+          "ar": 0,
+          "en": 0,
+          "unknown": 0
+        },
+        "darija_ar": {
+          "fr": 0,
+          "darija_latin": 0,
+          "darija_ar": 13,
+          "ar": 0,
+          "en": 0,
+          "unknown": 0
+        },
+        "ar": {
+          "fr": 0,
+          "darija_latin": 0,
+          "darija_ar": 0,
+          "ar": 10,
+          "en": 0,
+          "unknown": 0
+        },
+        "en": {
+          "fr": 0,
+          "darija_latin": 0,
+          "darija_ar": 0,
+          "ar": 0,
+          "en": 12,
+          "unknown": 0
+        }
+      }
+    },
+    "errors": [],
+    "reply_errors": []
+  },
+  "extraction": {
+    "component": "tecpap.extraction.rules.rule_based_extract",
+    "items": 41,
+    "fields": {
+      "type_produit": {
+        "correct": 41,
+        "total": 41,
+        "rate": 1.0,
+        "errors": []
+      },
+      "quantite": {
+        "correct": 41,
+        "total": 41,
+        "rate": 1.0,
+        "errors": []
+      },
+      "unite": {
+        "correct": 39,
+        "total": 41,
+        "rate": 0.9512,
+        "errors": [
+          {
+            "id": "fr-001",
+            "language": "fr",
+            "expected": "US",
+            "obtained": "pièces"
+          },
+          {
+            "id": "fr-010",
+            "language": "fr",
+            "expected": "US",
+            "obtained": "pièces"
+          }
+        ]
+      },
+      "entreprise_cliente": {
+        "correct": 41,
+        "total": 41,
+        "rate": 1.0,
+        "errors": []
+      }
+    },
+    "required_fields": {
+      "fields": [
+        "entreprise_cliente",
+        "type_produit",
+        "quantite"
+      ],
+      "correct": 41,
+      "total": 41,
+      "rate": 1.0,
+      "errors": []
+    },
+    "by_language": {
+      "fr": {
+        "items": 17,
+        "type_produit": {
+          "correct": 17,
+          "total": 17,
+          "rate": 1.0
+        },
+        "quantite": {
+          "correct": 17,
+          "total": 17,
+          "rate": 1.0
+        },
+        "unite": {
+          "correct": 15,
+          "total": 17,
+          "rate": 0.8824
+        },
+        "entreprise_cliente": {
+          "correct": 17,
+          "total": 17,
+          "rate": 1.0
+        },
+        "required_fields": {
+          "correct": 17,
+          "total": 17,
+          "rate": 1.0
+        }
+      },
+      "darija_latin": {
+        "items": 9,
+        "type_produit": {
+          "correct": 9,
+          "total": 9,
+          "rate": 1.0
+        },
+        "quantite": {
+          "correct": 9,
+          "total": 9,
+          "rate": 1.0
+        },
+        "unite": {
+          "correct": 9,
+          "total": 9,
+          "rate": 1.0
+        },
+        "entreprise_cliente": {
+          "correct": 9,
+          "total": 9,
+          "rate": 1.0
+        },
+        "required_fields": {
+          "correct": 9,
+          "total": 9,
+          "rate": 1.0
+        }
+      },
+      "darija_ar": {
+        "items": 5,
+        "type_produit": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "quantite": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "unite": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "entreprise_cliente": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "required_fields": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        }
+      },
+      "ar": {
+        "items": 5,
+        "type_produit": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "quantite": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "unite": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "entreprise_cliente": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "required_fields": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        }
+      },
+      "en": {
+        "items": 5,
+        "type_produit": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "quantite": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "unite": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "entreprise_cliente": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        },
+        "required_fields": {
+          "correct": 5,
+          "total": 5,
+          "rate": 1.0
+        }
+      }
+    }
+  },
+  "order_detection": {
+    "component": "tecpap.extraction.rules.rule_based_extract (est_bon_commande)",
+    "items": 89,
+    "positives": 41,
+    "tp": 41,
+    "fp": 0,
+    "fn": 0,
+    "tn": 48,
+    "total": 89,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "false_positive_rate": 0.0,
+    "by_language": {
+      "fr": {
+        "tp": 17,
+        "fp": 0,
+        "fn": 0,
+        "tn": 17,
+        "total": 34,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "darija_latin": {
+        "tp": 9,
+        "fp": 0,
+        "fn": 0,
+        "tn": 11,
+        "total": 20,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "darija_ar": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "tn": 8,
+        "total": 13,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "ar": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "tn": 5,
+        "total": 10,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "en": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "tn": 7,
+        "total": 12,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      }
+    },
+    "false_positives": [],
+    "false_negatives": []
+  },
+  "reorder_detection": {
+    "component": "tecpap.extraction.rules.detect_reorder",
+    "items": 89,
+    "positives": 7,
+    "tp": 7,
+    "fp": 0,
+    "fn": 0,
+    "tn": 82,
+    "total": 89,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "false_positive_rate": 0.0,
+    "by_language": {
+      "fr": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "tn": 32,
+        "total": 34,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "darija_latin": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "tn": 18,
+        "total": 20,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "darija_ar": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "tn": 12,
+        "total": 13,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "ar": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "tn": 9,
+        "total": 10,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      },
+      "en": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "tn": 11,
+        "total": 12,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0
+      }
+    },
+    "false_positives": [],
+    "false_negatives": []
+  },
+  "injection": {
+    "component": "tecpap.security.guardrails.inspect_input",
+    "items": 89,
+    "positives": 18,
+    "tp": 18,
+    "fp": 0,
+    "fn": 0,
+    "tn": 71,
+    "total": 89,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "false_positive_rate": 0.0,
+    "by_language": {
+      "fr": {
+        "tp": 8,
+        "fp": 0,
+        "fn": 0,
+        "tn": 26,
+        "total": 34,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0,
+        "traps": 6,
+        "trap_false_positives": 0
+      },
+      "darija_latin": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "tn": 17,
+        "total": 20,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0,
+        "traps": 1,
+        "trap_false_positives": 0
+      },
+      "darija_ar": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "tn": 12,
+        "total": 13,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0,
+        "traps": 0,
+        "trap_false_positives": 0
+      },
+      "ar": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "tn": 8,
+        "total": 10,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0,
+        "traps": 1,
+        "trap_false_positives": 0
+      },
+      "en": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "tn": 8,
+        "total": 12,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0,
+        "traps": 2,
+        "trap_false_positives": 0
+      }
+    },
+    "false_positives": [],
+    "false_negatives": [],
+    "threshold": 50,
+    "traps": {
+      "items": 10,
+      "false_positives": 0,
+      "rate": 0.0
+    },
+    "non_injection": {
+      "items": 71,
+      "false_positives": 0,
+      "rate": 0.0
+    },
+    "max_legitimate_score": {
+      "id": "fr-034",
+      "score": 15
+    },
+    "min_injection_score": {
+      "id": "fr-025",
+      "score": 50
+    }
+  },
+  "intent": {
+    "available": true,
+    "reason": null,
+    "component": "tecpap.chatbot.intents.detect_intent",
+    "items": 89,
+    "accuracy": {
+      "correct": 89,
+      "total": 89,
+      "rate": 1.0
+    },
+    "macro_f1": 1.0,
+    "per_intent": {
+      "order": {
+        "support": 34,
+        "predicted": 34,
+        "tp": 34,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "reorder": {
+        "support": 7,
+        "predicted": 7,
+        "tp": 7,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "status": {
+        "support": 5,
+        "predicted": 5,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "question": {
+        "support": 5,
+        "predicted": 5,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "human": {
+        "support": 3,
+        "predicted": 3,
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "greeting": {
+        "support": 4,
+        "predicted": 4,
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "confirm_yes": {
+        "support": 7,
+        "predicted": 7,
+        "tp": 7,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "confirm_no": {
+        "support": 4,
+        "predicted": 4,
+        "tp": 4,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "cancel": {
+        "support": 3,
+        "predicted": 3,
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "other": {
+        "support": 17,
+        "predicted": 17,
+        "tp": 17,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      }
+    },
+    "by_language": {
+      "fr": {
+        "correct": 34,
+        "total": 34,
+        "rate": 1.0
+      },
+      "darija_latin": {
+        "correct": 20,
+        "total": 20,
+        "rate": 1.0
+      },
+      "darija_ar": {
+        "correct": 13,
+        "total": 13,
+        "rate": 1.0
+      },
+      "ar": {
+        "correct": 10,
+        "total": 10,
+        "rate": 1.0
+      },
+      "en": {
+        "correct": 12,
+        "total": 12,
+        "rate": 1.0
+      }
+    },
+    "confusion_matrix": {
+      "rows": [
+        "order",
+        "reorder",
+        "status",
+        "question",
+        "human",
+        "greeting",
+        "confirm_yes",
+        "confirm_no",
+        "cancel",
+        "other"
+      ],
+      "columns": [
+        "order",
+        "reorder",
+        "status",
+        "question",
+        "human",
+        "greeting",
+        "confirm_yes",
+        "confirm_no",
+        "cancel",
+        "other"
+      ],
+      "counts": {
+        "order": {
+          "order": 34,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "reorder": {
+          "order": 0,
+          "reorder": 7,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "status": {
+          "order": 0,
+          "reorder": 0,
+          "status": 5,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "question": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 5,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "human": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 3,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "greeting": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 4,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "confirm_yes": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 7,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "confirm_no": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 4,
+          "cancel": 0,
+          "other": 0
+        },
+        "cancel": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 3,
+          "other": 0
+        },
+        "other": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 17
+        }
+      }
+    },
+    "errors": []
+  },
+  "summary": [
+    {
+      "component": "Détection de la langue",
+      "measure": "Exactitude du code de langue",
+      "numerator": 89,
+      "denominator": 89,
+      "value": 1.0,
+      "ci95": [
+        0.9586,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection de la langue",
+      "measure": "Exactitude de la langue de réponse",
+      "numerator": 89,
+      "denominator": 89,
+      "value": 1.0,
+      "ci95": [
+        0.9586,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `type_produit`",
+      "numerator": 41,
+      "denominator": 41,
+      "value": 1.0,
+      "ci95": [
+        0.9143,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `quantite`",
+      "numerator": 41,
+      "denominator": 41,
+      "value": 1.0,
+      "ci95": [
+        0.9143,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `unite`",
+      "numerator": 39,
+      "denominator": 41,
+      "value": 0.9512,
+      "ci95": [
+        0.8386,
+        0.9865
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `entreprise_cliente`",
+      "numerator": 41,
+      "denominator": 41,
+      "value": 1.0,
+      "ci95": [
+        0.9143,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude des champs obligatoires",
+      "numerator": 41,
+      "denominator": 41,
+      "value": 1.0,
+      "ci95": [
+        0.9143,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "Exactitude",
+      "numerator": 89,
+      "denominator": 89,
+      "value": 1.0,
+      "ci95": [
+        0.9586,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "Précision",
+      "numerator": 41,
+      "denominator": 41,
+      "value": 1.0,
+      "ci95": [
+        0.9143,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "Rappel",
+      "numerator": 41,
+      "denominator": 41,
+      "value": 1.0,
+      "ci95": [
+        0.9143,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 1.0,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "Exactitude",
+      "numerator": 89,
+      "denominator": 89,
+      "value": 1.0,
+      "ci95": [
+        0.9586,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "Précision",
+      "numerator": 7,
+      "denominator": 7,
+      "value": 1.0,
+      "ci95": [
+        0.6457,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "Rappel",
+      "numerator": 7,
+      "denominator": 7,
+      "value": 1.0,
+      "ci95": [
+        0.6457,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 1.0,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Précision",
+      "numerator": 18,
+      "denominator": 18,
+      "value": 1.0,
+      "ci95": [
+        0.8241,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Rappel",
+      "numerator": 18,
+      "denominator": 18,
+      "value": 1.0,
+      "ci95": [
+        0.8241,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 1.0,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Taux de faux positifs",
+      "numerator": 0,
+      "denominator": 71,
+      "value": 0.0,
+      "ci95": [
+        0.0,
+        0.0513
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Fausses alertes sur les pièges",
+      "numerator": 0,
+      "denominator": 10,
+      "value": 0.0,
+      "ci95": [
+        0.0,
+        0.2775
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des intentions",
+      "measure": "Exactitude",
+      "numerator": 89,
+      "denominator": 89,
+      "value": 1.0,
+      "ci95": [
+        0.9586,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des intentions",
+      "measure": "Macro-F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 1.0,
+      "ci95": null,
+      "note": null
+    }
+  ]
+}

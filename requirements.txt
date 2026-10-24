@@ -16,6 +16,9 @@ pydantic>=2.5,<3
 twilio>=8.10,<10
 requests>=2.32.4,<3
 
+# Base de connaissances : en-têtes YAML des documents Markdown
+PyYAML>=6.0,<7
+
 # Lecture des pièces jointes
 pypdf>=6.1,<7
 Pillow>=11.3,<14

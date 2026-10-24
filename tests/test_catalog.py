@@ -8,7 +8,7 @@ from tecpap import catalog
 from tecpap.db import database
 from tecpap.extraction import article_codes, extractor
 
-ARABIC_LETTER = re.compile(r"[؀-ۿ]")
+ARABIC_LETTER = re.compile("[\u0600-\u06ff]")
 
 
 class TestProducts:
@@ -30,10 +30,22 @@ class TestProducts:
             assert {"id", "type", "code", "description", "usages", "keywords"} <= set(product)
             assert product["usages"]
 
-    @pytest.mark.parametrize("language", ["fr", "darija", "ar"])
+    @pytest.mark.parametrize("language", ["fr", "darija", "ar", "en"])
     def test_keywords_for_each_language(self, language):
         for product in catalog.PRODUCTS:
             assert product["keywords"][language], (product["type"], language)
+
+    def test_keyword_languages(self):
+        for product in catalog.PRODUCTS:
+            assert set(product["keywords"]) == {"fr", "darija", "ar", "en"}
+
+    def test_keywords_are_trimmed_lowercase_texts_without_duplicates(self):
+        for product in catalog.PRODUCTS:
+            for language, words in product["keywords"].items():
+                assert len(words) == len(set(words)), (product["type"], language)
+                for word in words:
+                    assert isinstance(word, str) and word == word.strip() and word, (language, word)
+                    assert word == word.lower() or language != "fr", (language, word)
 
     def test_arabic_keywords_use_arabic_script(self):
         for product in catalog.PRODUCTS:
@@ -41,8 +53,19 @@ class TestProducts:
 
     def test_latin_keywords_have_no_arabic_script(self):
         for product in catalog.PRODUCTS:
-            for language in ("fr", "darija"):
+            for language in ("fr", "darija", "en"):
                 assert not any(ARABIC_LETTER.search(word) for word in product["keywords"][language])
+
+    @pytest.mark.parametrize("product_id, keyword", [
+        (1, "flat bottom bag"), (1, "sachiat"), (2, "without handles"), (2, "sac sos"), (2, "بدون مقابض"),
+        (3, "flat handles"), (3, "مقابض مسطحة"), (4, "twisted handles"), (4, "mfetlin"), (4, "مقابض مفتولة"),
+    ])
+    def test_synonyms(self, product_id, keyword):
+        product = catalog.get_product(product_id)
+        assert any(keyword in words for words in product["keywords"].values())
+
+    def test_english_keywords_by_language(self):
+        assert "twisted handles" in catalog.product_keywords("en")["Sac fond carré avec poignées torsadées"]
 
     def test_product_types_list(self):
         assert catalog.PRODUCT_TYPES == [p["type"] for p in catalog.PRODUCTS]

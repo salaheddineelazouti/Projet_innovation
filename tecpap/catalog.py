@@ -11,7 +11,8 @@ Langues des mots-clés :
 - ``fr`` : français ;
 - ``darija`` : arabe marocain écrit en caractères latins (« arabizi », où les chiffres 3, 7 et 9
   remplacent des lettres arabes) ;
-- ``ar`` : arabe en caractères arabes (arabe standard ou darija).
+- ``ar`` : arabe en caractères arabes (arabe standard ou darija) ;
+- ``en`` : anglais.
 """
 
 from __future__ import annotations
@@ -29,8 +30,11 @@ PRODUCTS: list[dict[str, Any]] = [
         "usages": ["sandwichs", "tacos", "viennoiseries"],
         "keywords": {
             "fr": ["sachet", "sachets", "fond plat", "sachet kraft", "sachet sandwich"],
-            "darija": ["sachet", "sachiyat", "sachet dyal sandwich", "sachet tacos"],
-            "ar": ["ساشي", "ساشة", "أكياس صغيرة", "كيس مسطح"],
+            "darija": ["sachet", "sachiyat", "sachet dyal sandwich", "sachet tacos", "sachiat", "sachyat",
+                       "sachiya"],
+            "ar": ["ساشي", "ساشة", "أكياس صغيرة", "كيس مسطح", "كيس صغير"],
+            "en": ["flat bottom bag", "flat bottom bags", "flat bottom sachet", "flat bottom", "sachet",
+                   "sandwich bag", "small paper bag"],
         },
     },
     {
@@ -40,9 +44,11 @@ PRODUCTS: list[dict[str, Any]] = [
         "description": "Sacs fond carré sans poignées",
         "usages": ["emballage standard"],
         "keywords": {
-            "fr": ["sans poignée", "sans poignées", "fond carré"],
-            "darija": ["bla yddin", "bla poignée", "sac bla poignée"],
-            "ar": ["بدون مقبض", "بدون يد"],
+            "fr": ["sans poignée", "sans poignées", "fond carré", "sans anse", "sans anses", "sac sos"],
+            "darija": ["bla yddin", "bla poignée", "sac bla poignée", "bla yeddin"],
+            "ar": ["بدون مقبض", "بدون يد", "بدون مقابض", "بلا مقبض", "بلا يد"],
+            "en": ["without handles", "without handle", "no handles", "handleless", "square bottom bag",
+                   "square bottom", "sos bag"],
         },
     },
     {
@@ -52,9 +58,10 @@ PRODUCTS: list[dict[str, Any]] = [
         "description": "Sacs fond carré avec poignées plates",
         "usages": ["sacs shopping"],
         "keywords": {
-            "fr": ["poignée plate", "poignées plates", "sac shopping"],
-            "darija": ["poignée plate", "yddin plates"],
-            "ar": ["مقبض مسطح", "يد مسطحة"],
+            "fr": ["poignée plate", "poignées plates", "sac shopping", "anse plate", "anses plates"],
+            "darija": ["poignée plate", "yddin plates", "yeddin plates"],
+            "ar": ["مقبض مسطح", "يد مسطحة", "مقابض مسطحة"],
+            "en": ["flat handles", "flat handle", "flat paper handles", "shopping bag"],
         },
     },
     {
@@ -64,9 +71,11 @@ PRODUCTS: list[dict[str, Any]] = [
         "description": "Sacs fond carré avec poignées torsadées",
         "usages": ["sacs premium"],
         "keywords": {
-            "fr": ["poignée torsadée", "poignées torsadées", "torsadé", "cordelette", "premium"],
-            "darija": ["poignée torsadée", "yddin mfetlin"],
-            "ar": ["مقبض مفتول", "يد مفتولة"],
+            "fr": ["poignée torsadée", "poignées torsadées", "torsadé", "cordelette", "premium", "poignée ficelle",
+                   "poignées ficelles"],
+            "darija": ["poignée torsadée", "yddin mfetlin", "yeddin mfetlin", "mfetlin"],
+            "ar": ["مقبض مفتول", "يد مفتولة", "مقابض مفتولة"],
+            "en": ["twisted handles", "twisted handle", "twisted paper handles", "twisted", "cord handles"],
         },
     },
 ]
@@ -179,5 +188,5 @@ def get_product_by_code(code: str) -> dict[str, Any] | None:
 
 
 def product_keywords(language: str) -> dict[str, list[str]]:
-    """Renvoie, pour une langue (``fr``, ``darija`` ou ``ar``), les mots-clés de chaque produit."""
+    """Renvoie, pour une langue (``fr``, ``darija``, ``ar`` ou ``en``), les mots-clés de chaque produit."""
     return {product["type"]: list(product["keywords"].get(language, [])) for product in PRODUCTS}

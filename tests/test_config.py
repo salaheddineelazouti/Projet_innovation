@@ -57,7 +57,7 @@ class TestDefaults:
 
     def test_assistant_and_rag(self, settings):
         assert settings.chatbot_enabled is True
-        assert (settings.rag_enabled, settings.rag_top_k, settings.rag_min_score) == (True, 4, 0.25)
+        assert (settings.rag_enabled, settings.rag_top_k, settings.rag_min_score) == (True, 4, 0.23)
         assert settings.whatsapp_rate_limit_per_minute == 10
 
     def test_web_security(self, settings):

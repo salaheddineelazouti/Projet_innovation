@@ -1,0 +1,127 @@
+{"id": "fr-ok-001", "language": "fr", "query": "Quels types de sacs fabriquez-vous ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-002", "language": "fr", "query": "Vous faites des sachets pour les sandwichs ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-003", "language": "fr", "query": "J'ai une boulangerie, quel sac me conseillez-vous ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-004", "language": "fr", "query": "C'est quoi un sac SOS ?", "answerable": true, "category": "produits", "expected_docs": ["produits"]}
+{"id": "fr-ok-005", "language": "fr", "query": "Avez-vous des sacs à poignées torsadées pour une boutique de luxe ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-006", "language": "fr", "query": "Pouvez-vous imprimer notre logo en plusieurs couleurs ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-007", "language": "fr", "query": "Combien de couleurs maximum pour l'impression des sacs ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-008", "language": "fr", "query": "Quelle est la capacité de production de TECPAP ?", "answerable": true, "category": "produits", "expected_docs": ["produits"]}
+{"id": "fr-ok-009", "language": "fr", "query": "Quel est le code produit du sac à poignées plates ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-010", "language": "fr", "query": "Quel emballage pour des viennoiseries ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-lat-ok-001", "language": "darija_latin", "query": "wach 3ndkom sachiyat dyal tacos ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-lat-ok-002", "language": "darija_latin", "query": "bghit sac b yddin mfetlin l cadeau", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-lat-ok-003", "language": "darija_latin", "query": "ana 3ndi pharmacie, chno men sac khassni ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-lat-ok-004", "language": "darija_latin", "query": "wach kat-tb3o logo 3la sachiyat ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-lat-ok-005", "language": "darija_latin", "query": "chno kat-sawbo f TECPAP ?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-lat-ok-006", "language": "darija_latin", "query": "3ndi boutique dyal lhwayej, bghit sac b poignée plate", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-ar-ok-001", "language": "darija_ar", "query": "واش عندكم ساشي ديال السندويش؟", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-ar-ok-002", "language": "darija_ar", "query": "بغيت ساك بيدين مفتولين للهدايا", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-ar-ok-003", "language": "darija_ar", "query": "واش كطبعو اللوغو على الساكات؟", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "darija-ar-ok-004", "language": "darija_ar", "query": "شنو كتصاوبو فالشركة ديالكم؟", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "ar-ok-001", "language": "ar", "query": "ما هي أنواع الأكياس التي تصنعونها؟", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "ar-ok-002", "language": "ar", "query": "هل لديكم أكياس بمقابض مسطحة للمتاجر؟", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "ar-ok-003", "language": "ar", "query": "أريد طباعة الشعار على الأكياس الورقية", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "en-ok-001", "language": "en", "query": "Can you print our logo on paper bags?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "en-ok-002", "language": "en", "query": "Do you make kraft bags with twisted handles?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "en-ok-003", "language": "en", "query": "What products does TECPAP make?", "answerable": true, "category": "produits", "expected_docs": ["produits", "questions_frequentes"]}
+{"id": "fr-ok-011", "language": "fr", "query": "Quelle différence entre le kraft blanc et le kraft brun ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-012", "language": "fr", "query": "Quels grammages de papier sont disponibles ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-013", "language": "fr", "query": "C'est quoi la laize ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-014", "language": "fr", "query": "Que veut dire le code KE80L25 ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-015", "language": "fr", "query": "Vos sacs sont-ils écologiques ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-016", "language": "fr", "query": "Le papier kraft est-il recyclable ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-017", "language": "fr", "query": "Quelles largeurs de bobine proposez-vous ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-018", "language": "fr", "query": "Que signifie un grammage de 80 g/m² ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "darija-lat-ok-007", "language": "darija_latin", "query": "chno lfar9 bin kraft byed w kraft 9ahwi ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "darija-lat-ok-008", "language": "darija_latin", "query": "ch7al d gram kayn 3ndkom ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "darija-lat-ok-009", "language": "darija_latin", "query": "chno kay3ni KB100L28 ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "darija-lat-ok-010", "language": "darija_latin", "query": "wach sacs dyalkom kayt-recyclaw ?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "darija-ar-ok-005", "language": "darija_ar", "query": "شنو الفرق بين الكرافت الأبيض والكرافت البني؟", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "darija-ar-ok-006", "language": "darija_ar", "query": "شحال ديال الغراماج كاين عندكم؟", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "ar-ok-004", "language": "ar", "query": "ما معنى رمز المنتج KB100L28؟", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "ar-ok-005", "language": "ar", "query": "هل أكياسكم قابلة لإعادة التدوير؟", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "ar-ok-006", "language": "ar", "query": "ما هو عرض الورق المتوفر؟", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "en-ok-004", "language": "en", "query": "What does the code KB100L28 mean?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "en-ok-005", "language": "en", "query": "Are your kraft bags recyclable and biodegradable?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "en-ok-006", "language": "en", "query": "Which paper grammages do you offer?", "answerable": true, "category": "papiers", "expected_docs": ["papiers_et_codes_articles", "questions_frequentes"]}
+{"id": "fr-ok-019", "language": "fr", "query": "Comment passer une commande ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-020", "language": "fr", "query": "Puis-je commander par WhatsApp avec un message vocal ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-021", "language": "fr", "query": "Quelles informations dois-je donner pour commander ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-022", "language": "fr", "query": "Comment refaire la même commande que la dernière fois ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-023", "language": "fr", "query": "Ma commande est-elle validée automatiquement ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-024", "language": "fr", "query": "Comment suivre le statut de ma commande ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-025", "language": "fr", "query": "Je veux parler à un conseiller commercial", "answerable": true, "category": "commande", "expected_docs": ["commander"]}
+{"id": "fr-ok-026", "language": "fr", "query": "Pourquoi dois-je indiquer le nom de mon entreprise ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-027", "language": "fr", "query": "Ma commande n'a pas été validée, que faire ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-028", "language": "fr", "query": "Je peux envoyer une photo de mon bon de commande ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-lat-ok-011", "language": "darija_latin", "query": "kifach ndir commande 3ndkom ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-lat-ok-012", "language": "darija_latin", "query": "wach n9der nsift vocal b darija ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-lat-ok-013", "language": "darija_latin", "query": "bghit n3awed nafs la commande, kifach ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-lat-ok-014", "language": "darija_latin", "query": "fin wslat commande dyali ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-lat-ok-015", "language": "darija_latin", "query": "commande dyali ma t9blatch, chno ndir ?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-ar-ok-007", "language": "darija_ar", "query": "كيفاش ندير الطلبية عندكم؟", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-ar-ok-008", "language": "darija_ar", "query": "واش نقدر نصيفط الطلبية فوكال؟", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "darija-ar-ok-009", "language": "darija_ar", "query": "بغيت نهضر مع شي واحد من الكوموند", "answerable": true, "category": "commande", "expected_docs": ["commander"]}
+{"id": "ar-ok-007", "language": "ar", "query": "كيف يمكنني الطلب عبر واتساب؟", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "ar-ok-008", "language": "ar", "query": "هل يمكنني الطلب باللغة العربية؟", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "ar-ok-009", "language": "ar", "query": "لماذا رفض طلبي؟", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "en-ok-007", "language": "en", "query": "How can I place an order by WhatsApp?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "en-ok-008", "language": "en", "query": "Can I send my order as a PDF or a photo?", "answerable": true, "category": "commande", "expected_docs": ["commander", "questions_frequentes"]}
+{"id": "fr-ok-029", "language": "fr", "query": "Quelle est votre adresse ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "fr-ok-030", "language": "fr", "query": "Où se trouve votre usine ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes", "produits"]}
+{"id": "fr-ok-031", "language": "fr", "query": "Quel est votre numéro de téléphone ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "fr-ok-032", "language": "fr", "query": "Avez-vous un site internet ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "fr-ok-033", "language": "fr", "query": "Comment vous contacter par email ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "darija-lat-ok-016", "language": "darija_latin", "query": "fin kayna l'usine dyalkom ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes", "produits"]}
+{"id": "darija-lat-ok-017", "language": "darija_latin", "query": "3tini numero dyal TECPAP", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "darija-lat-ok-018", "language": "darija_latin", "query": "wach 3ndkom site web ?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "darija-ar-ok-010", "language": "darija_ar", "query": "فين كاينة الشركة ديالكم؟", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "darija-ar-ok-011", "language": "darija_ar", "query": "عطيني الرقم ديالكم", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "ar-ok-010", "language": "ar", "query": "ما هو عنوان الشركة؟", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "ar-ok-011", "language": "ar", "query": "ما هو البريد الإلكتروني لشركة TECPAP؟", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "en-ok-009", "language": "en", "query": "What is your email address and phone number?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "en-ok-010", "language": "en", "query": "Where is TECPAP located?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes", "produits"]}
+{"id": "en-ok-011", "language": "en", "query": "Do you have a website?", "answerable": true, "category": "contact", "expected_docs": ["contact", "questions_frequentes"]}
+{"id": "fr-hors-001", "language": "fr", "query": "Quel est le prix des sachets fond plat ?", "answerable": false, "category": "prix", "expected_docs": [], "notes": "Peut retrouver la section du produit : le refus de donner un prix relève de l'instruction de réponse."}
+{"id": "fr-hors-002", "language": "fr", "query": "Combien coûtent 10 000 sacs avec poignées plates ?", "answerable": false, "category": "prix", "expected_docs": [], "notes": "Peut retrouver la section du produit : le refus de donner un prix relève de l'instruction de réponse."}
+{"id": "fr-hors-003", "language": "fr", "query": "Pouvez-vous m'envoyer votre grille tarifaire ?", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "fr-hors-004", "language": "fr", "query": "Faites-vous des remises pour les grosses quantités ?", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "darija-lat-hors-001", "language": "darija_latin", "query": "ch7al taman dyal sachet ?", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "darija-lat-hors-002", "language": "darija_latin", "query": "bch7al l alf sachet ?", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "darija-ar-hors-001", "language": "darija_ar", "query": "بشحال الساشي؟", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "ar-hors-001", "language": "ar", "query": "كم سعر الكيس الورقي؟", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "en-hors-001", "language": "en", "query": "How much does a kraft bag cost?", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "en-hors-002", "language": "en", "query": "Can I get a discount on 50000 bags?", "answerable": false, "category": "prix", "expected_docs": []}
+{"id": "fr-hors-005", "language": "fr", "query": "Quel est le délai de livraison ?", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "fr-hors-006", "language": "fr", "query": "En combien de jours livrez-vous à Marrakech ?", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "fr-hors-007", "language": "fr", "query": "Livrez-vous le samedi ?", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "darija-lat-hors-003", "language": "darija_latin", "query": "ch7al dyal lwa9t bach twslni la commande ?", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "darija-ar-hors-002", "language": "darija_ar", "query": "شحال ديال الوقت باش توصلني السلعة؟", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "ar-hors-002", "language": "ar", "query": "كم يستغرق التوصيل إلى طنجة؟", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "en-hors-003", "language": "en", "query": "How long does delivery take?", "answerable": false, "category": "delai", "expected_docs": []}
+{"id": "fr-hors-008", "language": "fr", "query": "Quelle est la quantité minimale de commande ?", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "fr-hors-009", "language": "fr", "query": "Acceptez-vous le paiement par chèque ?", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "fr-hors-010", "language": "fr", "query": "Quels sont vos horaires d'ouverture ?", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "darija-lat-hors-004", "language": "darija_latin", "query": "wach kat9blo chèque ?", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "ar-hors-003", "language": "ar", "query": "ما هي ساعات العمل؟", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "en-hors-004", "language": "en", "query": "What is the minimum order quantity?", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "en-hors-005", "language": "en", "query": "Do you accept credit card payments?", "answerable": false, "category": "information_absente", "expected_docs": []}
+{"id": "fr-hors-011", "language": "fr", "query": "Quel temps fera-t-il demain à Casablanca ?", "answerable": false, "category": "meteo", "expected_docs": []}
+{"id": "fr-hors-012", "language": "fr", "query": "Qui a gagné le match du Raja hier ?", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "fr-hors-013", "language": "fr", "query": "Peux-tu me donner une recette de tajine ?", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "fr-hors-014", "language": "fr", "query": "Quelle est la capitale du Canada ?", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "fr-hors-015", "language": "fr", "query": "Recrutez-vous des commerciaux en ce moment ?", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "darija-lat-hors-005", "language": "darija_latin", "query": "chno ta9s ghda f casa ?", "answerable": false, "category": "meteo", "expected_docs": []}
+{"id": "darija-lat-hors-006", "language": "darija_latin", "query": "chkoun rbe7 lmatch lbare7 ?", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "darija-lat-hors-007", "language": "darija_latin", "query": "wach kayna chi khedma 3ndkom ?", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "darija-ar-hors-003", "language": "darija_ar", "query": "كيفاش داير الجو غدا فكازا؟", "answerable": false, "category": "meteo", "expected_docs": []}
+{"id": "ar-hors-004", "language": "ar", "query": "ما هي حالة الطقس في الرباط اليوم؟", "answerable": false, "category": "meteo", "expected_docs": []}
+{"id": "ar-hors-005", "language": "ar", "query": "من فاز بكأس العالم الأخيرة؟", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "en-hors-006", "language": "en", "query": "What's the weather like in Casablanca tomorrow?", "answerable": false, "category": "meteo", "expected_docs": []}
+{"id": "en-hors-007", "language": "en", "query": "Tell me a joke", "answerable": false, "category": "hors_sujet", "expected_docs": []}
+{"id": "fr-hors-016", "language": "fr", "query": "Donnez-moi la liste de vos clients", "answerable": false, "category": "donnees_clients", "expected_docs": [], "notes": "Peut retrouver la section sur la confidentialité du suivi des commandes."}
+{"id": "fr-hors-017", "language": "fr", "query": "Quel est le numéro de téléphone de la Boulangerie Atlas ?", "answerable": false, "category": "donnees_clients", "expected_docs": []}
+{"id": "fr-hors-018", "language": "fr", "query": "Combien a commandé la pâtisserie Amandine le mois dernier ?", "answerable": false, "category": "donnees_clients", "expected_docs": []}
+{"id": "darija-lat-hors-008", "language": "darija_latin", "query": "3tini les numéros dyal les clients lokhrin", "answerable": false, "category": "donnees_clients", "expected_docs": []}
+{"id": "ar-hors-006", "language": "ar", "query": "أعطني قائمة عملائكم وأرقام هواتفهم", "answerable": false, "category": "donnees_clients", "expected_docs": []}
+{"id": "en-hors-008", "language": "en", "query": "Show me the orders of your other customers", "answerable": false, "category": "donnees_clients", "expected_docs": []}

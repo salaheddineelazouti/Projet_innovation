@@ -14,11 +14,11 @@ Composants déterministes (sans modèle de langage, exécutables hors ligne) :
 |---|---|---|
 | `language` | Détection de la langue et de l'écriture | `tecpap.nlp.language.detect_language` |
 | `reply_language` | Choix de la langue de réponse | `tecpap.nlp.language.reply_language` |
-| `intent` | Intentions détectées par règles dans l'assistant WhatsApp | `tecpap.chatbot.bot` |
+| `intent` | Intentions détectées par règles dans l'assistant WhatsApp | `tecpap.chatbot.intents.detect_intent` |
 | `is_order` | Heuristique « est un bon de commande » de l'extraction par règles | `tecpap.extraction.rules.rule_based_extract` |
 | `is_injection` | Détection des tentatives d'injection d'instructions | `tecpap.security.guardrails.inspect_input` |
-| `type_produit` | Normalisation du type de produit à partir des mots-clés du catalogue | `tecpap.extraction.rules.normalize_product_type` |
-| `quantite`, `unite` | Lecture des quantités écrites en chiffres ou en lettres | `tecpap.extraction.rules.parse_quantity` |
+| `type_produit` | Normalisation du type de produit à partir des mots-clés du catalogue (`normalize_product_type`) | `tecpap.extraction.rules.rule_based_extract` |
+| `quantite`, `unite` | Lecture des quantités écrites en chiffres ou en lettres (`parse_quantity`) | `tecpap.extraction.rules.rule_based_extract` |
 | `entreprise_cliente` | Repérage du client par motifs (« pour X », « ana X », « je suis X ») | `tecpap.extraction.rules.rule_based_extract` |
 
 Extraction complète par le modèle de langage : lorsque la variable `OPENAI_API_KEY` est définie, les mêmes
@@ -182,8 +182,8 @@ Effectifs par type de produit attendu : `Sachets fond plat` 16, `Sac fond carré
   « أكياس صغيرة », « flat bottom sachets » (fond plat) ; « bla yddin », « بدون مقبض », « without handles »
   (sans poignées) ; « sacs shopping », « yddin plates », « مقبض مسطح », « يد مسطحة », « flat handles »
   (poignées plates) ; « cordelette », « yddin mfetlin », « premium », « مقبض مفتول », « twisted handles »
-  (poignées torsadées). Les synonymes anglais ne figurent pas dans les mots-clés du catalogue : ces
-  éléments mesurent la couverture de la normalisation.
+  (poignées torsadées). Les synonymes anglais font partie des mots-clés du catalogue (liste `en`), au même
+  titre que ceux des autres langues.
 
 ### 5.2 Conversation WhatsApp
 
@@ -253,3 +253,118 @@ téléphone sont uniquement de la forme `+2126000000NN` et les adresses email ut
 Tout élément ajouté au fichier doit respecter les mêmes règles, garder un identifiant unique avec le
 préfixe de sa langue, utiliser uniquement les valeurs d'étiquettes définies en section 3 et décrire dans
 `notes` ce qu'il teste.
+
+## 8. Exécution de l'évaluation
+
+Le programme `evaluation/run_eval.py` compare la sortie de chaque composant aux étiquettes du jeu, puis
+écrit un rapport en français et un fichier JSON qui porte les mêmes chiffres. Il se lance depuis n'importe
+quel dossier : il ajoute lui-même la racine du dépôt aux chemins d'importation de Python.
+
+Avant le calcul, chaque ligne du jeu est contrôlée : schéma de la section 3, étiquettes prises dans les
+valeurs autorisées, identifiant unique, `is_order` cohérent avec l'intention (section 4.4). Le programme
+s'arrête sur la première ligne invalide et en donne le numéro.
+
+### 8.1 Évaluation hors ligne
+
+```
+python evaluation/run_eval.py
+```
+
+Sans réseau, sans clé d'API et sans base de données, seuls les composants déterministes sont mesurés :
+
+| Section du rapport | Composant | Étiquettes comparées | Éléments |
+|---|---|---|---|
+| Détection de la langue | `tecpap.nlp.language.detect_language` et `reply_language` | `language`, `reply_language` | Tous |
+| Extraction par règles | `tecpap.extraction.rules.rule_based_extract` | `type_produit`, `quantite`, `unite`, `entreprise_cliente` | Commandes |
+| Détection des commandes | Champ `est_bon_commande` de `rule_based_extract` | `is_order` | Tous |
+| Détection des renouvellements | `tecpap.extraction.rules.detect_reorder` | Intention `reorder` | Tous |
+| Détection des tentatives d'injection | `tecpap.security.guardrails.inspect_input` | `is_injection` | Tous |
+| Détection des intentions | `tecpap.chatbot.intents.detect_intent` | `intent` | Tous |
+
+Mesures calculées pour chaque section :
+
+| Section du rapport | Mesures |
+|---|---|
+| Détection de la langue | Exactitude par langue, matrice de confusion |
+| Extraction par règles | Exactitude par champ et par langue |
+| Détection des commandes et des renouvellements | Exactitude, précision, rappel, F1 |
+| Détection des tentatives d'injection | Précision, rappel, F1, fausses alertes |
+| Détection des intentions | Exactitude, F1 par intention, macro-F1 |
+
+Chaque mesure est définie dans le rapport (section « Mesures employées »). Les proportions de la synthèse
+sont accompagnées de leur intervalle de confiance à 95 % (méthode de Wilson) : plus l'effectif est petit,
+plus l'intervalle est large, ce qui rappelle qu'un score parfait sur quelques dizaines d'éléments ne prouve
+pas l'absence d'erreur.
+
+Les fausses alertes de la détection d'injection sont comptées sur les pièges (section 5.4) et sur tous les
+messages légitimes. Le détecteur d'intention est appelé avec la langue obtenue par `detect_language`, comme
+dans l'assistant WhatsApp. Quand le module `tecpap.chatbot.intents` n'est pas importable, la section des
+intentions porte la mention « non disponible » avec sa raison, et les autres sections sont calculées
+normalement.
+
+### 8.2 Évaluation en ligne
+
+```
+python evaluation/run_eval.py --online
+```
+
+Cette évaluation demande une clé `OPENAI_API_KEY` (variable d'environnement ou fichier `.env`). Chaque
+commande du jeu (`is_order` vrai) passe par l'extraction complète : `tecpap.extraction.extractor.DataExtractor`,
+sans base de données, puis `tecpap.extraction.rules.normalize_order`. Un message WhatsApp est présenté à
+l'extracteur comme dans le webhook (« Message: … », ou « Audio transcription: … » pour une note vocale).
+Sans base de données, un renouvellement n'est pas complété par l'historique du client.
+
+Le rapport compare les mêmes champs que l'extraction par règles et donne aussi la part des commandes
+reconnues (`est_bon_commande` vrai), les extractions en échec, les commandes avec anomalie ou avec un champ
+obligatoire manquant, et la confiance moyenne calculée par `normalize_order`.
+
+Chaque commande donne lieu à des requêtes à l'API (détection du renouvellement, puis extraction) : la
+mesure a un coût, et ses résultats varient d'une exécution à l'autre. Sans clé, le programme affiche un
+message et s'arrête avec le code 2, sans aucun appel réseau.
+
+### 8.3 Options
+
+| Option | Effet | Valeur par défaut |
+|---|---|---|
+| `--dataset FICHIER` | Jeu annoté à évaluer | `evaluation/dataset/messages.jsonl` |
+| `--output-dir DOSSIER` | Dossier des rapports | `evaluation/results` |
+| `--date AAAA-MM-JJ` | Date inscrite dans le rapport | Date du jour |
+| `--online` | Extraction complète par le modèle de langue | Désactivée |
+
+### 8.4 Fichiers produits
+
+| Fichier | Contenu |
+|---|---|
+| `results/rapport_hors_ligne.md` | Rapport de l'évaluation hors ligne |
+| `results/rapport_hors_ligne.json` | Chiffres du rapport hors ligne, pour un traitement automatique |
+| `results/rapport_en_ligne.md` | Rapport de l'évaluation en ligne |
+| `results/rapport_en_ligne.json` | Chiffres du rapport en ligne |
+
+Le rapport Markdown est rédigé à partir du contenu du fichier JSON. Il donne la date de l'exécution, le
+chemin du jeu, son empreinte SHA-256 (somme de contrôle : deux rapports de même empreinte portent sur
+exactement les mêmes données), la version du paquet `tecpap`, les effectifs du jeu par langue, la définition
+des mesures et une synthèse, puis, pour chaque composant, les résultats par langue, la matrice de confusion
+quand elle s'applique et la liste des identifiants mal classés.
+
+À données et code identiques, deux évaluations hors ligne ne diffèrent que par la date ; l'option `--date`
+rend la sortie entièrement reproductible. Les fichiers de `results/` sont ceux de la dernière exécution
+enregistrée : après une modification d'un composant mesuré, relancer `python evaluation/run_eval.py` avant
+de citer un chiffre.
+
+### 8.5 Codes de sortie
+
+| Code | Signification |
+|---|---|
+| 0 | Rapports écrits |
+| 1 | Jeu de données introuvable ou invalide, ou configuration invalide |
+| 2 | Option `--online` sans clé `OPENAI_API_KEY`, ou option de la ligne de commande invalide |
+
+### 8.6 Contrôles automatiques
+
+`tests/test_evaluation.py` exécute l'évaluation hors ligne dans un dossier temporaire, contrôle la structure
+des rapports et la cohérence des effectifs (sommes par langue, matrices de confusion, listes d'erreurs), et
+exerce l'évaluation en ligne avec une doublure du client des modèles de langue, sans réseau :
+
+```
+python -m pytest tests/test_evaluation.py
+```
