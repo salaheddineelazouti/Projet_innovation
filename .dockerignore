@@ -1,0 +1,38 @@
+# Secrets et environnements locaux
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Données : base, sauvegardes, médias, exports (montés en volumes au lancement)
+*.db
+*.db-wal
+*.db-shm
+backups/*
+whatsapp_media/*
+attachments/*
+exports/*
+data/
+orders_output.json
+
+# Dépôt et outils
+.git/
+.github/
+.gitignore
+.dockerignore
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+tests/
+build/
+dist/
+*.egg-info/
+.vscode/
+.idea/
+ngrok
+ngrok.exe

@@ -1,102 +1,106 @@
+"""Fixtures pytest partagées.
+
+Chaque test qui a besoin de l'application ou de la base reçoit une configuration isolée
+(``Settings.for_tests``) dont tous les chemins pointent dans le dossier temporaire du test :
+aucun test ne lit le fichier ``.env`` du poste ni ne crée ``orders.db`` à la racine du dépôt,
+et aucun service externe n'est appelé.
 """
-Configuration et fixtures pour les tests pytest
-"""
+
+from __future__ import annotations
 
 import pytest
-import os
-import sys
-import tempfile
-import shutil
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from database import DatabaseManager
+from tecpap.config import Settings
+from tecpap.db.database import DatabaseManager
+from tecpap.web import create_app
 
 
 @pytest.fixture
-def temp_db():
-    """Create a temporary database for testing."""
-    # Create temp directory
-    temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, 'test_orders.db')
-    
-    # Create database manager
-    db = DatabaseManager(db_file=db_path)
+def test_settings(tmp_path) -> Settings:
+    """Configuration de test : chemins dans ``tmp_path``, aucune clé d'API."""
+    return Settings.for_tests(tmp_path)
+
+
+@pytest.fixture
+def temp_db(test_settings):
+    """Base SQLite temporaire initialisée."""
+    db = DatabaseManager(db_file=test_settings.database_path)
     db.connect()
     db.init_database()
-    
     yield db
-    
-    # Cleanup
     db.disconnect()
-    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def flask_app(test_settings):
+    """Application Flask construite sur la configuration de test."""
+    app = create_app(test_settings)
+    yield app
+    app.extensions["tecpap"].close()
+
+
+@pytest.fixture
+def flask_client(flask_app):
+    """Client de test Flask (requêtes HTTP simulées, sans serveur)."""
+    with flask_app.test_client() as client:
+        yield client
+
+
+@pytest.fixture
+def services(flask_app):
+    """Services de l'application de test (base, clients WhatsApp et email…)."""
+    return flask_app.extensions["tecpap"]
 
 
 @pytest.fixture
 def sample_order_data():
-    """Sample order data for testing."""
+    """Commande reçue par email."""
     return {
-        'entreprise_cliente': 'Test Company SARL',
-        'type_produit': 'Sachets fond plat',
-        'quantite': 5000,
-        'unite': 'pièces',
-        'prix_unitaire': 0.5,
-        'devise': 'MAD',
-        'date_livraison': '2025-01-15',
-        'confiance': 95,
-        'source': 'email',
-        'email_id': 'test_email_001',
-        'email_subject': 'Commande Test',
-        'email_from': 'client@test.com'
+        "entreprise_cliente": "Test Company SARL",
+        "type_produit": "Sachets fond plat",
+        "quantite": 5000,
+        "unite": "pièces",
+        "prix_unitaire": 0.5,
+        "devise": "MAD",
+        "date_livraison": "2025-01-15",
+        "confiance": 95,
+        "source": "email",
+        "email_id": "test_email_001",
+        "email_subject": "Commande Test",
+        "email_from": "client@test.com",
     }
 
 
 @pytest.fixture
 def sample_whatsapp_order():
-    """Sample WhatsApp order data for testing."""
+    """Commande reçue par WhatsApp."""
     return {
-        'entreprise_cliente': 'Restaurant Atlas',
-        'type_produit': 'Sac fond carré sans poignées',
-        'quantite': 1000,
-        'unite': 'pièces',
-        'prix_unitaire': None,
-        'devise': 'MAD',
-        'confiance': 90,
-        'source': 'whatsapp',
-        'whatsapp_from': '+212612345678'
+        "entreprise_cliente": "Restaurant Atlas",
+        "type_produit": "Sac fond carré sans poignées",
+        "quantite": 1000,
+        "unite": "pièces",
+        "prix_unitaire": None,
+        "devise": "MAD",
+        "confiance": 90,
+        "source": "whatsapp",
+        "whatsapp_from": "+212612345678",
     }
 
 
 @pytest.fixture
 def sample_client_data():
-    """Sample client data for testing."""
+    """Coordonnées d'un client."""
     return {
-        'nom': 'Entreprise Test',
-        'email': 'contact@test.ma',
-        'telephone': '+212612345678',
-        'adresse': '123 Rue Test, Casablanca'
+        "nom": "Entreprise Test",
+        "email": "contact@test.ma",
+        "telephone": "+212612345678",
+        "adresse": "123 Rue Test, Casablanca",
     }
 
 
 @pytest.fixture
-def flask_app():
-    """Create Flask app for testing."""
-    from app import app
-    app.config['TESTING'] = True
-    app.config['WTF_CSRF_ENABLED'] = False
-    return app
-
-
-@pytest.fixture
-def flask_client(flask_app):
-    """Create Flask test client."""
-    return flask_app.test_client()
-
-
-@pytest.fixture
-def temp_backup_dir():
-    """Create temporary backup directory."""
-    temp_dir = tempfile.mkdtemp()
-    yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
+def temp_backup_dir(tmp_path):
+    """Dossier temporaire de sauvegardes."""
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(exist_ok=True)
+    return backup_dir

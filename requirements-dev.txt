@@ -1,0 +1,8 @@
+# Dépendances de développement : tests, couverture de code et analyse statique.
+-r requirements.txt
+
+pytest>=8.0,<10
+pytest-cov>=4.0
+# Version exacte : chaque version de ruff peut ajouter des règles, l'analyse reste ainsi reproductible.
+ruff==0.17.2
+PyYAML>=6.0

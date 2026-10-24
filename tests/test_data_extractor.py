@@ -1,282 +1,359 @@
-"""
-Tests pour le module data_extractor.py
-Tests d'extraction de données via IA.
-"""
+"""Tests du module tecpap.extraction.extractor avec un client OpenAI simulé (aucun appel réseau)."""
+
+import json
+from unittest.mock import Mock, patch
 
 import pytest
-import os
-import sys
-from unittest.mock import Mock, patch, MagicMock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tecpap.config import Settings
+from tecpap.extraction import extractor as extractor_module
+from tecpap.extraction.extractor import (
+    PRODUCT_TYPES,
+    REORDER_PATTERNS,
+    DataExtractor,
+    auto_generate_article_code,
+)
 
-from data_extractor import DataExtractor, PRODUCT_TYPES, REORDER_PATTERNS
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    """Les extracteurs créés sans configuration explicite utilisent la configuration de test."""
+    settings = Settings.for_tests(tmp_path)
+    monkeypatch.setattr(extractor_module, "load_settings", lambda: settings)
+    return settings
+
+
+def _llm_response(content):
+    response = Mock()
+    response.choices = [Mock()]
+    response.choices[0].message = Mock()
+    response.choices[0].message.content = content
+    return response
+
+
+def _client_returning(*contents):
+    client = Mock()
+    client.chat.completions.create.side_effect = [_llm_response(content) for content in contents]
+    return client
+
+
+NOT_A_REORDER = json.dumps({"is_reorder": False, "client_name": None, "confidence": 90})
 
 
 class TestDataExtractorInit:
-    """Tests d'initialisation de DataExtractor."""
-    
+    """Initialisation."""
+
     def test_data_extractor_creates_instance(self):
-        """Test création d'instance DataExtractor."""
-        extractor = DataExtractor()
-        assert extractor is not None
-    
+        assert DataExtractor() is not None
+
     def test_data_extractor_has_model(self):
-        """Test que DataExtractor a un modèle configuré."""
         extractor = DataExtractor()
-        assert hasattr(extractor, 'model')
         assert extractor.model == "gpt-4o"
-    
+
+    def test_model_comes_from_settings(self, tmp_path):
+        extractor = DataExtractor(settings=Settings.for_tests(tmp_path, model_extraction="modele-test"))
+        assert extractor.model == "modele-test"
+
+    def test_no_client_without_api_key(self):
+        assert DataExtractor().client is None
+
+    def test_client_created_with_api_key(self, tmp_path):
+        with patch("tecpap.extraction.extractor.OpenAI") as openai_class:
+            DataExtractor(settings=Settings.for_tests(tmp_path, openai_api_key="sk-test"))
+        openai_class.assert_called_once()
+
     def test_data_extractor_accepts_db_manager(self):
-        """Test que DataExtractor accepte un db_manager."""
         mock_db = Mock()
-        extractor = DataExtractor(db_manager=mock_db)
-        assert extractor.db == mock_db
-    
+        assert DataExtractor(db_manager=mock_db).db is mock_db
+
     def test_set_database_method_exists(self):
-        """Test que la méthode set_database existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'set_database')
-    
+        assert callable(DataExtractor().set_database)
+
     def test_set_database_updates_db(self):
-        """Test que set_database met à jour la DB."""
         extractor = DataExtractor()
         mock_db = Mock()
         extractor.set_database(mock_db)
-        assert extractor.db == mock_db
+        assert extractor.db is mock_db
 
 
 class TestProductTypes:
-    """Tests des types de produits."""
-    
+    """Types de produits."""
+
     def test_product_types_defined(self):
-        """Test que PRODUCT_TYPES est défini."""
-        assert PRODUCT_TYPES is not None
         assert isinstance(PRODUCT_TYPES, list)
-    
+
     def test_product_types_not_empty(self):
-        """Test que PRODUCT_TYPES n'est pas vide."""
-        assert len(PRODUCT_TYPES) > 0
-    
+        assert len(PRODUCT_TYPES) == 4
+
     def test_product_types_contains_sachets(self):
-        """Test que PRODUCT_TYPES contient des sachets."""
-        sachets_found = any('sachet' in p.lower() for p in PRODUCT_TYPES)
-        assert sachets_found
-    
+        assert any("sachet" in p.lower() for p in PRODUCT_TYPES)
+
     def test_product_types_contains_sacs(self):
-        """Test que PRODUCT_TYPES contient des sacs."""
-        sacs_found = any('sac' in p.lower() for p in PRODUCT_TYPES)
-        assert sacs_found
+        assert any("sac" in p.lower() for p in PRODUCT_TYPES)
 
 
 class TestReorderPatterns:
-    """Tests des patterns de renouvellement."""
-    
+    """Expressions de renouvellement."""
+
     def test_reorder_patterns_defined(self):
-        """Test que REORDER_PATTERNS est défini."""
-        assert REORDER_PATTERNS is not None
         assert isinstance(REORDER_PATTERNS, list)
-    
+
     def test_reorder_patterns_not_empty(self):
-        """Test que REORDER_PATTERNS n'est pas vide."""
         assert len(REORDER_PATTERNS) > 0
-    
+
     def test_reorder_patterns_contains_french(self):
-        """Test patterns français."""
-        french_patterns = ["comme d'habitude", "même commande", "renouveler"]
-        has_french = any(p in REORDER_PATTERNS for p in french_patterns)
-        assert has_french
-    
+        assert {"comme d'habitude", "même commande", "renouveler"} <= set(REORDER_PATTERNS)
+
     def test_reorder_patterns_contains_darija(self):
-        """Test patterns Darija."""
-        darija_patterns = ["kif dima", "bhal dima"]
-        has_darija = any(p in REORDER_PATTERNS for p in darija_patterns)
-        assert has_darija
+        assert {"kif dima", "bhal dima", "b7al dima"} <= set(REORDER_PATTERNS)
+
+    def test_reorder_patterns_contains_arabic(self):
+        assert "كالعادة" in REORDER_PATTERNS
 
 
 class TestClientNameNormalization:
-    """Tests de normalisation des noms clients."""
-    
+    """Normalisation des noms de clients."""
+
     @pytest.fixture
     def extractor(self):
         return DataExtractor()
-    
-    def test_normalize_client_name_method_exists(self):
-        """Test que normalize_client_name existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'normalize_client_name')
-    
+
+    def test_normalize_client_name_method_exists(self, extractor):
+        assert callable(extractor.normalize_client_name)
+
     def test_normalize_empty_name(self, extractor):
-        """Test normalisation nom vide."""
-        result = extractor.normalize_client_name("")
-        assert result == ""
-    
+        assert extractor.normalize_client_name("") == ""
+
     def test_normalize_none_name(self, extractor):
-        """Test normalisation nom None."""
-        result = extractor.normalize_client_name(None)
-        assert result == ""
-    
+        assert extractor.normalize_client_name(None) == ""
+
     def test_normalize_lowercase(self, extractor):
-        """Test que la normalisation met en minuscules."""
         result = extractor.normalize_client_name("AHMED BENALI")
         assert result == result.lower()
-    
+
     def test_normalize_removes_accents(self, extractor):
-        """Test que la normalisation retire les accents."""
-        result = extractor.normalize_client_name("Société Café")
-        # After normalization, no accented characters
-        assert 'é' not in result
-        assert 'ô' not in result
-
-
-class TestExtractFromEmailMethod:
-    """Tests de la méthode extract_from_email."""
-    
-    def test_extract_from_email_method_exists(self):
-        """Test que extract_from_email existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'extract_from_email')
-    
-    def test_detect_reorder_intent_method_exists(self):
-        """Test que detect_reorder_intent existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'detect_reorder_intent')
-    
-    def test_find_matching_client_method_exists(self):
-        """Test que find_matching_client existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'find_matching_client')
-
-
-class TestPDFExtraction:
-    """Tests d'extraction de PDF."""
-    
-    def test_extract_text_from_pdf_method_exists(self):
-        """Test que extract_text_from_pdf existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'extract_text_from_pdf')
-    
-    def test_extract_pdf_nonexistent_file(self):
-        """Test extraction PDF fichier inexistant."""
-        extractor = DataExtractor()
-        result = extractor.extract_text_from_pdf("/nonexistent/path.pdf")
-        assert result == "" or result is None
-
-
-class TestImageExtraction:
-    """Tests d'extraction d'images."""
-    
-    def test_extract_text_from_image_method_exists(self):
-        """Test que extract_text_from_image existe."""
-        extractor = DataExtractor()
-        assert hasattr(extractor, 'extract_text_from_image')
-
-
-class TestDataExtractorWithMockedAPI:
-    """Tests avec API OpenAI mockée."""
-    
-    @pytest.fixture
-    def mock_openai_response(self):
-        """Mock réponse OpenAI."""
-        mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message = Mock()
-        mock_response.choices[0].message.content = '''
-        {
-            "is_order": true,
-            "client_nom": "Ahmed Benali",
-            "client_telephone": "+212612345678",
-            "client_ville": "Casablanca",
-            "produit_type": "Sachets fond plat",
-            "quantite": 1000,
-            "unite": "kg",
-            "confidence": 90
-        }
-        '''
-        return mock_response
-    
-    @patch('data_extractor.OpenAI')
-    def test_extract_with_mocked_api(self, mock_openai_class, mock_openai_response):
-        """Test extraction avec API mockée."""
-        mock_client = Mock()
-        mock_openai_class.return_value = mock_client
-        mock_client.chat.completions.create.return_value = mock_openai_response
-        
-        extractor = DataExtractor()
-        extractor.client = mock_client
-        
-        # Should not raise exception
-        assert extractor is not None
-
-
-class TestDetectReorderIntent:
-    """Tests de détection d'intention de renouvellement."""
-    
-    @pytest.fixture
-    def extractor(self):
-        return DataExtractor()
-    
-    @patch('data_extractor.OpenAI')
-    def test_detect_reorder_returns_dict(self, mock_openai):
-        """Test que detect_reorder_intent retourne un dict."""
-        mock_client = Mock()
-        mock_openai.return_value = mock_client
-        
-        mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message = Mock()
-        mock_response.choices[0].message.content = '''
-        {
-            "is_reorder": false,
-            "reorder_indicators": [],
-            "client_name": null,
-            "confidence": 50
-        }
-        '''
-        mock_client.chat.completions.create.return_value = mock_response
-        
-        extractor = DataExtractor()
-        extractor.client = mock_client
-        
-        result = extractor.detect_reorder_intent("Bonjour, nouvelle commande")
-        
-        assert isinstance(result, dict)
-        assert 'is_reorder' in result
-
-
-class TestModuleImports:
-    """Tests d'imports du module."""
-    
-    def test_import_data_extractor_module(self):
-        """Test import du module."""
-        import data_extractor
-        assert hasattr(data_extractor, 'DataExtractor')
-    
-    def test_import_product_types(self):
-        """Test import de PRODUCT_TYPES."""
-        from data_extractor import PRODUCT_TYPES
-        assert PRODUCT_TYPES is not None
-    
-    def test_import_reorder_patterns(self):
-        """Test import de REORDER_PATTERNS."""
-        from data_extractor import REORDER_PATTERNS
-        assert REORDER_PATTERNS is not None
+        assert extractor.normalize_client_name("Société Café") == "societe cafe"
 
 
 class TestErrorHandling:
-    """Tests de gestion d'erreurs."""
-    
+    """Noms de clients inhabituels."""
+
     @pytest.fixture
     def extractor(self):
         return DataExtractor()
-    
+
     def test_normalize_handles_special_characters(self, extractor):
-        """Test normalisation avec caractères spéciaux."""
-        result = extractor.normalize_client_name("Société M'hamid-Café")
-        # Should not raise exception
-        assert isinstance(result, str)
-    
+        assert extractor.normalize_client_name("Société M'hamid-Café") == "societe mhamid cafe"
+
     def test_normalize_handles_numbers(self, extractor):
-        """Test normalisation avec nombres."""
-        result = extractor.normalize_client_name("Company 123 Inc")
-        assert isinstance(result, str)
+        assert extractor.normalize_client_name("Company 123 Inc") == "company 123 inc"
+
+
+class TestExtractFromEmailMethod:
+    """Méthodes publiques de l'extraction."""
+
+    def test_extract_from_email_method_exists(self):
+        assert callable(DataExtractor().extract_from_email)
+
+    def test_detect_reorder_intent_method_exists(self):
+        assert callable(DataExtractor().detect_reorder_intent)
+
+    def test_find_matching_client_method_exists(self):
+        assert callable(DataExtractor().find_matching_client)
+
+
+class TestClientMatching:
+    """Rapprochement d'un nom cité avec les clients connus."""
+
+    def test_find_matching_client(self, temp_db):
+        temp_db.get_or_create_client("Chhiwat Fès")
+        extractor = DataExtractor(db_manager=temp_db)
+        assert extractor.find_matching_client("chhiwat fes") == "Chhiwat Fès"
+
+    def test_no_match_returns_none(self, temp_db):
+        temp_db.get_or_create_client("Boulangerie Atlas")
+        assert DataExtractor(db_manager=temp_db).find_matching_client("Pizzeria Rio") is None
+
+    def test_without_database(self):
+        assert DataExtractor().find_matching_client("Atlas") is None
+
+    def test_last_order_prefers_validated(self, temp_db):
+        first = temp_db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 100, "email_id": "a"})
+        temp_db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 999, "email_id": "b"})
+        temp_db.update_order_status(first, "validee")
+        last = DataExtractor(db_manager=temp_db).get_client_last_order("Snack Atlas")
+        assert last["id"] == first
+
+
+class TestFillFromHistory:
+    """Complément d'une commande depuis l'historique."""
+
+    def test_missing_fields_are_filled(self):
+        extracted = {"entreprise_cliente": "Atlas", "quantite": None, "confiance": 40}
+        last_order = {"id": 7, "produit_type": "Sachets fond plat", "quantite": 2000, "unite": "pièces"}
+        result = DataExtractor().fill_from_history(extracted, last_order)
+        assert result["quantite"] == 2000
+        assert result["type_produit"] == "Sachets fond plat"
+        assert result["filled_from_history"] is True
+        assert result["history_source_order"] == "ID-7"
+        assert result["confiance"] == 85
+
+    def test_extracted_fields_are_kept(self):
+        result = DataExtractor().fill_from_history({"quantite": 50}, {"quantite": 2000})
+        assert result["quantite"] == 50
+        assert "filled_from_history" not in result
+
+
+class TestDataExtractorWithMockedAPI:
+    """Extraction complète avec un client OpenAI simulé."""
+
+    def test_extract_with_mocked_api(self):
+        client = _client_returning(NOT_A_REORDER, json.dumps({"est_bon_commande": True, "quantite": 1000}))
+        extractor = DataExtractor(client=client)
+        assert extractor.client is client
+        assert extractor.extract_from_email({"body": "1000 sachets"})["quantite"] == 1000
+
+    def test_extract_without_client_returns_none(self):
+        assert DataExtractor().extract_from_email({"subject": "Commande", "body": "500 sachets"}) is None
+
+    def test_standard_extraction(self):
+        order = {"entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat", "quantite": 500,
+                 "nature_produit": "sachet kraft blanchi 80g", "est_bon_commande": True}
+        client = _client_returning(NOT_A_REORDER, "```json\n" + json.dumps(order) + "\n```")
+        result = DataExtractor(client=client).extract_from_email({"subject": "Commande", "body": "500 sachets"})
+        assert result["entreprise_cliente"] == "Snack Atlas"
+        assert result["code_article"] == "KB80"
+        assert client.chat.completions.create.call_count == 2
+
+    def test_extraction_uses_low_temperature_and_catalog(self):
+        client = _client_returning(NOT_A_REORDER, json.dumps({"est_bon_commande": False}))
+        DataExtractor(client=client).extract_from_email({"body": "bonjour"})
+        call = client.chat.completions.create.call_args_list[1]
+        assert call.kwargs["temperature"] == 0.1
+        prompt = call.kwargs["messages"][1]["content"]
+        for product_type in PRODUCT_TYPES:
+            assert product_type in prompt
+
+    def test_invalid_json_returns_none(self):
+        client = _client_returning(NOT_A_REORDER, "pas du JSON")
+        assert DataExtractor(client=client).extract_from_email({"body": "x"}) is None
+
+    def test_reorder_is_filled_from_history(self, temp_db):
+        order_id = temp_db.create_order({
+            "entreprise_cliente": "Chhiwat Fès", "type_produit": "Sac fond carré avec poignées plates",
+            "nature_produit": "sacs poignées plates", "quantite": 8000, "unite": "pièces", "email_id": "old",
+        })
+        temp_db.update_order_status(order_id, "validee")
+        reorder = json.dumps({"is_reorder": True, "client_name": "chhiwat fes", "reorder_indicators": ["b7al dima"]})
+        client = _client_returning(reorder, json.dumps({"entreprise_cliente": None, "est_bon_commande": False}))
+
+        result = DataExtractor(db_manager=temp_db, client=client).extract_from_email({"body": "commande b7al dima"})
+
+        assert result["entreprise_cliente"] == "Chhiwat Fès"
+        assert result["quantite"] == 8000
+        assert result["is_reorder"] is True
+        assert result["est_bon_commande"] is True
+
+
+class TestDetectReorderIntent:
+    """Détection d'une demande de renouvellement."""
+
+    def test_detect_reorder_returns_dict(self):
+        client = _client_returning(json.dumps({"is_reorder": False, "client_name": None, "confidence": 50}))
+        result = DataExtractor(client=client).detect_reorder_intent("Bonjour, nouvelle commande")
+        assert isinstance(result, dict)
+        assert "is_reorder" in result
+
+    def test_detect_reorder_returns_default_on_error(self):
+        client = Mock()
+        client.chat.completions.create.side_effect = RuntimeError("panne")
+        result = DataExtractor(client=client).detect_reorder_intent("Bonjour")
+        assert result == {"is_reorder": False, "client_name": None, "confidence": 0}
+
+    def test_detect_reorder_uses_light_model(self, tmp_path):
+        client = _client_returning(NOT_A_REORDER)
+        extractor = DataExtractor(settings=Settings.for_tests(tmp_path, model_light="leger"), client=client)
+        extractor.detect_reorder_intent("x")
+        assert client.chat.completions.create.call_args.kwargs["model"] == "leger"
+
+
+class TestArticleCodeGeneration:
+    """Code article calculé quand l'extraction n'en fournit pas."""
+
+    def test_existing_code_is_kept(self):
+        assert auto_generate_article_code({"code_article": "KE70L30"}) == "KE70L30"
+
+    def test_code_from_description(self):
+        assert auto_generate_article_code({"nature_produit": "kraft blanchi 100g laize 28 mondi"}) == "KB100L28MON"
+
+    def test_default_code(self):
+        assert auto_generate_article_code({}) == "KE80"
+
+
+class TestPDFExtraction:
+    """Extraction du texte des PDF (pypdf)."""
+
+    def test_extract_text_from_pdf_method_exists(self):
+        assert callable(DataExtractor().extract_text_from_pdf)
+
+    def test_extract_pdf_nonexistent_file(self):
+        assert DataExtractor().extract_text_from_pdf("/nonexistent/path.pdf") == ""
+
+    def test_extract_pdf_text(self, tmp_path):
+        from reportlab.pdfgen import canvas
+
+        pdf_path = tmp_path / "bon.pdf"
+        pdf = canvas.Canvas(str(pdf_path))
+        pdf.drawString(100, 750, "Bon de commande 3000 sachets")
+        pdf.save()
+        assert "3000 sachets" in DataExtractor().extract_text_from_pdf(str(pdf_path))
+
+
+class TestImageExtraction:
+    """Lecture du texte des images."""
+
+    def test_extract_text_from_image_method_exists(self):
+        assert callable(DataExtractor().extract_text_from_image)
+
+    def test_image_without_client_returns_empty(self, tmp_path):
+        path = tmp_path / "photo.png"
+        path.write_bytes(b"\x89PNG")
+        assert DataExtractor().extract_text_from_image(str(path)) == ""
+
+
+class TestAttachments:
+    """Pièces jointes de types variés."""
+
+    def test_text_attachment(self, tmp_path):
+        path = tmp_path / "commande.txt"
+        path.write_text("bghit 2000 sachet", encoding="utf-8")
+        assert DataExtractor().process_attachments([str(path)]) == {"commande.txt": "bghit 2000 sachet"}
+
+    def test_unsupported_attachment_is_ignored(self, tmp_path):
+        path = tmp_path / "archive.zip"
+        path.write_bytes(b"PK")
+        assert DataExtractor().process_attachments([str(path)]) == {}
+
+
+class TestModuleImports:
+    """Noms importables depuis le module."""
+
+    def test_import_data_extractor_module(self):
+        from tecpap.extraction import extractor
+
+        assert hasattr(extractor, "DataExtractor")
+
+    def test_import_product_types(self):
+        from tecpap.extraction.extractor import PRODUCT_TYPES
+
+        assert PRODUCT_TYPES is not None
+
+    def test_import_reorder_patterns(self):
+        from tecpap.extraction.extractor import REORDER_PATTERNS
+
+        assert REORDER_PATTERNS is not None
+
+    def test_import_company_info(self):
+        from tecpap.extraction.extractor import COMPANY_INFO
+
+        assert COMPANY_INFO["name"] == "TECPAP"

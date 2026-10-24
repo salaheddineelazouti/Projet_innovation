@@ -1,0 +1,282 @@
+{% extends 'base.html' %}
+
+{% block title %}WhatsApp - TECPAP{% endblock %}
+{% block page_title %}Canal WhatsApp{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>WhatsApp</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Status Banner -->
+    <div id="statusBanner" class="card p-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                <i class="fab fa-whatsapp text-green-600 text-xl"></i>
+            </div>
+            <div class="flex-1">
+                <p class="font-medium text-slate-800">WhatsApp Business</p>
+                <p class="text-sm text-slate-500" id="connectionStatus">Vérification de la connexion...</p>
+            </div>
+            <span id="statusIndicator" class="flex items-center px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-sm">
+                <span class="w-2 h-2 bg-slate-400 rounded-full mr-2"></span>
+                Vérification...
+            </span>
+        </div>
+    </div>
+
+    <!-- KPIs WhatsApp -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="card p-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase font-medium">Total reçues</p>
+                    <p class="text-2xl font-bold text-green-600 mt-1">{{ whatsapp_stats.total }}</p>
+                </div>
+                <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                    <i class="fab fa-whatsapp text-green-600"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4 border-l-4 border-l-amber-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase font-medium">En attente</p>
+                    <p class="text-2xl font-bold text-amber-600 mt-1">{{ whatsapp_stats.pending }}</p>
+                </div>
+                <div class="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-clock text-amber-600"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4 border-l-4 border-l-emerald-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase font-medium">Validées</p>
+                    <p class="text-2xl font-bold text-emerald-600 mt-1">{{ whatsapp_stats.validated }}</p>
+                </div>
+                <div class="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-check text-emerald-600"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase font-medium">Aujourd'hui</p>
+                    <p class="text-2xl font-bold text-blue-600 mt-1">{{ whatsapp_stats.today }}</p>
+                </div>
+                <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-calendar-day text-blue-600"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Main Panel - Orders List -->
+        <div class="lg:col-span-2 card overflow-hidden">
+            <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                    <h3 class="font-bold text-slate-800">Commandes WhatsApp</h3>
+                    <p class="text-sm text-slate-500">Messages reçus et traités par IA</p>
+                </div>
+                <a href="/orders?source=whatsapp" class="text-green-600 hover:text-green-700 text-sm font-medium">
+                    Voir tout <i class="fas fa-arrow-right ml-1"></i>
+                </a>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full table-pro">
+                    <thead>
+                        <tr>
+                            <th>Client</th>
+                            <th>Produit</th>
+                            <th>Quantité</th>
+                            <th>Date</th>
+                            <th>Statut</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in whatsapp_orders %}
+                        <tr>
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                                        <i class="fab fa-whatsapp text-green-600 text-sm"></i>
+                                    </div>
+                                    <div>
+                                        <p class="font-medium text-slate-800">{{ order.client_nom[:20] }}{% if order.client_nom|length > 20 %}...{% endif %}</p>
+                                        <p class="text-xs text-slate-400">{{ order.telephone or '' }}</p>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="text-slate-600">{{ order.produit_type or order.nature_produit or 'N/A' }}</td>
+                            <td>
+                                <span class="font-semibold text-slate-800">{{ "{:,.0f}".format(order.quantite or 0) }}</span>
+                                <span class="text-slate-400 text-sm">{{ order.unite or '' }}</span>
+                            </td>
+                            <td class="text-slate-500 text-sm">{{ (order.created_at or '')[:10] }}</td>
+                            <td>
+                                {% if order.statut == 'en_attente' %}
+                                <span class="badge badge-pending"><i class="fas fa-clock mr-1 text-xs"></i>En attente</span>
+                                {% elif order.statut == 'validee' %}
+                                <span class="badge badge-validated"><i class="fas fa-check mr-1 text-xs"></i>Validée</span>
+                                {% else %}
+                                <span class="badge badge-rejected"><i class="fas fa-times mr-1 text-xs"></i>Rejetée</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="/orders/{{ order.id }}" class="text-brand-600 hover:text-brand-700 font-medium text-sm">
+                                    <i class="fas fa-eye"></i> Voir
+                                </a>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center py-12">
+                                <div class="text-slate-400">
+                                    <i class="fab fa-whatsapp text-4xl mb-3 text-green-300"></i>
+                                    <p class="font-medium">Aucune commande WhatsApp</p>
+                                    <p class="text-sm mt-1">Envoyez un message au numéro configuré</p>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="space-y-6">
+            <!-- Configuration -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i class="fas fa-cog text-brand-500"></i>
+                    Configuration
+                </h3>
+                <div class="space-y-4 text-sm">
+                    <div>
+                        <label class="text-slate-500 block mb-1">Numéro WhatsApp</label>
+                        <p class="font-medium text-slate-800" id="whatsappNumber">-</p>
+                    </div>
+                    <div>
+                        <label class="text-slate-500 block mb-1">Webhook URL</label>
+                        {% if webhook_url %}
+                        <div class="flex items-center gap-2">
+                            <code class="text-xs bg-slate-100 px-2 py-1 rounded flex-1 overflow-hidden text-ellipsis">{{ webhook_url }}</code>
+                            <button onclick="copyWebhook()" class="text-brand-600 hover:text-brand-700" title="Copier">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                        {% else %}
+                        <p class="text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded" id="webhookHint">
+                            Adresse publique non configurée : définissez PUBLIC_BASE_URL (par exemple l'adresse du tunnel ngrok
+                            ou du proxy inverse) pour afficher l'URL à déclarer dans la console Twilio
+                            (<code>/webhook/whatsapp</code>).
+                        </p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top WhatsApp Clients -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i class="fas fa-users text-green-500"></i>
+                    Top Clients WhatsApp
+                </h3>
+                <div class="space-y-3">
+                    {% for client in whatsapp_clients %}
+                    <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                                <span class="text-green-600 text-xs font-bold">{{ client.nom[0]|upper }}</span>
+                            </div>
+                            <div>
+                                <p class="font-medium text-slate-800 text-sm">{{ client.nom[:18] }}{% if client.nom|length > 18 %}...{% endif %}</p>
+                                <p class="text-xs text-slate-500">{{ client.total_orders }} commande{% if client.total_orders > 1 %}s{% endif %}</p>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <p class="text-center py-4 text-slate-400 text-sm">Aucun client</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Performance -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i class="fas fa-chart-bar text-brand-500"></i>
+                    Performance
+                </h3>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-slate-600">Taux de validation</span>
+                            <span class="font-semibold text-emerald-600">{{ whatsapp_stats.validation_rate }}%</span>
+                        </div>
+                        <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div class="h-full bg-emerald-500 rounded-full" style="width: {{ whatsapp_stats.validation_rate }}%"></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 pt-2">
+                        <div class="text-center p-3 bg-slate-50 rounded-lg">
+                            <p class="text-lg font-bold text-slate-800">{{ whatsapp_stats.this_week }}</p>
+                            <p class="text-xs text-slate-500">Cette semaine</p>
+                        </div>
+                        <div class="text-center p-3 bg-slate-50 rounded-lg">
+                            <p class="text-lg font-bold text-slate-800">{{ whatsapp_stats.this_month }}</p>
+                            <p class="text-xs text-slate-500">Ce mois</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    checkStatus();
+});
+
+function checkStatus() {
+    fetch('/api/whatsapp/status')
+        .then(response => response.json())
+        .then(data => {
+            const statusIndicator = document.getElementById('statusIndicator');
+            const connectionStatus = document.getElementById('connectionStatus');
+            const whatsappNumber = document.getElementById('whatsappNumber');
+            
+            if (data.connected) {
+                statusIndicator.innerHTML = '<span class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>Connecté';
+                statusIndicator.className = 'flex items-center px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium';
+                connectionStatus.textContent = 'Service WhatsApp Business actif';
+                whatsappNumber.textContent = data.phone_number || 'Configuré';
+            } else {
+                statusIndicator.innerHTML = '<span class="w-2 h-2 bg-red-500 rounded-full mr-2"></span>Déconnecté';
+                statusIndicator.className = 'flex items-center px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium';
+                connectionStatus.textContent = 'Service non configuré';
+            }
+        })
+        .catch(() => {
+            document.getElementById('statusIndicator').innerHTML = '<span class="w-2 h-2 bg-red-500 rounded-full mr-2"></span>Erreur';
+            document.getElementById('connectionStatus').textContent = 'Impossible de vérifier le statut';
+        });
+}
+
+function copyWebhook() {
+    navigator.clipboard.writeText({{ webhook_url | tojson }});
+    
+    // Show toast
+    const toast = document.createElement('div');
+    toast.className = 'fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+    toast.innerHTML = '<i class="fas fa-check mr-2"></i>URL copiée !';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2000);
+}
+</script>
+{% endblock %}

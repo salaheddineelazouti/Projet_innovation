@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tecpap-orders"
+version = "3.0.0"
+description = "Saisie automatique des commandes TECPAP reçues par email et WhatsApp, validées par l'équipe commerciale avant export vers SAGE X3."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Salah Eddine EL AZOUTI" }]
+dynamic = ["dependencies"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Framework :: Flask",
+    "Natural Language :: French",
+    "Private :: Do Not Upload",
+]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["tecpap*"]
+
+[tool.setuptools.package-data]
+"tecpap.web" = ["templates/*.html", "static/images/*"]
+
+# ---------------------------------------------------------------- ruff (analyse statique)
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "venv", "build", "dist"]
+
+[tool.ruff.lint]
+# E/W : style PEP 8, F : erreurs détectées par pyflakes, I : ordre des imports,
+# B : erreurs probables (flake8-bugbear), UP : syntaxe Python moderne (pyupgrade).
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "B008",  # appel de fonction dans une valeur par défaut d'argument (usage courant avec Flask)
+    "B904",  # « raise … from » non imposé dans les gestionnaires d'erreurs des routes
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Gabarits d'emails HTML et instructions envoyées au modèle : lignes longues inévitables.
+"tecpap/channels/email_sender.py" = ["E501"]
+"tecpap/extraction/extractor.py" = ["E501"]
+# Rapport PDF : appels de mise en page reportlab et matplotlib sur une seule ligne.
+"tecpap/reporting/pdf_report.py" = ["E501"]
+# Tests : messages et données d'exemple écrits sur une seule ligne.
+"tests/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tecpap"]
+
+# ---------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+    "integration: tests qui font intervenir plusieurs composants (application web, base, extraction simulée)",
+    "slow: tests plus longs que la moyenne (génération de PDF, de classeurs Excel)",
+]
+filterwarnings = [
+    # requests signale des versions d'urllib3 ou de chardet plus récentes que celles qu'il connaît.
+    "ignore::requests.exceptions.RequestsDependencyWarning",
+    # Avertissements internes de matplotlib (dépendances pyparsing et numpy), sans effet sur les graphiques.
+    "ignore::DeprecationWarning:matplotlib.*",
+]
+
+[tool.coverage.run]
+source = ["tecpap"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

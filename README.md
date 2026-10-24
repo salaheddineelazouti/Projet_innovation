@@ -68,58 +68,50 @@ Système intelligent d'automatisation de la saisie des bons de commande pour **T
 
 ```
 Projet_innovation/
-├── app.py                  # Application Flask principale
-├── gmail_receiver.py       # Réception emails via IMAP
-├── whatsapp_receiver.py    # Intégration WhatsApp/Twilio + Whisper
-├── data_extractor.py       # Extraction IA (OpenAI GPT-4o)
-├── database.py             # Gestion base de données SQLite
-├── process_orders.py       # Orchestration du traitement emails
-├── analytics.py            # Statistiques & rapports
-├── email_sender.py         # Envoi emails HTML (validation/rejet)
-├── backup_database.py      # Système de sauvegarde hybride
-├── orders.db               # Base de données SQLite
-├── .env                    # Variables d'environnement (secrets)
-├── requirements.txt        # Dépendances Python
-├── ngrok.exe               # Tunnel pour webhook WhatsApp
-│
-├── tests/                  # Tests unitaires et d'intégration
-│   ├── conftest.py         # Fixtures pytest partagées
-│   ├── test_database.py    # Tests base de données
-│   ├── test_data_extractor.py  # Tests extraction IA
-│   ├── test_backup.py      # Tests système de sauvegarde
-│   ├── test_email.py       # Tests envoi emails
-│   ├── test_api.py         # Tests API Flask
-│   ├── test_whatsapp.py    # Tests WhatsApp/Twilio
-│   ├── test_gmail.py       # Tests réception Gmail
-│   ├── test_integration.py # Tests d'intégration
-│   └── test_workflows.py   # Tests workflows GitHub Actions
-│
-├── .github/workflows/      # CI/CD GitHub Actions
-│   ├── ci.yml              # Pipeline CI (lint, test, security, build)
-│   ├── backup.yml          # Sauvegarde automatique quotidienne
-│   └── deploy.yml          # Déploiement staging/production
-│
-├── templates/              # Templates HTML (Jinja2 + TailwindCSS)
-│   ├── base.html           # Template de base avec notifications
-│   ├── index.html          # Dashboard avec stats par canal
-│   ├── orders.html         # Liste des commandes
-│   ├── order_detail.html   # Détail & validation
-│   ├── clients.html        # Gestion clients avec recherche
-│   ├── client_detail.html  # Détail client avec historique
-│   ├── analytics.html      # Tableau de bord avancé
-│   ├── alerts.html         # Système d'alertes
-│   ├── backups.html        # Gestion des sauvegardes
-│   ├── whatsapp.html       # Stats WhatsApp
-│   └── process.html        # Traitement emails avec progress bar
-│
-├── article_codes.py        # 🆕 Gestionnaire codes articles SAGE X3
-├── backups/                # Dossier des sauvegardes
-│   ├── backup_*.db.gz      # Sauvegardes compressées
-│   └── backup_history.json # Historique
-│
-├── whatsapp_media/         # Médias WhatsApp téléchargés
-├── attachments/            # Pièces jointes emails
-└── exports/                # Fichiers exportés (Excel SAGE X3, CSV, PDF)
+├── app.py                      # Point d'entrée : app = create_app() (python app.py ou gunicorn app:app)
+├── tecpap/                     # Paquet de l'application
+│   ├── config.py               # Configuration (Settings, load_settings)
+│   ├── logging_config.py       # Journalisation
+│   ├── catalog.py              # Catalogue : produits, papiers, grammages, laizes, expressions de renouvellement
+│   ├── db/
+│   │   ├── database.py         # Base SQLite (clients, produits, commandes, journal)
+│   │   └── backup.py           # Sauvegarde, restauration, export JSON
+│   ├── channels/
+│   │   ├── email_receiver.py   # Réception des emails (IMAP)
+│   │   ├── email_sender.py     # Emails HTML de réception, validation, rejet
+│   │   └── whatsapp.py         # WhatsApp (Twilio), Whisper, vision, PDF
+│   ├── processing/
+│   │   └── order_processor.py  # Traitement des emails de commande
+│   ├── extraction/
+│   │   ├── extractor.py        # Extraction des commandes (OpenAI GPT-4o)
+│   │   └── article_codes.py    # Codes articles SAGE X3
+│   ├── reporting/
+│   │   ├── analytics.py        # Statistiques, alertes, exports Excel/CSV
+│   │   └── pdf_report.py       # Rapport PDF
+│   └── web/
+│       ├── __init__.py         # create_app() : fabrique de l'application Flask
+│       ├── services.py         # Services partagés par les routes
+│       ├── scheduler.py        # Planificateur des sauvegardes automatiques
+│       ├── routes/             # Blueprints : pages, api, webhooks, backups, exports
+│       ├── templates/          # Pages HTML (Jinja2 + TailwindCSS)
+│       └── static/             # Logos
+├── scripts/                    # Outils en ligne de commande
+│   ├── process_emails.py       # Traiter les emails de commande
+│   ├── backup.py               # Sauvegarder, restaurer, exporter la base
+│   └── rename_generic_clients.py  # Renommer les clients au nom provisoire
+├── tests/                      # Tests (pytest), sans réseau ni clé d'API
+├── .github/workflows/
+│   ├── ci.yml                  # Analyse statique, tests, sécurité, image Docker
+│   └── deploy.yml              # Publication de l'image Docker sur étiquette v*
+├── pyproject.toml              # Métadonnées du paquet, configuration de ruff et pytest
+├── requirements.txt            # Dépendances d'exécution
+├── requirements-dev.txt        # Dépendances de développement (tests, ruff)
+├── .env.example                # Modèle du fichier .env (toutes les variables)
+├── Dockerfile                  # Image de production (gunicorn)
+├── backups/                    # Sauvegardes de la base
+├── whatsapp_media/             # Médias WhatsApp téléchargés
+├── attachments/                # Pièces jointes des emails
+└── exports/                    # Fichiers exportés (Excel SAGE X3, CSV, PDF)
 ```
 
 ---
@@ -173,39 +165,24 @@ GET /export/excel/sage
 
 ### Variables d'Environnement (`.env`)
 
+Toutes les variables, leurs valeurs par défaut et leur rôle sont décrites dans `.env.example`.
+Les principales :
+
 ```env
-# Gmail Configuration
 GMAIL_EMAIL=votre-email@gmail.com
 GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
-
-# OpenAI Configuration
 OPENAI_API_KEY=sk-proj-xxxxx
-
-# Twilio WhatsApp
 TWILIO_ACCOUNT_SID=ACxxxxx
 TWILIO_AUTH_TOKEN=xxxxx
 TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
-NGROK_URL=https://xxxxx.ngrok-free.dev
+PUBLIC_BASE_URL=https://xxxxx.ngrok-free.app
+SECRET_KEY=valeur-longue-et-aleatoire   # obligatoire en production
 ```
 
-### Dépendances (`requirements.txt`)
+### Dépendances
 
-```
-python-dotenv==1.0.0
-openai==1.6.1
-pypdf>=4.0.0
-Pillow==10.1.0
-flask==3.0.0
-pandas==2.1.4
-openpyxl==3.1.2
-reportlab==4.0.8
-matplotlib==3.8.2
-twilio==8.10.0
-requests==2.31.0
-pytest>=8.0.0
-pytest-cov>=4.0.0
-PyYAML>=6.0
-```
+- `requirements.txt` : dépendances d'exécution (Flask, OpenAI, Twilio, pypdf, pandas, reportlab…) ;
+- `requirements-dev.txt` : dépendances de développement (pytest, pytest-cov, ruff, PyYAML).
 
 ---
 
@@ -214,12 +191,13 @@ PyYAML>=6.0
 ### 1. Installation des dépendances
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # développement (inclut requirements.txt)
+pip install -r requirements.txt       # exécution seule
 ```
 
 ### 2. Configuration
 
-1. Créer le fichier `.env` avec vos credentials
+1. Copier `.env.example` en `.env` et remplacer les valeurs d'exemple
 2. Activer l'accès IMAP sur Gmail
 3. Générer un mot de passe d'application Gmail
 4. Créer un compte Twilio pour WhatsApp
@@ -230,7 +208,14 @@ pip install -r requirements.txt
 python app.py
 ```
 
-L'application sera disponible sur: **http://localhost:5000**
+L'application sera disponible sur: **http://localhost:5000** (adresse et port : `FLASK_HOST`, `FLASK_PORT`).
+
+En production (image Docker) :
+
+```bash
+docker build -t tecpap-orders .
+docker run --env-file .env -p 5000:5000 -v tecpap-db:/data/db -v tecpap-backups:/data/backups tecpap-orders
+```
 
 ### 4. Lancer les tests
 
@@ -239,12 +224,15 @@ L'application sera disponible sur: **http://localhost:5000**
 pytest
 
 # Avec couverture de code
-pytest --cov=. --cov-report=html
+pytest --cov=tecpap --cov-report=html
 
 # Tests spécifiques
 pytest tests/test_database.py -v
 pytest tests/test_api.py -v
 pytest tests/test_workflows.py -v
+
+# Analyse statique
+ruff check .
 ```
 
 ### 5. Configurer WhatsApp
@@ -253,8 +241,9 @@ pytest tests/test_workflows.py -v
 # Démarrer le tunnel ngrok
 .\ngrok.exe http 5000
 
+# Reporter l'adresse publique du tunnel dans .env : PUBLIC_BASE_URL=https://xxxxx.ngrok-free.app
 # Configurer dans Twilio Console > Messaging > WhatsApp Sandbox:
-# - When a message comes in: https://xxxxx.ngrok-free.dev/webhook/whatsapp
+# - When a message comes in: https://xxxxx.ngrok-free.app/webhook/whatsapp
 # - Status callback URL: (optionnel)
 
 # Pour recevoir les messages, les utilisateurs doivent d'abord envoyer:
@@ -414,22 +403,22 @@ Interface accessible via **Sidebar → Système → Sauvegardes** (`/backups`)
 
 ```bash
 # Créer une sauvegarde
-python backup_database.py backup
+python scripts/backup.py backup
 
 # Lister les sauvegardes
-python backup_database.py list
+python scripts/backup.py list
 
 # Restaurer une sauvegarde (interactif)
-python backup_database.py restore
+python scripts/backup.py restore
 
 # Nettoyer anciennes sauvegardes (garder 10)
-python backup_database.py clean 10
+python scripts/backup.py clean 10
 
 # Statistiques de la base
-python backup_database.py stats
+python scripts/backup.py stats
 
 # Exporter en JSON
-python backup_database.py export
+python scripts/backup.py export
 ```
 
 #### Fichiers de Sauvegarde
@@ -595,21 +584,25 @@ TECPAP fabrique 4 types de sacs en papier Kraft:
 
 ## 🧪 Tests
 
-Le projet dispose d'une suite de tests complète avec **257 tests** couvrant tous les modules.
+Le projet dispose d'une suite de 455 tests, exécutés sans réseau ni clé d'API : OpenAI, Twilio,
+IMAP et SMTP sont simulés, et chaque test utilise une base et des dossiers temporaires.
 
 ### Structure des Tests
 
-| Fichier | Tests | Description |
-|---------|-------|-------------|
-| `test_database.py` | 45 | Tests CRUD, connexions, intégrité |
-| `test_data_extractor.py` | 35 | Tests extraction IA, PDF, images |
-| `test_backup.py` | 30 | Tests sauvegarde/restauration |
-| `test_email.py` | 25 | Tests envoi emails HTML |
-| `test_api.py` | 40 | Tests endpoints API Flask |
-| `test_whatsapp.py` | 28 | Tests intégration Twilio |
-| `test_gmail.py` | 22 | Tests réception Gmail IMAP |
-| `test_integration.py` | 20 | Tests flux complets |
-| `test_workflows.py` | 37 | Tests GitHub Actions workflows |
+| Fichier | Description |
+|---------|-------------|
+| `test_config.py` | Configuration : valeurs par défaut, conversion des variables, règles de production |
+| `test_catalog.py` | Catalogue produits, expressions de renouvellement, codes articles |
+| `test_app_factory.py` | Fabrique d'application, routes, exports, webhook WhatsApp, planificateur |
+| `test_database.py` | Opérations sur la base, migration du schéma |
+| `test_data_extractor.py` | Extraction avec un modèle simulé, historique client, pièces jointes |
+| `test_backup.py` | Sauvegarde, restauration, nettoyage, export JSON |
+| `test_email.py` | Envoi des emails (SMTP simulé) |
+| `test_api.py` | Pages et API du tableau de bord |
+| `test_whatsapp.py` | Messages WhatsApp, médias, transcription, envoi |
+| `test_gmail.py` | Réception des emails (IMAP simulé) |
+| `test_integration.py` | Flux complets sur la base |
+| `test_workflows.py` | Workflows GitHub Actions |
 
 ### Exécution des Tests
 
@@ -627,7 +620,7 @@ pytest tests/test_database.py -v
 pytest -m "not slow"
 
 # Avec couverture
-pytest --cov=. --cov-report=html --cov-report=term-missing
+pytest --cov=tecpap --cov-report=html --cov-report=term-missing
 
 # Rapport HTML dans htmlcov/index.html
 ```
@@ -635,11 +628,10 @@ pytest --cov=. --cov-report=html --cov-report=term-missing
 ### Fixtures Partagées
 
 Les fixtures pytest dans `conftest.py` fournissent :
-- `temp_db` : Base de données temporaire pour les tests
-- `db_manager` : Instance DatabaseManager initialisée
-- `sample_order_data` : Données de commande de test
-- `mock_openai_response` : Réponses OpenAI simulées
-- `flask_client` : Client de test Flask
+- `test_settings` : configuration de test (`Settings.for_tests(tmp_path)`)
+- `temp_db` : base de données temporaire initialisée
+- `flask_app`, `flask_client`, `services` : application construite par `create_app(test_settings)`
+- `sample_order_data`, `sample_whatsapp_order` : données de commande de test
 
 ---
 
@@ -647,49 +639,28 @@ Les fixtures pytest dans `conftest.py` fournissent :
 
 ### Workflows Configurés
 
-#### 1. CI Pipeline (`ci.yml`)
+#### 1. Intégration continue (`ci.yml`)
 
-Déclenché sur push/PR vers `main` et `develop`.
+Déclenché sur push vers `main`, `develop` et `feature/**`, et sur les pull requests vers `main` et `develop`.
 
 | Job | Description | Outils |
 |-----|-------------|--------|
-| **lint** | Vérification qualité code | flake8, black, isort |
-| **test** | Tests unitaires | pytest, coverage (Python 3.10-3.12) |
-| **security** | Audit sécurité | safety, bandit |
-| **build** | Construction artefact | pip wheel |
+| **lint** | Analyse statique, bloquante | ruff |
+| **tests** | Tests et couverture (Python 3.10, 3.11, 3.12) | pytest, pytest-cov |
+| **security** | Rapport de sécurité, non bloquant | bandit, pip-audit |
+| **build** | Création de l'application et de l'image Docker | docker |
 
-```yaml
-# Déclenchement
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
-```
+#### 2. Publication (`deploy.yml`)
 
-#### 2. Backup Workflow (`backup.yml`)
-
-Sauvegarde automatique quotidienne de la base de données.
-
-- **Schedule**: Tous les jours à 2h UTC
-- **Manuel**: Déclenchement possible via `workflow_dispatch`
-- **Rétention**: 30 jours
-- **Artefact**: Upload de la sauvegarde compressée
-
-#### 3. Deploy Workflow (`deploy.yml`)
-
-Déploiement vers staging ou production.
-
-- **Déclencheur tags**: `v*` (ex: v1.0.0, v2.1.0)
-- **Manuel**: Choix de l'environnement (staging/production)
-- **Jobs**: test → build → deploy-staging → deploy-production
+- **Déclencheur** : étiquette `v*` (ex : v3.0.0)
+- **Jobs** : tests → construction de l'image Docker → image publiée comme artefact du workflow
+- Aucune cible de déploiement n'est configurée : l'image est chargée sur le serveur avec `docker load`
 
 ### Statut des Tests
 
 ```
-✅ 257 tests passing
-✅ 0 warnings
-✅ Coverage > 80%
+455 tests réussis
+Couverture du paquet tecpap : 78 %
 ```
 
 ---
@@ -700,7 +671,7 @@ Déploiement vers staging ou production.
 - Mots de passe d'application Gmail (pas le mot de passe principal)
 - Authentification Twilio pour les médias
 - Validation côté serveur des données
-- Timeout OpenAI configurable (120s)
+- Délai maximal des appels OpenAI configurable (`LLM_TIMEOUT`, 60 s par défaut)
 
 ---
 
@@ -736,7 +707,8 @@ Déploiement vers staging ou production.
 - WAL checkpoint force la synchronisation
 
 ### Transcription audio incorrecte
-- Whisper est configuré avec `language="ar"` et prompt Darija
+- La langue est détectée par Whisper ; `TRANSCRIPTION_LANGUAGE` (par exemple `ar`) l'impose
+- Un vocabulaire darija, arabe et français est transmis à Whisper
 - Les fichiers audio sont téléchargés localement avant transcription
 
 ### Nom client incorrect
