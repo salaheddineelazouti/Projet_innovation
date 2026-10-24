@@ -43,9 +43,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Gabarits d'emails HTML et instructions envoyées au modèle : lignes longues inévitables.
+# Gabarits d'emails HTML : lignes longues inévitables.
 "tecpap/channels/email_sender.py" = ["E501"]
-"tecpap/extraction/extractor.py" = ["E501"]
 # Rapport PDF : appels de mise en page reportlab et matplotlib sur une seule ligne.
 "tecpap/reporting/pdf_report.py" = ["E501"]
 # Tests : messages et données d'exemple écrits sur une seule ligne.

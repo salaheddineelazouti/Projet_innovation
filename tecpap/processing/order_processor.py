@@ -18,6 +18,7 @@ from tecpap.channels.email_sender import EmailSender
 from tecpap.config import Settings, load_settings
 from tecpap.db.database import DatabaseManager
 from tecpap.extraction.extractor import DataExtractor
+from tecpap.llm.client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +29,19 @@ class OrderProcessor:
     Chaque dépendance peut être fournie (tests, réutilisation) ; à défaut elle est construite
     à partir de la configuration. La base ouverte ici est une connexion distincte de celle de
     l'application web, fermée à la fin du traitement.
+
+    Args:
+        llm: client des modèles de langue de l'extracteur construit par défaut (celui de
+            l'application web, par exemple) ; ignoré quand ``extractor`` est fourni.
     """
 
     def __init__(self, settings: Settings | None = None, gmail: GmailReceiver | None = None,
                  db: DatabaseManager | None = None, extractor: DataExtractor | None = None,
-                 email_sender: EmailSender | None = None):
+                 email_sender: EmailSender | None = None, llm: LLMClient | None = None):
         self.settings = settings or load_settings()
         self.gmail = gmail or GmailReceiver(self.settings)
         self.db = db or DatabaseManager(self.settings.database_path)
-        self.extractor = extractor or DataExtractor(db_manager=self.db, settings=self.settings)
+        self.extractor = extractor or DataExtractor(db_manager=self.db, settings=self.settings, llm=llm)
         self.email_sender = email_sender or EmailSender(self.settings)
         self.attachments_dir = self.settings.attachments_dir
         self.processed_orders: list[dict[str, Any]] = []

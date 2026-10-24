@@ -1,10 +1,10 @@
 """Canal WhatsApp par l'API Twilio : lecture des messages reçus, téléchargement des médias,
-transcription des notes vocales, extraction du texte des images et des PDF, envoi de réponses.
+conversion des médias en texte, envoi de réponses.
 
-Traitement par type de média :
+Traitement par type de média (voir :mod:`tecpap.processing.multimodal`) :
 - texte : transmis tel quel à l'extraction ;
-- audio (notes vocales) : transcription par le modèle Whisper d'OpenAI ;
-- image : lecture du texte par le modèle de vision d'OpenAI ;
+- audio (notes vocales) : transcription ;
+- image : lecture du texte par le modèle de vision ;
 - PDF : extraction du texte avec pypdf.
 
 Les médias ne sont téléchargés que depuis les serveurs de Twilio : l'adresse du média vient de
@@ -14,19 +14,28 @@ viser un autre hôte.
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
-import pypdf
 import requests
-from openai import OpenAI
 from twilio.rest import Client as TwilioClient
 
 from tecpap.config import Settings, load_settings
+from tecpap.llm.client import LLMClient
+from tecpap.processing.multimodal import (
+    KIND_AUDIO,
+    KIND_IMAGE,
+    KIND_PDF,
+    KIND_TEXT,
+    KIND_UNKNOWN,
+    MediaProcessor,
+    MediaText,
+    base_mime,
+    extension_for_mime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,29 +44,18 @@ ALLOWED_MEDIA_HOSTS = ("twilio.com",)
 
 AUDIO_MARKERS = ("audio", "ogg", "opus", "mpeg", "mp3", "wav", "m4a", "voice")
 
-AUDIO_EXTENSIONS = {
-    "audio/ogg": "ogg",
-    "audio/mpeg": "mp3",
-    "audio/mp4": "m4a",
-    "audio/wav": "wav",
-    "audio/x-wav": "wav",
-    "audio/webm": "webm",
-    "audio/aac": "aac",
+# Type de message (champ ``type`` du résultat) selon le type de média détecté dans le fichier.
+MESSAGE_TYPES = {
+    KIND_IMAGE: "image",
+    KIND_AUDIO: "audio",
+    KIND_PDF: "document",
+    KIND_TEXT: "document",
 }
 
-# Vocabulaire transmis à Whisper pour orienter la transcription des commandes en darija,
-# en arabe et en français (mots d'introduction du client, produits, quantités).
-TRANSCRIPTION_PROMPT = (
-    "Commande commerciale au Maroc. Introduction client: ana restaurant, ana snack, ana café, "
-    "أنا ريستوران, أنا سناك. Termes: sachets, sac kraft, carton, papier, emballage, pièces, unités, "
-    "commande, livraison, dirhams. Darija: bghit, khassni, 3tini, sachet, sac, carton, kraft, fond plat, "
-    "poignées, sandwich, tacos. Noms: Salah Eddine, Mohamed, Ahmed, Hassan, Youssef."
-)
+# Préfixe du nom de fichier enregistré, selon le type de message.
+FILE_PREFIXES = {"image": "image", "audio": "audio", "document": "doc"}
 
-IMAGE_TEXT_INSTRUCTION = "Extrais tout le texte visible dans cette image. Retourne uniquement le texte extrait."
-
-# Taille en dessous de laquelle un fichier audio est considéré comme vide.
-MIN_AUDIO_BYTES = 100
+DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
 def is_allowed_media_url(url: str | None) -> bool:
@@ -71,29 +69,40 @@ def is_allowed_media_url(url: str | None) -> bool:
     return any(host == allowed or host.endswith("." + allowed) for allowed in ALLOWED_MEDIA_HOSTS)
 
 
+def declared_message_type(media_type: str) -> str:
+    """Type de message annoncé par le type MIME du média : image, audio, document ou file."""
+    media_type = media_type.lower()
+    if "image" in media_type:
+        return "image"
+    if any(marker in media_type for marker in AUDIO_MARKERS):
+        return "audio"
+    if "pdf" in media_type or "document" in media_type or media_type.startswith("text/"):
+        return "document"
+    return "file"
+
+
 def _timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
 class WhatsAppReceiver:
-    """Client WhatsApp (Twilio) avec traitement multimodal des messages reçus.
+    """Client WhatsApp (Twilio) avec conversion en texte des médias reçus.
 
     Args:
         settings: configuration ; par défaut celle de l'environnement (:func:`load_settings`).
-        openai_client: client OpenAI déjà construit (utile pour les tests). Par défaut, un
-            client est créé seulement si ``OPENAI_API_KEY`` est défini.
+        llm: client des modèles de langue (transcription, vision) ; par défaut construit depuis
+            la configuration. Sans clé d'API, seuls les PDF sont lus.
+        media: convertisseur des médias en texte ; par défaut construit avec ``llm`` et
+            ``settings``.
     """
 
-    def __init__(self, settings: Settings | None = None, openai_client: Any | None = None):
+    def __init__(self, settings: Settings | None = None, llm: LLMClient | None = None,
+                 media: MediaProcessor | None = None):
         self.settings = settings or load_settings()
         self.account_sid = self.settings.twilio_account_sid
         self.auth_token = self.settings.twilio_auth_token
-        if openai_client is not None:
-            self.openai_client = openai_client
-        elif self.settings.openai_api_key:
-            self.openai_client = OpenAI(api_key=self.settings.openai_api_key, timeout=self.settings.llm_timeout)
-        else:
-            self.openai_client = None
+        self.llm = llm if llm is not None else LLMClient.from_settings(self.settings)
+        self.media = media if media is not None else MediaProcessor(self.llm, self.settings)
         self.twilio_client: TwilioClient | None = None
         self.media_dir = self.settings.whatsapp_media_dir
 
@@ -145,19 +154,25 @@ class WhatsAppReceiver:
 
         Args:
             message_data: champs du formulaire envoyé par Twilio (``From``, ``Body``,
-                ``NumMedia``, ``MediaUrl0``, ``MediaContentType0``…).
+                ``MessageSid``, ``NumMedia``, ``MediaUrl0``, ``MediaContentType0``…).
 
         Returns:
-            Un dictionnaire avec le type de message, l'expéditeur, le texte, la transcription
-            audio et le texte extrait d'un document ou d'une image.
+            Un dictionnaire avec le type de message (``text``, ``image``, ``audio``,
+            ``document``, ``file`` ou ``unknown``), l'expéditeur, l'identifiant Twilio du
+            message (``message_sid``), le type MIME du média (``media_type``), le texte, la
+            transcription audio, le texte extrait d'un document ou d'une image et, en cas
+            d'échec de la lecture du média, sa cause (``media_error``).
         """
         result: dict[str, Any] = {
             "type": "unknown",
             "from": message_data.get("From", "").replace("whatsapp:", ""),
             "to": message_data.get("To", "").replace("whatsapp:", ""),
+            "message_sid": message_data.get("MessageSid") or message_data.get("SmsMessageSid") or None,
             "timestamp": datetime.now().isoformat(),
             "content": None,
             "media_url": None,
+            "media_type": None,
+            "media_error": None,
             "transcription": None,
             "extracted_text": None,
         }
@@ -174,24 +189,52 @@ class WhatsAppReceiver:
 
         if num_media > 0:
             media_url = message_data.get("MediaUrl0")
-            media_type = message_data.get("MediaContentType0", "").lower()
+            media_type = base_mime(message_data.get("MediaContentType0"))
             result["media_url"] = media_url
-            logger.info("Média reçu de type %s", media_type)
+            result["media_type"] = media_type or None
+            result["type"] = declared_message_type(media_type)
+            logger.info("Média reçu de type %s", media_type or "inconnu")
 
-            if "image" in media_type:
-                result["type"] = "image"
-                result["extracted_text"] = self.extract_text_from_image(media_url)
-            elif any(marker in media_type for marker in AUDIO_MARKERS):
-                result["type"] = "audio"
-                result["transcription"] = self.transcribe_audio(media_url, media_type)
-                result["content"] = result["transcription"]
-            elif "pdf" in media_type or "document" in media_type:
-                result["type"] = "document"
-                result["extracted_text"] = self.extract_text_from_document(media_url, media_type)
-            else:
-                result["type"] = "file"
+            media_text = self.process_media(media_url, media_type)
+            self._apply_media_text(result, media_text)
 
         return result
+
+    def process_media(self, media_url: str | None, media_type: str) -> MediaText:
+        """Télécharge un média Twilio et le convertit en texte.
+
+        Le téléchargement est évité quand le média ne pourrait pas être lu : type non pris en
+        charge, ou image et audio sans clé d'API pour les modèles de vision et de transcription.
+        """
+        message_type = declared_message_type(media_type)
+        if message_type == "file":
+            return MediaText(KIND_UNKNOWN, None, "type de média non pris en charge")
+        if message_type in ("image", "audio") and not self.media.llm_available:
+            logger.warning("Média %s non lu : clé OPENAI_API_KEY absente", message_type)
+            kind = KIND_IMAGE if message_type == "image" else KIND_AUDIO
+            return MediaText(kind, None, "lecture du média indisponible : clé OPENAI_API_KEY absente")
+
+        filename = f"{FILE_PREFIXES[message_type]}_{_timestamp()}{extension_for_mime(media_type)}"
+        filepath = self.download_media(media_url, filename)
+        if not filepath:
+            return MediaText(KIND_UNKNOWN, None, "téléchargement du média impossible")
+        return self.media.process_file(filepath, declared_mime=media_type)
+
+    @staticmethod
+    def _apply_media_text(result: dict[str, Any], media_text: MediaText) -> None:
+        """Range le texte d'un média dans le résultat du message, selon le type détecté."""
+        if media_text.kind in MESSAGE_TYPES:
+            result["type"] = MESSAGE_TYPES[media_text.kind]
+        if media_text.error:
+            result["media_error"] = media_text.error
+            logger.info("Média non lu : %s", media_text.error)
+            return
+
+        if result["type"] == "audio":
+            result["transcription"] = media_text.text
+            result["content"] = media_text.text
+        else:
+            result["extracted_text"] = media_text.text
 
     def format_for_extraction(self, message_result: dict[str, Any]) -> dict[str, Any]:
         """Présente un message WhatsApp sous la forme d'un email (sujet, expéditeur, corps).
@@ -216,7 +259,7 @@ class WhatsAppReceiver:
 
     # ------------------------------------------------------------------ médias
 
-    def download_media(self, media_url: str, filename: str | None = None) -> str | None:
+    def download_media(self, media_url: str | None, filename: str | None = None) -> str | None:
         """Télécharge un média Twilio dans ``Settings.whatsapp_media_dir``.
 
         Le téléchargement est refusé pour une adresse qui n'appartient pas à Twilio et pour un
@@ -229,7 +272,8 @@ class WhatsAppReceiver:
             logger.warning("Téléchargement refusé : adresse de média hors Twilio (%s)", media_url)
             return None
         try:
-            response = requests.get(media_url, auth=(self.account_sid, self.auth_token), timeout=30)
+            response = requests.get(media_url, auth=(self.account_sid, self.auth_token),
+                                    timeout=DOWNLOAD_TIMEOUT_SECONDS)
         except requests.RequestException:
             logger.exception("Téléchargement du média impossible")
             return None
@@ -242,103 +286,13 @@ class WhatsAppReceiver:
             return None
 
         if not filename:
-            ext = media_url.split(".")[-1][:4] if "." in media_url else "bin"
-            filename = f"media_{_timestamp()}.{ext}"
+            filename = f"media_{_timestamp()}.bin"
         os.makedirs(self.media_dir, exist_ok=True)
         filepath = os.path.join(self.media_dir, os.path.basename(filename))
         with open(filepath, "wb") as f:
             f.write(response.content)
         logger.info("Média enregistré : %s", filepath)
         return filepath
-
-    def transcribe_audio(self, audio_url: str, media_type: str = "audio/ogg") -> str | None:
-        """Transcrit une note vocale avec Whisper (français, arabe et darija).
-
-        La langue transmise à Whisper est ``Settings.transcription_language`` ; sans valeur,
-        Whisper détecte la langue lui-même.
-        """
-        if not self.openai_client:
-            logger.warning("Transcription impossible : OPENAI_API_KEY absent")
-            return None
-
-        ext = next((value for key, value in AUDIO_EXTENSIONS.items() if key in media_type.lower()), "ogg")
-        filepath = self.download_media(audio_url, f"audio_{_timestamp()}.{ext}")
-        if not filepath:
-            return None
-
-        file_size = os.path.getsize(filepath)
-        if file_size < MIN_AUDIO_BYTES:
-            logger.warning("Fichier audio vide ou trop court (%d octets)", file_size)
-            return None
-
-        options: dict[str, Any] = {
-            "model": self.settings.model_transcription,
-            "response_format": "text",
-            "prompt": TRANSCRIPTION_PROMPT,
-        }
-        if self.settings.transcription_language:
-            options["language"] = self.settings.transcription_language
-
-        try:
-            with open(filepath, "rb") as audio_file:
-                transcription = self.openai_client.audio.transcriptions.create(file=audio_file, **options)
-        except Exception:
-            logger.exception("Échec de la transcription audio")
-            return None
-
-        if not transcription:
-            logger.warning("Transcription vide")
-        return transcription
-
-    def extract_text_from_image(self, image_url: str) -> str | None:
-        """Lit le texte d'une image avec le modèle de vision (``Settings.model_vision``)."""
-        if not self.openai_client:
-            logger.warning("Lecture d'image impossible : OPENAI_API_KEY absent")
-            return None
-
-        filepath = self.download_media(image_url, f"image_{_timestamp()}.jpg")
-        if not filepath:
-            return None
-
-        with open(filepath, "rb") as f:
-            image_data = base64.b64encode(f.read()).decode("utf-8")
-
-        try:
-            response = self.openai_client.chat.completions.create(
-                model=self.settings.model_vision,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": IMAGE_TEXT_INSTRUCTION},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}},
-                    ],
-                }],
-                max_tokens=2000,
-            )
-            return (response.choices[0].message.content or "").strip()
-        except Exception:
-            logger.exception("Échec de la lecture du texte de l'image")
-            return None
-
-    def extract_text_from_document(self, doc_url: str, media_type: str) -> str | None:
-        """Extrait le texte d'un PDF avec pypdf. Les autres documents ne sont pas lus."""
-        ext = "pdf" if "pdf" in media_type else "doc"
-        filepath = self.download_media(doc_url, f"doc_{_timestamp()}.{ext}")
-        if not filepath or ext != "pdf":
-            return None
-        return extract_pdf_text(filepath)
-
-
-def extract_pdf_text(filepath: str) -> str | None:
-    """Renvoie le texte de toutes les pages d'un PDF, ou ``None`` si le fichier est illisible."""
-    try:
-        reader = pypdf.PdfReader(filepath)
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    except Exception:
-        # Un PDF reçu d'un client peut être malformé de multiples façons : il est alors ignoré.
-        logger.exception("Lecture du PDF impossible : %s", filepath)
-        return None
-    return text.strip()
 
 
 WhatsAppClient = WhatsAppReceiver

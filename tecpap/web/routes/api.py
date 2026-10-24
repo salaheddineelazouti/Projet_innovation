@@ -3,6 +3,12 @@ codes articles, statistiques, notifications et état du service.
 
 La validation ou le rejet d'une commande prévient le client par email et, pour une commande
 reçue par WhatsApp, par un message WhatsApp.
+
+Les champs modifiables d'une commande sont limités à
+:data:`tecpap.db.database.ORDER_UPDATABLE_FIELDS` : une requête qui contient un autre champ, ou
+une valeur numérique invalide, est refusée (400) avec la liste des champs refusés
+(``rejected_fields``). En cas d'erreur inattendue, l'exception est consignée dans le journal et la
+réponse ne contient qu'un message générique.
 """
 
 from __future__ import annotations
@@ -15,9 +21,12 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from tecpap import __version__
+from tecpap.db.database import OrderUpdateError, clean_order_updates
 from tecpap.extraction.article_codes import generate_article_code, suggest_article_code_from_description
 from tecpap.processing.order_processor import OrderProcessor
 from tecpap.reporting.analytics import AIPredictor, AlertSystem, Analytics, ClientHistory
+from tecpap.web.auth import current_user
+from tecpap.web.errors import GENERIC_ERROR_MESSAGE, json_error, server_error
 from tecpap.web.services import Services, get_services
 
 logger = logging.getLogger(__name__)
@@ -33,10 +42,27 @@ SAGE_FIELDS = (
 )
 
 
+# Longueur maximale du nom de l'auteur d'une validation.
+_MAX_VALIDATOR_LENGTH = 100
+
+
 def _json_body() -> dict[str, Any]:
     """Corps JSON de la requête, ou dictionnaire vide s'il est absent ou invalide."""
     data = request.get_json(silent=True)
     return data if isinstance(data, dict) else {}
+
+
+def _optional_text(value: Any, max_length: int | None = None) -> str | None:
+    """Chaîne non vide (sans espaces en bordure), sinon ``None`` ; tronquée à ``max_length`` caractères."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    return text[:max_length] if max_length else text
+
+
+def _rejected_fields(exc: OrderUpdateError):
+    """Réponse 400 d'une modification refusée, avec la liste des champs en cause."""
+    return json_error(exc.message, 400, rejected_fields=list(exc.fields))
 
 
 # ---------------------------------------------------------------------- état du service
@@ -109,34 +135,40 @@ def api_process_emails():
     """Lit les emails récents et enregistre les bons de commande détectés."""
     services = get_services()
     try:
-        processor = OrderProcessor(settings=services.settings, email_sender=services.email_sender)
+        processor = OrderProcessor(settings=services.settings, email_sender=services.email_sender, llm=services.llm)
         orders = processor.process_new_emails(max_emails=10, save_to_db=True)
         return jsonify({
             "success": True,
             "message": f"{len(orders)} bon(s) de commande détecté(s)",
             "orders_count": len(orders),
         })
-    except Exception as exc:
+    except Exception:
         logger.exception("Échec du traitement des emails")
-        return jsonify({"success": False, "error": str(exc)}), 500
+        return json_error("Le traitement des emails a échoué. Le détail est consigné dans le journal du serveur.", 500)
 
 
 @bp.route("/api/orders/<int:order_id>/validate", methods=["POST"])
 def api_validate_order(order_id: int):
-    """Valide une commande et prévient le client (email, et WhatsApp si la commande en vient)."""
+    """Valide une commande et prévient le client (email, et WhatsApp si la commande en vient).
+
+    L'auteur enregistré est ``validated_by`` s'il est fourni, sinon l'utilisateur connecté.
+    Une commande inexistante donne une erreur 404.
+    """
     services = get_services()
-    validated_by = _json_body().get("validated_by", "Commercial")
+    if not services.db.get_order(order_id):
+        return json_error("Commande introuvable", 404)
+    validated_by = (_optional_text(_json_body().get("validated_by"), _MAX_VALIDATOR_LENGTH)
+                    or current_user() or "Commercial")
     services.db.update_order_status(order_id, "validee", validated_by)
 
+    # Commande relue après la validation : la notification contient le statut et la date enregistrés.
     order = services.db.get_order(order_id)
     email_sent = False
-    whatsapp_sent = False
-    if order:
-        try:
-            email_sent = services.email_sender.send_validation_email(order)
-        except Exception:
-            logger.warning("Email de validation impossible pour la commande %s", order_id, exc_info=True)
-        whatsapp_sent = _send_whatsapp(services, order, _validation_message(order, order_id))
+    try:
+        email_sent = services.email_sender.send_validation_email(order)
+    except Exception:
+        logger.warning("Email de validation impossible pour la commande %s", order_id, exc_info=True)
+    whatsapp_sent = _send_whatsapp(services, order, _validation_message(order, order_id))
 
     return jsonify({
         "success": True,
@@ -148,23 +180,26 @@ def api_validate_order(order_id: int):
 
 @bp.route("/api/orders/<int:order_id>/reject", methods=["POST"])
 def api_reject_order(order_id: int):
-    """Rejette une commande, enregistre le motif et prévient le client."""
-    services = get_services()
-    reason = _json_body().get("reason", "")
+    """Rejette une commande, enregistre le motif et prévient le client.
 
+    Une commande inexistante donne une erreur 404.
+    """
+    services = get_services()
     order = services.db.get_order(order_id)
+    if not order:
+        return json_error("Commande introuvable", 404)
+    reason = _optional_text(_json_body().get("reason")) or ""
+
     services.db.update_order_status(order_id, "rejetee")
     if reason:
         services.db.update_order(order_id, {"motif_rejet": reason})
 
     email_sent = False
-    whatsapp_sent = False
-    if order:
-        try:
-            email_sent = services.email_sender.send_rejection_email(order, reason)
-        except Exception:
-            logger.warning("Email de rejet impossible pour la commande %s", order_id, exc_info=True)
-        whatsapp_sent = _send_whatsapp(services, order, _rejection_message(order, reason))
+    try:
+        email_sent = services.email_sender.send_rejection_email(order, reason)
+    except Exception:
+        logger.warning("Email de rejet impossible pour la commande %s", order_id, exc_info=True)
+    whatsapp_sent = _send_whatsapp(services, order, _rejection_message(order, reason))
 
     return jsonify({
         "success": True,
@@ -176,23 +211,34 @@ def api_reject_order(order_id: int):
 
 @bp.route("/api/orders/<int:order_id>/update", methods=["POST"])
 def api_update_order(order_id: int):
-    """Modifie les champs d'une commande ; le reste à livrer est recalculé si une quantité change."""
-    db = get_services().db
-    updates = _json_body()
-    updates.pop("id", None)
-    updates.pop("created_at", None)
-    if not updates:
-        return jsonify({"success": False, "error": "Aucun champ à modifier"}), 400
+    """Modifie les champs d'une commande ; le reste à livrer est recalculé si une quantité change.
 
+    Seuls les champs de :data:`~tecpap.db.database.ORDER_UPDATABLE_FIELDS` sont acceptés ; les
+    valeurs des champs numériques peuvent être des chaînes (formulaire HTML), une chaîne vide
+    efface la valeur.
+    """
+    db = get_services().db
+    body = _json_body()
+    if not body:
+        return json_error("Aucun champ à modifier", 400)
+    try:
+        updates = clean_order_updates(body)
+    except OrderUpdateError as exc:
+        return _rejected_fields(exc)
+
+    order = db.get_order(order_id)
+    if not order:
+        return json_error("Commande introuvable", 404)
     if "quantite" in updates or "quantite_livree" in updates:
-        order = db.get_order(order_id)
-        if not order:
-            return jsonify({"success": False, "error": "Commande introuvable"}), 404
-        quantite = updates.get("quantite", order.get("quantite", 0)) or 0
-        quantite_livree = updates.get("quantite_livree", order.get("quantite_livree", 0)) or 0
+        quantite = updates.get("quantite", order.get("quantite")) or 0
+        quantite_livree = updates.get("quantite_livree", order.get("quantite_livree")) or 0
         updates["reste_a_livrer"] = quantite - quantite_livree
 
-    db.update_order(order_id, updates)
+    try:
+        db.update_order(order_id, updates)
+    except Exception:
+        logger.exception("Échec de la modification de la commande %s", order_id)
+        return server_error()
     return jsonify({"success": True, "message": "Commande mise à jour"})
 
 
@@ -243,8 +289,9 @@ def api_generate_article_code():
             "grammage": data.get("grammage"),
             "laize": data.get("laize"),
         })
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception:
+        logger.exception("Échec de la construction d'un code article")
+        return server_error()
 
 
 @bp.route("/api/article-code/suggest", methods=["POST"])
@@ -254,8 +301,9 @@ def api_suggest_article_code():
         description = _json_body().get("description", "")
         code = suggest_article_code_from_description(description)
         return jsonify({"success": True, "code": code, "description": description})
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception:
+        logger.exception("Échec de la proposition d'un code article")
+        return server_error()
 
 
 @bp.route("/api/orders/<int:order_id>/generate-code", methods=["POST"])
@@ -265,15 +313,16 @@ def api_order_generate_code(order_id: int):
     try:
         order = db.get_order(order_id)
         if not order:
-            return jsonify({"success": False, "error": "Order not found"}), 404
+            return json_error("Commande introuvable", 404)
 
         code = _code_for_order(order)
         if code:
             db.update_order(order_id, {"code_article": code})
             return jsonify({"success": True, "code": code, "message": f"Code article {code} assigné"})
-        return jsonify({"success": False, "error": "Impossible de générer un code, données insuffisantes"}), 400
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+        return json_error("Impossible de générer un code, données insuffisantes", 400)
+    except Exception:
+        logger.exception("Échec de la génération du code article de la commande %s", order_id)
+        return server_error()
 
 
 @bp.route("/api/orders/generate-all-codes", methods=["POST"])
@@ -310,8 +359,9 @@ def api_generate_all_codes():
             "total_processed": len(orders_without_code),
             "results": results[:50],
         })
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception:
+        logger.exception("Échec de la génération des codes articles")
+        return server_error()
 
 
 @bp.route("/api/orders/sage-stats")
@@ -356,29 +406,38 @@ def api_sage_stats():
             },
             "top_codes": top_codes,
         })
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception:
+        logger.exception("Échec du calcul des statistiques SAGE X3")
+        return server_error()
 
 
 @bp.route("/api/orders/<int:order_id>/sage-fields", methods=["PUT"])
 def api_update_sage_fields(order_id: int):
-    """Modifie uniquement les champs SAGE X3 d'une commande (liste fermée :data:`SAGE_FIELDS`)."""
+    """Modifie uniquement les champs SAGE X3 d'une commande (liste fermée :data:`SAGE_FIELDS`).
+
+    Une requête qui contient un autre champ est refusée entièrement (400, ``rejected_fields``).
+    """
     db = get_services().db
+    data = _json_body()
+    if not data:
+        return json_error("Aucune donnée fournie", 400)
+    rejected = sorted(str(key) for key in data if key not in SAGE_FIELDS)
+    if rejected:
+        return json_error("Champs non modifiables par cette route : " + ", ".join(rejected), 400,
+                          rejected_fields=rejected)
     try:
-        data = _json_body()
-        if not data:
-            return jsonify({"success": False, "error": "No data provided"}), 400
+        sage_data = clean_order_updates(data)
+    except OrderUpdateError as exc:
+        return _rejected_fields(exc)
 
-        sage_data = {key: value for key, value in data.items() if key in SAGE_FIELDS}
-        if not sage_data:
-            return jsonify({"success": False, "error": "No valid SAGE fields provided"}), 400
-
+    try:
+        order = db.get_order(order_id)
+        if not order:
+            return json_error("Commande introuvable", 404)
         if "quantite_livree" in sage_data:
-            order = db.get_order(order_id)
-            if order:
-                quantite = order.get("quantite", 0) or 0
-                livree = sage_data.get("quantite_livree", 0) or 0
-                sage_data["reste_a_livrer"] = quantite - livree
+            quantite = order.get("quantite") or 0
+            livree = sage_data.get("quantite_livree") or 0
+            sage_data["reste_a_livrer"] = quantite - livree
 
         db.update_order(order_id, sage_data)
         return jsonify({
@@ -386,8 +445,9 @@ def api_update_sage_fields(order_id: int):
             "message": "Champs SAGE X3 mis à jour",
             "updated_fields": list(sage_data.keys()),
         })
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception:
+        logger.exception("Échec de la modification des champs SAGE X3 de la commande %s", order_id)
+        return server_error()
 
 
 # ---------------------------------------------------------------------- statistiques et alertes
@@ -412,10 +472,11 @@ def api_client_history(client_id: int):
     cursor.execute("SELECT nom FROM clients WHERE id = ?", (client_id,))
     client = cursor.fetchone()
     if not client:
-        return jsonify({"error": "Client not found"}), 404
+        return json_error("Client introuvable", 404)
 
     preferences = ClientHistory(services.db).get_client_preferences(client["nom"])
-    prediction = AIPredictor(services.db, settings=services.settings).predict_client_behavior(client["nom"])
+    predictor = AIPredictor(services.db, settings=services.settings, llm=services.llm)
+    prediction = predictor.predict_client_behavior(client["nom"])
     return jsonify({"preferences": preferences, "prediction": prediction})
 
 
@@ -465,8 +526,9 @@ def check_notifications():
             new_orders.append(order)
 
         return jsonify({"new_orders": new_orders, "last_id": max_seen_id})
-    except Exception as exc:
-        return jsonify({"new_orders": [], "error": str(exc), "last_id": 0})
+    except Exception:
+        logger.exception("Échec de la recherche des nouvelles commandes")
+        return jsonify({"new_orders": [], "error": GENERIC_ERROR_MESSAGE, "last_id": 0})
 
 
 @bp.route("/api/whatsapp/status")
@@ -479,5 +541,6 @@ def whatsapp_status():
             "connected": connected,
             "account_sid": whatsapp.account_sid[:10] + "..." if whatsapp.account_sid else None,
         })
-    except Exception as exc:
-        return jsonify({"connected": False, "error": str(exc)})
+    except Exception:
+        logger.exception("Échec de la vérification de la connexion Twilio")
+        return jsonify({"connected": False, "error": GENERIC_ERROR_MESSAGE})

@@ -1,21 +1,41 @@
 """
-Tests du canal WhatsApp (tecpap.channels.whatsapp) : Twilio, OpenAI et téléchargements simulés.
+Tests du canal WhatsApp (tecpap.channels.whatsapp) : Twilio, modèle de langue et téléchargements simulés.
 """
 
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from PIL import Image
 
-from tecpap.channels.whatsapp import WhatsAppClient, WhatsAppReceiver, is_allowed_media_url
+from tecpap.channels.whatsapp import WhatsAppClient, WhatsAppReceiver, declared_message_type, is_allowed_media_url
 from tecpap.config import Settings
+from tecpap.extraction.prompts import TRANSCRIPTION_HINT
+from tecpap.llm.client import LLMClient
+from tests.fakes import FakeLLMClient
 
 TWILIO_MEDIA_URL = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1"
+TWILIO_CREDENTIALS = {"twilio_account_sid": "AC" + "0" * 32, "twilio_auth_token": "jeton"}
 
 
 @pytest.fixture
 def receiver(tmp_path):
-    settings = Settings.for_tests(tmp_path, twilio_account_sid="AC" + "0" * 32, twilio_auth_token="jeton")
+    settings = Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS)
     return WhatsAppReceiver(settings)
+
+
+def _media_message(content_type, url=TWILIO_MEDIA_URL, **fields):
+    """Formulaire Twilio d'un message avec un média."""
+    return {"From": "whatsapp:+212600000000", "NumMedia": "1", "MessageSid": "SM0001",
+            "MediaUrl0": url, "MediaContentType0": content_type, **fields}
+
+
+def _pdf(path, text):
+    from reportlab.pdfgen import canvas
+
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(100, 750, text)
+    pdf.save()
+    return path
 
 
 class TestWhatsAppConfiguration:
@@ -38,8 +58,20 @@ class TestWhatsAppConfiguration:
     def test_media_dir_from_settings(self, receiver, tmp_path):
         assert receiver.media_dir == str(tmp_path / "whatsapp_media")
 
-    def test_no_openai_client_without_key(self, receiver):
-        assert receiver.openai_client is None
+    def test_llm_unavailable_without_key(self, receiver):
+        assert isinstance(receiver.llm, LLMClient)
+        assert receiver.llm.available is False
+
+    def test_injected_llm_is_shared_with_media_processing(self, tmp_path):
+        llm = FakeLLMClient()
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path), llm=llm)
+        assert receiver.llm is llm
+        assert receiver.media.llm is llm
+
+    def test_services_share_llm_and_media(self, services):
+        assert services.whatsapp.llm is services.llm
+        assert services.whatsapp.media is services.media
+        assert services.media.llm is services.llm
 
     def test_connect_without_credentials(self, tmp_path):
         assert WhatsAppReceiver(Settings.for_tests(tmp_path)).connect() is False
@@ -487,6 +519,17 @@ class TestIncomingMessages:
         assert result["type"] == "text"
         assert result["from"] == "+212612345678"
         assert result["content"] == "bghit 2000 sachet"
+        assert result["media_type"] is None
+        assert result["message_sid"] is None
+
+    def test_output_keys(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+212612345678", "Body": "x"})
+        assert {"type", "from", "to", "timestamp", "content", "media_url", "transcription", "extracted_text",
+                "message_sid", "media_type"} <= set(result)
+
+    def test_message_sid_is_kept(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+1", "Body": "x", "MessageSid": "SM123"})
+        assert result["message_sid"] == "SM123"
 
     def test_format_for_extraction(self, receiver):
         result = receiver.process_incoming_message({"From": "whatsapp:+212612345678", "Body": "500 sacs"})
@@ -500,29 +543,53 @@ class TestIncomingMessages:
         assert result["type"] == "text"
 
     def test_pdf_is_read_with_pypdf(self, receiver, tmp_path):
-        from reportlab.pdfgen import canvas
+        pdf_path = _pdf(tmp_path / "bon.pdf", "Commande 1500 sacs poignees plates")
 
-        pdf_path = tmp_path / "bon.pdf"
-        pdf = canvas.Canvas(str(pdf_path))
-        pdf.drawString(100, 750, "Commande 1500 sacs poignees plates")
-        pdf.save()
-
-        with patch.object(receiver, "download_media", return_value=str(pdf_path)):
-            result = receiver.process_incoming_message({
-                "From": "whatsapp:+212600000000", "NumMedia": "1",
-                "MediaUrl0": TWILIO_MEDIA_URL, "MediaContentType0": "application/pdf",
-            })
+        with patch.object(receiver, "download_media", return_value=str(pdf_path)) as download:
+            result = receiver.process_incoming_message(_media_message("application/pdf"))
 
         assert result["type"] == "document"
+        assert result["media_type"] == "application/pdf"
+        assert result["message_sid"] == "SM0001"
         assert "1500 sacs" in result["extracted_text"]
+        assert result["media_error"] is None
+        assert download.call_args.args[1].endswith(".pdf")
 
-    def test_audio_without_openai_key(self, receiver):
-        result = receiver.process_incoming_message({
-            "From": "whatsapp:+212600000000", "NumMedia": "1",
-            "MediaUrl0": TWILIO_MEDIA_URL, "MediaContentType0": "audio/ogg",
-        })
+    def test_audio_without_openai_key_is_not_downloaded(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            result = receiver.process_incoming_message(_media_message("audio/ogg"))
         assert result["type"] == "audio"
         assert result["transcription"] is None
+        assert "OPENAI_API_KEY" in result["media_error"]
+        get.assert_not_called()
+
+    def test_unsupported_media_is_not_downloaded(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            result = receiver.process_incoming_message(_media_message("video/mp4"))
+        assert result["type"] == "file"
+        assert result["media_type"] == "video/mp4"
+        assert result["media_error"]
+        get.assert_not_called()
+
+    def test_foreign_media_host_is_never_requested(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            result = receiver.process_incoming_message(
+                _media_message("application/pdf", url="https://evil.example.com/bon.pdf")
+            )
+        assert result["type"] == "document"
+        assert result["extracted_text"] is None
+        assert result["media_error"]
+        get.assert_not_called()
+
+    def test_detected_content_wins_over_declared_type(self, tmp_path):
+        llm = FakeLLMClient(image_to_text=["texte"])
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS), llm=llm)
+        pdf_path = _pdf(tmp_path / "image.jpg", "Commande 700 sachets")
+        with patch.object(receiver, "download_media", return_value=str(pdf_path)):
+            result = receiver.process_incoming_message(_media_message("image/jpeg"))
+        assert result["type"] == "document"
+        assert "700 sachets" in result["extracted_text"]
+        assert llm.calls_to("image_to_text") == []
 
 
 class TestMediaDownload:
@@ -554,59 +621,112 @@ class TestMediaDownload:
         assert get.call_args.kwargs["auth"] == (receiver.account_sid, receiver.auth_token)
         assert get.call_args.kwargs["timeout"] > 0
 
+    def test_default_file_name(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get", return_value=Mock(status_code=200, content=b"x")):
+            path = receiver.download_media(TWILIO_MEDIA_URL)
+        assert path.endswith(".bin")
+
     def test_oversized_media_is_refused(self, tmp_path):
         small = WhatsAppReceiver(Settings.for_tests(tmp_path, max_media_bytes=4))
         with patch("tecpap.channels.whatsapp.requests.get", return_value=Mock(status_code=200, content=b"12345")):
             assert small.download_media(TWILIO_MEDIA_URL, "gros.bin") is None
 
+    @pytest.mark.parametrize("media_type, expected", [
+        ("image/jpeg", "image"),
+        ("audio/ogg; codecs=opus", "audio"),
+        ("application/pdf", "document"),
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "document"),
+        ("text/plain", "document"),
+        ("video/mp4", "file"),
+        ("", "file"),
+    ])
+    def test_declared_message_type(self, media_type, expected):
+        assert declared_message_type(media_type) == expected
+
 
 class TestTranscription:
-    """Transcription des notes vocales (client OpenAI simulé)."""
+    """Transcription des notes vocales (modèle simulé)."""
 
-    def _receiver(self, tmp_path, **overrides):
-        openai_client = MagicMock()
-        openai_client.audio.transcriptions.create.return_value = "bghit 3000 sachet"
-        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **overrides), openai_client=openai_client)
+    def _receiver(self, tmp_path, *transcriptions, **overrides):
+        llm = FakeLLMClient(transcribe=transcriptions)
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS, **overrides), llm=llm)
         audio = tmp_path / "audio.ogg"
-        audio.write_bytes(b"0" * 500)
-        return receiver, openai_client, str(audio)
+        audio.write_bytes(b"OggS" + b"0" * 500)
+        return receiver, llm, str(audio)
 
     def test_automatic_language_detection_by_default(self, tmp_path):
-        receiver, openai_client, audio = self._receiver(tmp_path)
-        with patch.object(receiver, "download_media", return_value=audio):
-            assert receiver.transcribe_audio(TWILIO_MEDIA_URL) == "bghit 3000 sachet"
-        kwargs = openai_client.audio.transcriptions.create.call_args.kwargs
-        assert kwargs["model"] == "whisper-1"
-        assert "language" not in kwargs
+        receiver, llm, audio = self._receiver(tmp_path, "bghit 3000 sachet")
+        with patch.object(receiver, "download_media", return_value=audio) as download:
+            result = receiver.process_incoming_message(_media_message("audio/ogg; codecs=opus"))
+        assert result["type"] == "audio"
+        assert result["media_type"] == "audio/ogg"
+        assert result["transcription"] == "bghit 3000 sachet"
+        assert result["content"] == "bghit 3000 sachet"
+        call = llm.calls_to("transcribe")[0]
+        assert call["model"] == "whisper-1"
+        assert call["language"] is None
+        assert call["prompt"] == TRANSCRIPTION_HINT
+        assert download.call_args.args[1].endswith(".ogg")
 
-    def test_configured_language_is_sent(self, tmp_path):
-        receiver, openai_client, audio = self._receiver(tmp_path, transcription_language="ar")
+    def test_configured_model_and_language_are_sent(self, tmp_path):
+        receiver, llm, audio = self._receiver(tmp_path, "texte", transcription_language="ar",
+                                              model_transcription="transcription-test")
         with patch.object(receiver, "download_media", return_value=audio):
-            receiver.transcribe_audio(TWILIO_MEDIA_URL)
-        assert openai_client.audio.transcriptions.create.call_args.kwargs["language"] == "ar"
+            receiver.process_incoming_message(_media_message("audio/ogg"))
+        call = llm.calls_to("transcribe")[0]
+        assert call["language"] == "ar"
+        assert call["model"] == "transcription-test"
 
     def test_empty_audio_is_ignored(self, tmp_path):
-        receiver, openai_client, audio = self._receiver(tmp_path)
+        receiver, llm, audio = self._receiver(tmp_path, "texte")
         with open(audio, "wb") as f:
             f.write(b"0")
         with patch.object(receiver, "download_media", return_value=audio):
-            assert receiver.transcribe_audio(TWILIO_MEDIA_URL) is None
-        openai_client.audio.transcriptions.create.assert_not_called()
+            result = receiver.process_incoming_message(_media_message("audio/ogg"))
+        assert result["transcription"] is None
+        assert result["media_error"]
+        assert llm.calls_to("transcribe") == []
+
+    def test_text_is_kept_when_transcription_fails(self, tmp_path):
+        receiver, _llm, audio = self._receiver(tmp_path)
+        with patch.object(receiver, "download_media", return_value=audio):
+            result = receiver.process_incoming_message(_media_message("audio/ogg", Body="voir le vocal"))
+        assert result["type"] == "audio"
+        assert result["transcription"] is None
+        assert result["content"] == "voir le vocal"
 
 
 class TestImageReading:
-    """Lecture du texte des images (client OpenAI simulé)."""
+    """Lecture du texte des images (modèle simulé)."""
 
     def test_image_text_uses_vision_model(self, tmp_path):
-        openai_client = MagicMock()
-        openai_client.chat.completions.create.return_value.choices = [Mock(message=Mock(content=" 2000 sachets "))]
-        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, model_vision="vision-test"), openai_client=openai_client)
+        llm = FakeLLMClient(image_to_text=["2000 sachets"])
+        settings = Settings.for_tests(tmp_path, model_vision="vision-test", **TWILIO_CREDENTIALS)
+        receiver = WhatsAppReceiver(settings, llm=llm)
+        image = tmp_path / "photo.jpg"
+        Image.new("RGB", (10, 10), "white").save(image, "JPEG")
+
+        with patch.object(receiver, "download_media", return_value=str(image)) as download:
+            result = receiver.process_incoming_message(_media_message("image/jpeg"))
+
+        assert result["type"] == "image"
+        assert result["extracted_text"] == "2000 sachets"
+        call = llm.calls_to("image_to_text")[0]
+        assert call["model"] == "vision-test"
+        assert call["mime_type"] == "image/jpeg"
+        assert download.call_args.args[1].endswith(".jpg")
+
+    def test_unreadable_image_is_reported(self, tmp_path):
+        llm = FakeLLMClient(image_to_text=["texte"])
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS), llm=llm)
         image = tmp_path / "photo.jpg"
         image.write_bytes(b"\xff\xd8\xff")
-
         with patch.object(receiver, "download_media", return_value=str(image)):
-            assert receiver.extract_text_from_image(TWILIO_MEDIA_URL) == "2000 sachets"
-        assert openai_client.chat.completions.create.call_args.kwargs["model"] == "vision-test"
+            result = receiver.process_incoming_message(_media_message("image/jpeg"))
+        assert result["type"] == "image"
+        assert result["extracted_text"] is None
+        assert result["media_error"]
+        assert llm.calls_to("image_to_text") == []
 
 
 class TestSendReply:

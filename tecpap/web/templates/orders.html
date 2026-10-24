@@ -6,13 +6,13 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Header -->
+    <!-- En-tête -->
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
             <p class="text-slate-500">Gérez et validez vos bons de commande</p>
         </div>
         <div class="flex items-center gap-3">
-            <!-- Export Buttons -->
+            <!-- Boutons d'export -->
             <div class="relative group">
                 <button class="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition flex items-center gap-2">
                     <i class="fas fa-file-excel"></i>
@@ -54,7 +54,7 @@
         </div>
     </div>
 
-    <!-- Filters -->
+    <!-- Filtres -->
     <div class="card p-4">
         <div class="flex flex-wrap items-center gap-3">
             <span class="text-sm font-medium text-slate-600">Filtrer par statut:</span>
@@ -73,7 +73,7 @@
         </div>
     </div>
 
-    <!-- Orders Table -->
+    <!-- Tableau des commandes -->
     <div class="card overflow-hidden">
         <div class="overflow-x-auto">
             <table class="w-full table-pro">
@@ -189,11 +189,12 @@
 <script>
 function validateOrder(orderId) {
     if(confirm('Voulez-vous valider cette commande ?')) {
+        // Sans « validated_by », le serveur enregistre l'utilisateur connecté comme auteur de la validation.
         fetch(`/api/orders/${orderId}/validate`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({validated_by: 'Commercial'})
-        }).then(() => location.reload());
+            body: JSON.stringify({})
+        }).then(reloadOrShowError);
     }
 }
 
@@ -203,9 +204,17 @@ function rejectOrder(orderId) {
         fetch(`/api/orders/${orderId}/reject`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({reason: reason, rejected_by: 'Commercial'})
-        }).then(() => location.reload());
+            body: JSON.stringify({reason: reason})
+        }).then(reloadOrShowError);
     }
+}
+
+async function reloadOrShowError(response) {
+    if (!response.ok) {
+        alert(await readApiError(response));
+        return;
+    }
+    location.reload();
 }
 </script>
 {% endblock %}

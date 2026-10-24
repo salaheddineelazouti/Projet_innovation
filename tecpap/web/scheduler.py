@@ -17,6 +17,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Any
 
+from tecpap.config import is_reloader_child_process
 from tecpap.db.backup import create_backup, delete_old_backups
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,18 @@ _active_keys: set[tuple[str, str]] = set()
 _active_lock = threading.Lock()
 
 
+class SchedulerConfigError(ValueError):
+    """Réglage du planificateur refusé (valeur non entière ou hors limites).
+
+    Attributes:
+        message: explication en français, destinée à l'utilisateur du tableau de bord.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 def next_backup_time(now: datetime, interval_hours: int) -> datetime:
     """Renvoie la prochaine heure ronde multiple de ``interval_hours`` après ``now``."""
     if interval_hours < 1:
@@ -41,6 +54,20 @@ def next_backup_time(now: datetime, interval_hours: int) -> datetime:
     return start_of_hour.replace(hour=next_hour)
 
 
+def _whole_number(value: Any, message: str) -> int:
+    """Convertit ``value`` (entier, décimal sans partie fractionnaire, chaîne) en entier.
+
+    Raises:
+        SchedulerConfigError: avec le message ``message`` quand la valeur n'est pas un nombre entier.
+    """
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise SchedulerConfigError(message)
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise SchedulerConfigError(message) from None
+
+
 def should_start_in_this_process(debug: bool) -> bool:
     """Vrai si le planificateur doit démarrer dans le processus courant.
 
@@ -48,7 +75,7 @@ def should_start_in_this_process(debug: bool) -> bool:
     marqué par ``WERKZEUG_RUN_MAIN=true`` ; le processus parent ne fait que surveiller les
     fichiers et ne doit pas lancer de sauvegardes.
     """
-    return not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    return not debug or is_reloader_child_process()
 
 
 class BackupScheduler:
@@ -103,16 +130,20 @@ class BackupScheduler:
             _active_keys.discard(self._key)
 
     def configure(self, interval_hours: Any = None, keep_backups: Any = None) -> None:
-        """Change l'intervalle et le nombre de sauvegardes conservées (valeurs entières positives)."""
+        """Change l'intervalle et le nombre de sauvegardes conservées (valeurs entières positives).
+
+        Raises:
+            SchedulerConfigError: valeur non entière ou hors limites (sous-classe de ``ValueError``).
+        """
         if interval_hours is not None:
-            interval = int(interval_hours)
+            interval = _whole_number(interval_hours, "L'intervalle doit être un nombre entier d'heures")
             if not 1 <= interval <= 24:
-                raise ValueError("L'intervalle doit être compris entre 1 et 24 heures")
+                raise SchedulerConfigError("L'intervalle doit être compris entre 1 et 24 heures")
             self.interval_hours = interval
         if keep_backups is not None:
-            keep = int(keep_backups)
+            keep = _whole_number(keep_backups, "Le nombre de sauvegardes conservées doit être un nombre entier")
             if keep < 1:
-                raise ValueError("Le nombre de sauvegardes conservées doit être au moins 1")
+                raise SchedulerConfigError("Le nombre de sauvegardes conservées doit être au moins 1")
             self.keep_backups = keep
 
     def run_backup(self) -> str | None:

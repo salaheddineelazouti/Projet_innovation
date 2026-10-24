@@ -8,7 +8,6 @@ par défaut quand aucune clé d'API n'est configurée.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from collections import defaultdict
@@ -16,9 +15,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from openai import OpenAI
 
 from tecpap.config import Settings, load_settings
+from tecpap.extraction.prompts import PRIORITY_SYSTEM_PROMPT, build_priority_prompt
+from tecpap.llm.client import LLMClient
 
 if TYPE_CHECKING:
     from tecpap.db.database import DatabaseManager
@@ -35,12 +35,7 @@ LOW_CONFIDENCE_THRESHOLD = 60
 HIGH_VALUE_CLIENT = 10000
 MEDIUM_VALUE_CLIENT = 1000
 
-
-def _strip_code_fence(text: str) -> str:
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1].replace("json", "").strip()
-    return text
+PRIORITY_LEVELS = ("high", "medium", "low")
 
 
 class ClientHistory:
@@ -562,28 +557,20 @@ class ReportGenerator:
 class AIPredictor:
     """Prévisions sur le comportement d'un client et classification de la priorité des emails.
 
-    Le client OpenAI n'est créé que si une clé d'API est configurée ; sans clé, la
-    classification renvoie une priorité moyenne par défaut.
+    Sans clé d'API, la classification renvoie une priorité moyenne par défaut.
 
     Args:
         db: base des commandes.
         settings: configuration ; par défaut celle de l'environnement (:func:`load_settings`).
-        client: client OpenAI déjà construit (utile pour les tests).
+        llm: client des modèles de langue ; par défaut construit depuis la configuration.
     """
 
     DEFAULT_PRIORITY = {"priority": "medium", "is_purchase_order": False, "is_urgent": False, "confidence": 50}
 
-    def __init__(self, db: DatabaseManager, settings: Settings | None = None, client: Any = None):
+    def __init__(self, db: DatabaseManager, settings: Settings | None = None, llm: LLMClient | None = None):
         self.db = db
         self.settings = settings or load_settings()
-        self._client = client
-
-    @property
-    def client(self) -> Any:
-        """Client OpenAI, créé à la première utilisation ; ``None`` sans clé d'API."""
-        if self._client is None and self.settings.openai_api_key:
-            self._client = OpenAI(api_key=self.settings.openai_api_key, timeout=self.settings.llm_timeout)
-        return self._client
+        self.llm = llm if llm is not None else LLMClient.from_settings(self.settings)
 
     def predict_client_behavior(self, client_name: str) -> dict[str, Any] | None:
         """Estime la prochaine commande d'un client à partir de son historique (règles fixes)."""
@@ -611,36 +598,30 @@ class AIPredictor:
         return prediction
 
     def classify_email_priority(self, email_subject: str, email_body: str) -> dict[str, Any]:
-        """Demande au modèle léger la priorité d'un email ; valeur par défaut sans clé ou en cas d'erreur."""
-        client = self.client
-        if client is None:
+        """Demande au modèle léger la priorité d'un email ; valeur par défaut sans clé ou en cas d'erreur.
+
+        La réponse est contrôlée : seules les clés de :attr:`DEFAULT_PRIORITY` sont gardées et
+        une priorité inconnue est remplacée par ``"medium"``.
+        """
+        if not self.llm.available:
             return dict(self.DEFAULT_PRIORITY)
 
-        prompt = f"""Analyse cet email et détermine sa priorité.
-
-Sujet: {email_subject}
-Contenu: {email_body[:500]}
-
-Réponds en JSON avec:
-- priority: "high", "medium", ou "low"
-- is_purchase_order: true/false
-- is_urgent: true/false
-- confidence: 0-100
-
-JSON uniquement:"""
-
-        try:
-            response = client.chat.completions.create(
-                model=self.settings.model_light,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=self.settings.llm_temperature,
-                max_tokens=200,
-            )
-            result = json.loads(_strip_code_fence(response.choices[0].message.content or ""))
-            return result if isinstance(result, dict) else dict(self.DEFAULT_PRIORITY)
-        except Exception:
-            logger.warning("Classification de priorité en échec", exc_info=True)
+        result = self.llm.chat_json(
+            model=self.settings.model_light,
+            system=PRIORITY_SYSTEM_PROMPT,
+            user=build_priority_prompt(email_subject or "", email_body or ""),
+            temperature=self.settings.llm_temperature,
+            max_tokens=200,
+        )
+        if result is None:
+            logger.warning("Classification de priorité en échec : priorité moyenne par défaut")
             return dict(self.DEFAULT_PRIORITY)
+
+        classification = dict(self.DEFAULT_PRIORITY)
+        classification.update({key: result[key] for key in self.DEFAULT_PRIORITY if key in result})
+        if classification["priority"] not in PRIORITY_LEVELS:
+            classification["priority"] = self.DEFAULT_PRIORITY["priority"]
+        return classification
 
     def detect_anomalies(self, order_data: dict[str, Any]) -> list[dict[str, str]]:
         """Signale une quantité ou un prix unitaire très éloignés de la moyenne des commandes."""

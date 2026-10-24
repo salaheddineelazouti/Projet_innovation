@@ -126,6 +126,12 @@ class Settings:
     auth_enabled: bool = True
     admin_username: str = "admin"
     admin_password_hash: str | None = field(default=None, repr=False)
+    csrf_enabled: bool = True
+    login_max_attempts: int = 5
+    login_lockout_minutes: int = 15
+    # None : cookie de session « Secure » (envoyé seulement en HTTPS) en production uniquement.
+    session_cookie_secure: bool | None = None
+    trust_proxy_headers: bool = False
 
     backup_scheduler_enabled: bool = True
     backup_interval_hours: int = 6
@@ -145,10 +151,12 @@ class Settings:
                     "par exemple avec python -c \"import secrets; print(secrets.token_hex(32))\""
                 )
             object.__setattr__(self, "secret_key", _PROCESS_SECRET_KEY)
+        if self.session_cookie_secure is None:
+            object.__setattr__(self, "session_cookie_secure", self.env == "production")
         if not 1 <= self.port <= 65535:
             raise ConfigurationError(f"FLASK_PORT : port {self.port} hors de l'intervalle 1-65535")
         for name in ("backup_interval_hours", "backup_keep", "rag_top_k", "whatsapp_rate_limit_per_minute",
-                     "max_media_bytes", "smtp_port"):
+                     "max_media_bytes", "smtp_port", "login_max_attempts", "login_lockout_minutes"):
             if getattr(self, name) < 1:
                 raise ConfigurationError(f"{name} : valeur strictement positive attendue")
         if self.llm_timeout <= 0:
@@ -169,9 +177,9 @@ class Settings:
         """Configuration isolée pour les tests automatisés.
 
         Tous les chemins pointent dans ``base_dir`` (en général le ``tmp_path`` de pytest),
-        aucune clé d'API n'est définie, l'authentification, la vérification de signature
-        Twilio, le planificateur de sauvegardes et la réponse WhatsApp asynchrone sont
-        désactivés. L'environnement du poste n'est pas lu.
+        aucune clé d'API n'est définie, l'authentification, la protection CSRF, la
+        vérification de signature Twilio, le planificateur de sauvegardes et la réponse
+        WhatsApp asynchrone sont désactivés. L'environnement du poste n'est pas lu.
         """
         base = Path(base_dir)
         values: dict[str, Any] = {
@@ -192,6 +200,8 @@ class Settings:
             "public_base_url": None,
             "auth_enabled": False,
             "admin_password_hash": None,
+            "csrf_enabled": False,
+            "trust_proxy_headers": False,
             "twilio_validate_signature": False,
             "backup_scheduler_enabled": False,
             "whatsapp_async_reply": False,
@@ -242,6 +252,11 @@ _ENV_SPEC: tuple[tuple[str, str, Callable[[str, str], Any]], ...] = (
     ("AUTH_ENABLED", "auth_enabled", parse_bool),
     ("ADMIN_USERNAME", "admin_username", _parse_str),
     ("ADMIN_PASSWORD_HASH", "admin_password_hash", _parse_str),
+    ("CSRF_ENABLED", "csrf_enabled", parse_bool),
+    ("LOGIN_MAX_ATTEMPTS", "login_max_attempts", _parse_int),
+    ("LOGIN_LOCKOUT_MINUTES", "login_lockout_minutes", _parse_int),
+    ("SESSION_COOKIE_SECURE", "session_cookie_secure", parse_bool),
+    ("TRUST_PROXY_HEADERS", "trust_proxy_headers", parse_bool),
     ("BACKUP_SCHEDULER_ENABLED", "backup_scheduler_enabled", parse_bool),
     ("BACKUP_INTERVAL_HOURS", "backup_interval_hours", _parse_int),
     ("BACKUP_KEEP", "backup_keep", _parse_int),
@@ -252,6 +267,21 @@ ENV_VARIABLES: tuple[str, ...] = tuple(var for var, _, _ in _ENV_SPEC)
 """Noms de toutes les variables d'environnement lues par :func:`load_settings`."""
 
 _FIELD_NAMES = frozenset(f.name for f in fields(Settings))
+
+
+def is_reloader_child_process(env: Mapping[str, str] | None = None) -> bool:
+    """Vrai dans le processus enfant lancé par le rechargeur de Werkzeug.
+
+    En mode débogage, le serveur de développement de Flask relance l'application dans un
+    processus enfant marqué par la variable ``WERKZEUG_RUN_MAIN=true``. Cette variable est écrite
+    par Werkzeug, pas par l'utilisateur : elle décrit le processus courant et ne fait donc pas
+    partie de :class:`Settings`.
+
+    Args:
+        env: variables à consulter ; par défaut ``os.environ``.
+    """
+    source = os.environ if env is None else env
+    return source.get("WERKZEUG_RUN_MAIN") == "true"
 
 
 def load_settings(env: Mapping[str, str] | None = None, **overrides: Any) -> Settings:

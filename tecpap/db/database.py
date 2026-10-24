@@ -8,7 +8,9 @@ direct. Les noms de colonnes sont en français, comme dans l'ERP.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -140,6 +142,135 @@ _ORDER_COLUMNS = (
     "informations_supplementaires", "confiance", "source",
     "email_id", "email_subject", "email_from", "whatsapp_from",
 )
+
+ORDER_STATUSES: tuple[str, ...] = ("en_attente", "validee", "rejetee", "supprimee")
+"""Statuts possibles d'une commande (colonne ``statut``)."""
+
+ORDER_UPDATABLE_FIELDS: tuple[str, ...] = (
+    "numero_commande", "ligne_commande", "site_vente", "code_client",
+    "produit_id", "code_article", "nature_produit",
+    "quantite", "unite", "quantite_livree", "reste_a_livrer", "quantite_facturee",
+    "prix_unitaire", "prix_total", "devise",
+    "date_commande", "date_livraison", "commercial",
+    "type_sac", "format_sac", "type_papier", "grammage", "laize", "impression_client",
+    "informations_supplementaires", "motif_rejet",
+)
+"""Colonnes de ``commandes`` modifiables par :meth:`DatabaseManager.update_order`.
+
+Ce sont les données métier et SAGE X3 qu'un commercial peut corriger. L'identifiant, le client,
+le statut, la confiance de l'extraction, la source, les traces de réception (email, WhatsApp) et
+les dates de création ou de validation n'en font pas partie : elles ne changent que par les
+méthodes dédiées (:meth:`DatabaseManager.update_order_status`, par exemple).
+"""
+
+_UPDATABLE_FIELD_SET = frozenset(ORDER_UPDATABLE_FIELDS)
+# Colonnes numériques modifiables : INTEGER (valeur entière) et REAL (valeur décimale).
+_INTEGER_FIELDS = frozenset({"ligne_commande", "produit_id", "grammage", "laize"})
+_REAL_FIELDS = frozenset({
+    "quantite", "quantite_livree", "reste_a_livrer", "quantite_facturee", "prix_unitaire", "prix_total",
+})
+# Plus grand entier qu'une colonne INTEGER de SQLite peut stocker (entier signé sur 64 bits).
+_SQLITE_MAX_INTEGER = 2**63 - 1
+
+
+class OrderUpdateError(ValueError):
+    """Modification de commande refusée : champ non modifiable ou valeur invalide.
+
+    Attributes:
+        message: explication en français, destinée à l'utilisateur du tableau de bord.
+        fields: noms des champs refusés, triés par ordre alphabétique.
+    """
+
+    def __init__(self, message: str, fields: Iterable[str]):
+        super().__init__(message)
+        self.message = message
+        self.fields: tuple[str, ...] = tuple(fields)
+
+
+def _to_number(value: Any, *, integer: bool) -> int | float | None:
+    """Convertit une valeur numérique ; une chaîne (champ de formulaire HTML) est acceptée.
+
+    Raises:
+        TypeError, ValueError: la valeur n'est pas un nombre fini (ou pas un entier si ``integer``).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError("booléen refusé")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        number: int | float = float(text)
+    elif isinstance(value, (int, float)):
+        number = value
+    else:
+        raise TypeError(f"type {type(value).__name__} refusé")
+    if not math.isfinite(number):
+        raise ValueError("nombre infini ou indéfini")
+    if not integer:
+        return float(number)
+    if isinstance(number, float) and not number.is_integer():
+        raise ValueError("nombre entier attendu")
+    if abs(int(number)) > _SQLITE_MAX_INTEGER:
+        raise ValueError("entier trop grand")
+    return int(number)
+
+
+def _to_text(value: Any) -> str | None:
+    """Accepte une chaîne, un nombre (converti en texte) ou ``None``."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    raise TypeError(f"type {type(value).__name__} refusé")
+
+
+def _expected_type(column: str) -> str:
+    if column in _INTEGER_FIELDS:
+        return "nombre entier attendu"
+    if column in _REAL_FIELDS:
+        return "nombre attendu"
+    return "texte attendu"
+
+
+def clean_order_updates(updates: Mapping[str, Any]) -> dict[str, Any]:
+    """Vérifie et convertit les modifications d'une commande avant leur écriture.
+
+    - Seules les colonnes de :data:`ORDER_UPDATABLE_FIELDS` sont acceptées.
+    - Une colonne numérique reçoit un nombre, une chaîne qui représente un nombre (valeur d'un
+      champ de formulaire HTML) ou ``None`` ; une chaîne vide devient ``None``. Les colonnes
+      INTEGER (``grammage``, ``laize``…) n'acceptent que des valeurs entières.
+    - Une colonne texte reçoit une chaîne, un nombre (converti en texte) ou ``None``.
+
+    Returns:
+        Les modifications converties, dans l'ordre de :data:`ORDER_UPDATABLE_FIELDS`.
+
+    Raises:
+        OrderUpdateError: champ non modifiable ou valeur invalide ; ``fields`` liste les champs refusés.
+    """
+    unknown = sorted(str(key) for key in updates if key not in _UPDATABLE_FIELD_SET)
+    if unknown:
+        raise OrderUpdateError("Champs non modifiables : " + ", ".join(unknown), unknown)
+
+    cleaned: dict[str, Any] = {}
+    invalid: list[str] = []
+    for column in ORDER_UPDATABLE_FIELDS:
+        if column not in updates:
+            continue
+        value = updates[column]
+        try:
+            if column in _INTEGER_FIELDS or column in _REAL_FIELDS:
+                cleaned[column] = _to_number(value, integer=column in _INTEGER_FIELDS)
+            else:
+                cleaned[column] = _to_text(value)
+        except (TypeError, ValueError):
+            invalid.append(column)
+    if invalid:
+        invalid.sort()
+        details = ", ".join(f"{column} ({_expected_type(column)})" for column in invalid)
+        raise OrderUpdateError(f"Valeurs invalides : {details}", invalid)
+    return cleaned
 
 
 def is_generic_client_name(name: str | None) -> bool:
@@ -470,7 +601,15 @@ class DatabaseManager:
         return self.get_all_orders(status="en_attente")
 
     def update_order_status(self, order_id: int, status: str, validated_by: str | None = None) -> None:
-        """Change le statut d'une commande ; une validation enregistre aussi la date et l'auteur."""
+        """Change le statut d'une commande ; une validation enregistre aussi la date et l'auteur.
+
+        Raises:
+            ValueError: ``status`` ne fait pas partie de :data:`ORDER_STATUSES`.
+        """
+        if status not in ORDER_STATUSES:
+            raise ValueError(
+                f"Statut de commande inconnu : {status!r} (statuts possibles : {', '.join(ORDER_STATUSES)})"
+            )
         cursor = self.connection.cursor()
         if status == "validee":
             cursor.execute(
@@ -483,17 +622,30 @@ class DatabaseManager:
         self._log_action("UPDATE", "commandes", order_id, f"Status changed to: {status}")
         logger.info("Statut de la commande %s : %s", order_id, status)
 
-    def update_order(self, order_id: int, updates: dict[str, Any]) -> None:
-        """Met à jour les champs ``updates`` d'une commande."""
+    def update_order(self, order_id: int, updates: Mapping[str, Any]) -> None:
+        """Met à jour des champs d'une commande.
+
+        Seules les colonnes de :data:`ORDER_UPDATABLE_FIELDS` sont modifiables ; les valeurs sont
+        vérifiées et converties par :func:`clean_order_updates`. Sans modification, rien n'est écrit.
+
+        Raises:
+            OrderUpdateError: (sous-classe de ``ValueError``) champ non modifiable ou valeur invalide.
+        """
+        cleaned = clean_order_updates(updates)
+        if not cleaned:
+            return
+        columns = [column for column in ORDER_UPDATABLE_FIELDS if column in cleaned]
+        # Les noms de colonnes viennent de la constante ORDER_UPDATABLE_FIELDS, jamais de la requête ;
+        # les valeurs passent par des paramètres « ? ».
+        set_clause = ", ".join(f"{column} = ?" for column in columns)
+        values = [*(cleaned[column] for column in columns), order_id]
         cursor = self.connection.cursor()
-        set_clause = ", ".join(f"{column} = ?" for column in updates)
-        values = [*updates.values(), order_id]
         cursor.execute(
-            f"UPDATE commandes SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            f"UPDATE commandes SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",  # nosec B608
             values,
         )
         self.connection.commit()
-        self._log_action("UPDATE", "commandes", order_id, f"Updated fields: {list(updates.keys())}")
+        self._log_action("UPDATE", "commandes", order_id, f"Updated fields: {columns}")
 
     def delete_order(self, order_id: int) -> None:
         """Suppression logique : la commande passe au statut « supprimee »."""

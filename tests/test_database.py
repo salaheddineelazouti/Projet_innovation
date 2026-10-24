@@ -7,7 +7,15 @@ import os
 import pytest
 
 from tecpap.catalog import PRODUCTS
-from tecpap.db.database import PRODUCT_CATALOG, DatabaseManager, is_generic_client_name
+from tecpap.db.database import (
+    ORDER_STATUSES,
+    ORDER_UPDATABLE_FIELDS,
+    PRODUCT_CATALOG,
+    DatabaseManager,
+    OrderUpdateError,
+    clean_order_updates,
+    is_generic_client_name,
+)
 
 
 @pytest.fixture
@@ -442,6 +450,128 @@ class TestSchemaMigration:
         db = DatabaseManager(str(tmp_path / "data" / "orders.db"))
         assert db.connect() is True
         db.disconnect()
+
+
+class TestUpdateOrderWhitelist:
+    """update_order n'écrit que les colonnes de ORDER_UPDATABLE_FIELDS, avec des valeurs vérifiées."""
+
+    @pytest.fixture
+    def order_id(self, temp_db, sample_order_data):
+        return temp_db.create_order(sample_order_data)
+
+    def test_every_editable_field_is_a_column(self, temp_db):
+        columns = {row[1] for row in temp_db.connection.execute("PRAGMA table_info(commandes)")}
+        assert set(ORDER_UPDATABLE_FIELDS) <= columns
+
+    @pytest.mark.parametrize("field", ["id", "statut", "client_id", "confiance", "source", "email_id", "created_at",
+                                       "validated_at", "validated_by", "updated_at", "colonne_inconnue"])
+    def test_non_editable_field_raises(self, temp_db, order_id, field):
+        before = temp_db.get_order(order_id)
+        with pytest.raises(ValueError, match=field) as excinfo:
+            temp_db.update_order(order_id, {field: "x"})
+        assert isinstance(excinfo.value, OrderUpdateError)
+        assert excinfo.value.fields == (field,)
+        assert temp_db.get_order(order_id) == before
+
+    @pytest.mark.parametrize("key", [
+        "statut = 'validee', quantite", "quantite = 0 WHERE 1=1; --", "quantite; DROP TABLE commandes",
+        "quantite=quantite", " quantite", "QUANTITE",
+    ])
+    def test_sql_looking_keys_rejected(self, temp_db, order_id, key):
+        with pytest.raises(OrderUpdateError) as excinfo:
+            temp_db.update_order(order_id, {key: 1})
+        assert excinfo.value.fields == (key,)
+        order = temp_db.get_order(order_id)
+        assert (order["statut"], order["quantite"]) == ("en_attente", 100)
+        assert len(temp_db.get_all_orders()) == 1
+
+    def test_all_unknown_fields_are_listed(self, temp_db, order_id):
+        with pytest.raises(OrderUpdateError) as excinfo:
+            temp_db.update_order(order_id, {"zeta": 1, "statut": "validee", "quantite": 3})
+        assert excinfo.value.fields == ("statut", "zeta")
+        assert "statut, zeta" in str(excinfo.value)
+        assert temp_db.get_order(order_id)["quantite"] == 100
+
+    def test_valid_update(self, temp_db, order_id):
+        temp_db.update_order(order_id, {"quantite": 250, "commercial": "NORD", "motif_rejet": None})
+        order = temp_db.get_order(order_id)
+        assert (order["quantite"], order["commercial"], order["motif_rejet"]) == (250, "NORD", None)
+        assert order["updated_at"] is not None
+
+    def test_empty_update_does_nothing(self, temp_db, order_id):
+        before = temp_db.get_order(order_id)
+        temp_db.update_order(order_id, {})
+        assert temp_db.get_order(order_id) == before
+
+    @pytest.mark.parametrize("value, expected", [
+        (12, 12.0), (12.5, 12.5), ("12", 12.0), (" 1.5 ", 1.5), ("1e3", 1000.0), ("", None), (None, None),
+    ])
+    def test_real_columns(self, value, expected):
+        assert clean_order_updates({"quantite": value}) == {"quantite": expected}
+
+    @pytest.mark.parametrize("value, expected", [(80, 80), (80.0, 80), ("80", 80), ("80.0", 80), ("", None)])
+    def test_integer_columns(self, value, expected):
+        cleaned = clean_order_updates({"grammage": value})
+        assert cleaned == {"grammage": expected}
+        assert expected is None or isinstance(cleaned["grammage"], int)
+
+    @pytest.mark.parametrize("field, value", [
+        ("quantite", "beaucoup"), ("quantite", True), ("quantite", [1]), ("quantite", {"valeur": 1}),
+        ("quantite", "nan"), ("quantite", float("inf")), ("prix_total", "1,5"), ("grammage", 80.5),
+        ("grammage", "80.5"), ("laize", 2**70), ("produit_id", False),
+    ])
+    def test_invalid_numbers(self, field, value):
+        with pytest.raises(OrderUpdateError, match=field) as excinfo:
+            clean_order_updates({field: value})
+        assert excinfo.value.fields == (field,)
+
+    @pytest.mark.parametrize("value, expected", [("KB80L28", "KB80L28"), ("", ""), (None, None), (123, "123")])
+    def test_text_columns(self, value, expected):
+        assert clean_order_updates({"code_article": value}) == {"code_article": expected}
+
+    @pytest.mark.parametrize("value", [True, ["a"], {"a": 1}, b"octets"])
+    def test_invalid_text(self, value):
+        with pytest.raises(OrderUpdateError, match="texte attendu"):
+            clean_order_updates({"commercial": value})
+
+    def test_invalid_values_are_listed_together(self):
+        with pytest.raises(OrderUpdateError) as excinfo:
+            clean_order_updates({"quantite": "x", "grammage": "y", "commercial": "ok"})
+        assert excinfo.value.fields == ("grammage", "quantite")
+        assert "grammage (nombre entier attendu)" in str(excinfo.value)
+        assert "quantite (nombre attendu)" in str(excinfo.value)
+
+    def test_converted_values_are_written(self, temp_db, order_id):
+        temp_db.update_order(order_id, {"quantite": "300", "grammage": "90", "prix_unitaire": ""})
+        order = temp_db.get_order(order_id)
+        assert (order["quantite"], order["grammage"], order["prix_unitaire"]) == (300, 90, None)
+
+
+class TestUpdateOrderStatus:
+    """Liste fermée des statuts."""
+
+    @pytest.mark.parametrize("status", ORDER_STATUSES)
+    def test_known_statuses(self, temp_db, sample_order_data, status):
+        order_id = temp_db.create_order(sample_order_data)
+        temp_db.update_order_status(order_id, status)
+        assert temp_db.get_order(order_id)["statut"] == status
+
+    def test_expected_statuses(self):
+        assert ORDER_STATUSES == ("en_attente", "validee", "rejetee", "supprimee")
+
+    @pytest.mark.parametrize("status", ["validée", "VALIDEE", "", "livree", "validee'; DROP TABLE commandes; --", None])
+    def test_unknown_status_raises(self, temp_db, sample_order_data, status):
+        order_id = temp_db.create_order(sample_order_data)
+        with pytest.raises(ValueError, match="Statut de commande inconnu"):
+            temp_db.update_order_status(order_id, status)
+        assert temp_db.get_order(order_id)["statut"] == "en_attente"
+
+    def test_validation_records_author(self, temp_db, sample_order_data):
+        order_id = temp_db.create_order(sample_order_data)
+        temp_db.update_order_status(order_id, "validee", "Équipe")
+        order = temp_db.get_order(order_id)
+        assert order["validated_by"] == "Équipe"
+        assert order["validated_at"] is not None
 
 
 class TestCatalogSeeding:

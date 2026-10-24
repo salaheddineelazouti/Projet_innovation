@@ -4,6 +4,51 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}TECPAP - Gestion des Commandes{% endblock %}</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script>
+        // Protection CSRF (falsification de requête intersite) : chaque appel fetch qui modifie des
+        // données (POST, PUT, PATCH, DELETE) vers ce serveur porte le jeton de la session dans
+        // l'en-tête X-CSRF-Token. Une réponse 401 (session expirée) renvoie vers la page de connexion.
+        (function () {
+            const tokenMeta = document.querySelector('meta[name="csrf-token"]');
+            const csrfToken = tokenMeta ? tokenMeta.getAttribute('content') : '';
+            const loginUrl = {{ url_for('auth.login')|tojson }};
+            const unsafeMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
+            const nativeFetch = window.fetch.bind(window);
+            window.fetch = function (resource, options) {
+                const request = resource instanceof Request ? resource : null;
+                const init = Object.assign({}, options);
+                const method = String(init.method || (request ? request.method : 'GET')).toUpperCase();
+                const target = new URL(request ? request.url : String(resource), window.location.href);
+                const sameOrigin = target.origin === window.location.origin;
+                if (csrfToken && sameOrigin && unsafeMethods.includes(method)) {
+                    const headers = new Headers(init.headers || (request ? request.headers : undefined));
+                    headers.set('X-CSRF-Token', csrfToken);
+                    init.headers = headers;
+                }
+                return nativeFetch(resource, init).then(function (response) {
+                    if (response.status === 401 && sameOrigin) {
+                        const here = window.location.pathname + window.location.search;
+                        window.location.href = loginUrl + '?next=' + encodeURIComponent(here);
+                    }
+                    return response;
+                });
+            };
+        })();
+
+        // Message d'erreur d'une réponse de l'API : champ « error » ou « message » du JSON, sinon le code HTTP.
+        async function readApiError(response) {
+            try {
+                const data = await response.clone().json();
+                if (data && (data.error || data.message)) {
+                    return data.error || data.message;
+                }
+            } catch (error) {
+                // Réponse sans corps JSON.
+            }
+            return 'Erreur ' + response.status;
+        }
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -59,7 +104,7 @@
     </style>
 </head>
 <body class="bg-slate-50">
-    <!-- Sidebar -->
+    <!-- Barre latérale -->
     <aside id="sidebar" class="sidebar fixed left-0 top-0 h-full bg-slate-900 z-50 flex flex-col">
         <div class="p-5 border-b border-slate-700/50">
             <a href="/" class="flex items-center justify-center">
@@ -93,12 +138,13 @@
         
         <div class="p-4 border-t border-slate-700/50">
             <div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-slate-800 cursor-pointer transition">
+                {% set display_name = current_user or 'Administrateur' %}
                 <div class="w-9 h-9 bg-gradient-to-br from-brand-400 to-brand-600 rounded-full flex items-center justify-center flex-shrink-0">
-                    <span class="text-white text-sm font-semibold">AD</span>
+                    <span class="text-white text-sm font-semibold">{{ display_name[:2]|upper }}</span>
                 </div>
                 <div class="user-info flex-1 min-w-0">
-                    <p class="text-white text-sm font-medium truncate">Administrateur</p>
-                    <p class="text-slate-500 text-xs truncate">Commercial</p>
+                    <p class="text-white text-sm font-medium truncate">{{ display_name }}</p>
+                    <p class="text-slate-500 text-xs truncate">{{ 'Connecté' if current_user else 'Commercial' }}</p>
                 </div>
             </div>
         </div>
@@ -108,7 +154,7 @@
         </button>
     </aside>
 
-    <!-- Main Content -->
+    <!-- Contenu principal -->
     <div class="main-content">
         <header class="bg-white border-b border-slate-200 sticky top-0 z-40">
             <div class="flex items-center justify-between px-6 py-4">
@@ -122,7 +168,7 @@
                         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
                     </div>
                     
-                    <!-- Notification Bell -->
+                    <!-- Cloche des notifications -->
                     <div class="relative" id="notificationBell">
                         <button onclick="toggleNotifications()" class="relative p-2.5 rounded-lg hover:bg-slate-100 transition group">
                             <i class="fas fa-bell text-slate-500 text-lg group-hover:text-brand-600 transition"></i>
@@ -157,6 +203,19 @@
                             <a href="/export/pdf" class="flex items-center px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"><i class="fas fa-file-pdf text-red-600 w-8"></i>Exporter PDF</a>
                         </div>
                     </div>
+
+                    {% if current_user %}
+                    <div class="flex items-center gap-3 pl-3 border-l border-slate-200">
+                        <span class="hidden md:flex items-center gap-2 text-sm text-slate-600" title="Utilisateur connecté">
+                            <i class="fas fa-user-circle text-slate-400 text-lg"></i>
+                            <span id="currentUser" class="font-medium text-slate-700">{{ current_user }}</span>
+                        </span>
+                        <form method="post" action="{{ url_for('auth.logout') }}" id="logoutForm">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn-secondary" title="Se déconnecter"><i class="fas fa-sign-out-alt"></i><span class="hidden md:inline">Déconnexion</span></button>
+                        </form>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </header>
@@ -174,10 +233,10 @@
         </footer>
     </div>
 
-    <!-- Toast Container -->
+    <!-- Messages temporaires -->
     <div id="toastContainer" class="fixed top-4 right-4 z-[100] space-y-3"></div>
     
-    <!-- Notification Sound -->
+    <!-- Son des notifications -->
     <audio id="notifSound" preload="auto">
         <source src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYZCqVqoAAAAAAAAAAAAAAAAAAAA//tQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//tQZB4P8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV" type="audio/mp3">
     </audio>
@@ -198,7 +257,7 @@
             const wasHidden = dropdown.classList.contains('hidden');
             dropdown.classList.toggle('hidden');
             
-            // Si on ouvre le dropdown, marquer toutes les notifications comme lues
+            // À l'ouverture de la liste déroulante, toutes les notifications sont marquées comme lues.
             if (wasHidden) {
                 markAllAsRead();
             }
@@ -210,11 +269,11 @@
             localStorage.setItem('orderflow_notifications', JSON.stringify(notifications));
             // Mettre à jour le badge (le faire disparaître)
             updateNotificationBadge();
-            // Re-render les notifications (sans le fond bleu)
+            // Réaffichage de la liste, sans le fond bleu des notifications non lues
             renderNotifications();
         }
         
-        // Close dropdown when clicking outside
+        // Un clic en dehors de la cloche ferme la liste déroulante.
         document.addEventListener('click', function(e) {
             const bell = document.getElementById('notificationBell');
             if (bell && !bell.contains(e.target)) {
@@ -235,6 +294,15 @@
             }
         }
         
+        // Échappement des caractères spéciaux du HTML. Le nom du client et la désignation du produit
+        // viennent de messages reçus de l'extérieur : insérés tels quels dans innerHTML, ils pourraient
+        // contenir des balises ou des scripts (injection de code intersite, XSS).
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[char]);
+        }
+
         function renderNotifications() {
             const list = document.getElementById('notificationList');
             if (notifications.length === 0) {
@@ -246,14 +314,14 @@
             }
             
             list.innerHTML = notifications.slice(0, 10).map(n => `
-                <a href="/orders/${n.orderId}" class="block p-4 hover:bg-slate-50 border-b border-slate-100 transition ${n.read ? '' : 'bg-blue-50'}">
+                <a href="/orders/${encodeURIComponent(n.orderId)}" class="block p-4 hover:bg-slate-50 border-b border-slate-100 transition ${n.read ? '' : 'bg-blue-50'}">
                     <div class="flex items-start gap-3">
                         <div class="w-10 h-10 ${n.source === 'whatsapp' ? 'bg-green-100' : 'bg-blue-100'} rounded-full flex items-center justify-center flex-shrink-0">
                             <i class="${n.source === 'whatsapp' ? 'fab fa-whatsapp text-green-600' : 'fas fa-envelope text-blue-600'}"></i>
                         </div>
                         <div class="flex-1 min-w-0">
-                            <p class="font-medium text-slate-800 text-sm">${n.title}</p>
-                            <p class="text-xs text-slate-500 mt-0.5">${n.message}</p>
+                            <p class="font-medium text-slate-800 text-sm">${escapeHtml(n.title)}</p>
+                            <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(n.message)}</p>
                             <p class="text-xs text-slate-400 mt-1">${formatTimeAgo(n.timestamp)}</p>
                         </div>
                         ${!n.read ? '<span class="w-2 h-2 bg-red-500 rounded-full flex-shrink-0 animate-pulse"></span>' : ''}
@@ -265,20 +333,20 @@
         function formatTimeAgo(timestamp) {
             if (!timestamp) return "À l'instant";
             
-            // Handle SQLite datetime format (YYYY-MM-DD HH:MM:SS) which is in UTC
+            // SQLite enregistre les dates en temps universel (UTC) au format AAAA-MM-JJ HH:MM:SS.
             let date;
             if (typeof timestamp === 'string') {
-                // Add 'Z' to indicate UTC if not already present
+                // Le suffixe « Z » indique le temps universel s'il n'est pas déjà présent.
                 let isoTimestamp = timestamp.replace(' ', 'T');
                 if (!isoTimestamp.endsWith('Z') && !isoTimestamp.includes('+')) {
-                    isoTimestamp += 'Z';  // SQLite stores in UTC
+                    isoTimestamp += 'Z';
                 }
                 date = new Date(isoTimestamp);
             } else {
                 date = new Date(timestamp);
             }
             
-            // Check if date is valid
+            // Date illisible : affichage par défaut
             if (isNaN(date.getTime())) {
                 return "À l'instant";
             }
@@ -298,7 +366,8 @@
             return `Il y a ${days}j`;
         }
         
-        function showToast(title, message, source, orderId) {
+        // Nom propre à ce gabarit : les pages qui l'étendent définissent leur propre showToast.
+        function showOrderToast(title, message, source, orderId) {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = 'bg-white rounded-xl shadow-2xl border border-slate-200 p-4 w-80 transform translate-x-full transition-transform duration-300';
@@ -308,27 +377,27 @@
                         <i class="${source === 'whatsapp' ? 'fab fa-whatsapp text-green-600' : 'fas fa-envelope text-blue-600'} text-lg"></i>
                     </div>
                     <div class="flex-1">
-                        <p class="font-semibold text-slate-800">${title}</p>
-                        <p class="text-sm text-slate-500 mt-0.5">${message}</p>
+                        <p class="font-semibold text-slate-800">${escapeHtml(title)}</p>
+                        <p class="text-sm text-slate-500 mt-0.5">${escapeHtml(message)}</p>
                     </div>
                     <button onclick="this.parentElement.parentElement.remove()" class="text-slate-400 hover:text-slate-600">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="mt-3 flex gap-2">
-                    <a href="/orders/${orderId}" class="flex-1 text-center py-2 bg-brand-500 text-white text-sm font-medium rounded-lg hover:bg-brand-600 transition">Voir la commande</a>
+                    <a href="/orders/${encodeURIComponent(orderId)}" class="flex-1 text-center py-2 bg-brand-500 text-white text-sm font-medium rounded-lg hover:bg-brand-600 transition">Voir la commande</a>
                     <button onclick="this.parentElement.parentElement.remove()" class="px-4 py-2 bg-slate-100 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-200 transition">Fermer</button>
                 </div>
             `;
             container.appendChild(toast);
             
-            // Animate in
+            // Apparition par glissement
             setTimeout(() => toast.classList.remove('translate-x-full'), 10);
             
-            // Play sound
+            // Signal sonore
             playNotificationSound();
             
-            // Auto remove after 10s
+            // Disparition automatique après 10 secondes
             setTimeout(() => {
                 toast.classList.add('translate-x-full');
                 setTimeout(() => toast.remove(), 300);
@@ -349,7 +418,7 @@
             localStorage.setItem('orderflow_notifications', JSON.stringify(notifications));
             updateNotificationBadge();
             renderNotifications();
-            showToast(notif.title, notif.message, notif.source, notif.orderId);
+            showOrderToast(notif.title, notif.message, notif.source, notif.orderId);
         }
         
         function clearAllNotifications() {
@@ -359,21 +428,21 @@
             renderNotifications();
         }
         
-        // Poll for new orders using ID-based tracking
+        // Interrogation régulière du serveur : commandes dont l'identifiant dépasse le dernier connu
         function checkNewOrders() {
             fetch('/api/notifications/check?last_id=' + lastOrderId)
                 .then(res => res.json())
                 .then(data => {
-                    // Update last ID
+                    // Dernier identifiant connu
                     if (data.last_id && data.last_id > lastOrderId) {
                         lastOrderId = data.last_id;
                         localStorage.setItem('orderflow_lastOrderId', lastOrderId.toString());
                     }
                     
-                    // Show notifications for new orders
+                    // Une notification par commande reçue depuis la dernière interrogation
                     if (data.new_orders && data.new_orders.length > 0) {
                         data.new_orders.forEach(order => {
-                            // Check if we already have this notification
+                            // Pas de doublon si la commande a déjà sa notification
                             const existingIndex = notifications.findIndex(n => n.orderId === order.id);
                             if (existingIndex === -1) {
                                 addNotification({
@@ -389,16 +458,16 @@
                         });
                     }
                 })
-                .catch(err => console.log('Notification check error:', err));
+                .catch(err => console.log('Échec de la recherche des nouvelles commandes :', err));
         }
         
-        // Initialize
+        // Initialisation
         document.addEventListener('DOMContentLoaded', function() {
             updateNotificationBadge();
             renderNotifications();
-            // Initial check to get current max ID
+            // Première interrogation : identifiant de la dernière commande existante
             checkNewOrders();
-            // Check every 3 seconds
+            // Puis toutes les 3 secondes
             setInterval(checkNewOrders, 3000);
         });
     </script>

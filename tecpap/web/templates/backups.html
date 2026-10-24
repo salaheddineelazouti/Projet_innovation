@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Header -->
+    <!-- En-tête -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <h1 class="text-2xl font-bold text-gray-900">Sauvegardes</h1>
@@ -26,9 +26,9 @@
         </div>
     </div>
 
-    <!-- Status Cards -->
+    <!-- Cartes d'état -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <!-- Database Stats -->
+        <!-- Statistiques de la base -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div class="flex items-center gap-4">
                 <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -55,7 +55,7 @@
             {% endif %}
         </div>
 
-        <!-- Scheduler Status -->
+        <!-- État du planificateur -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div class="flex items-center gap-4">
                 <div class="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
@@ -82,7 +82,7 @@
             </div>
         </div>
 
-        <!-- Backup Count -->
+        <!-- Nombre de sauvegardes -->
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <div class="flex items-center gap-4">
                 <div class="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center">
@@ -106,7 +106,7 @@
         </div>
     </div>
 
-    <!-- Backups List -->
+    <!-- Liste des sauvegardes -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100">
             <h2 class="font-semibold text-gray-900">Historique des sauvegardes</h2>
@@ -205,7 +205,7 @@
         {% endif %}
     </div>
 
-    <!-- Info Section -->
+    <!-- Informations -->
     <div class="bg-blue-50 border border-blue-200 rounded-xl p-6">
         <div class="flex gap-4">
             <div class="flex-shrink-0">
@@ -225,7 +225,7 @@
     </div>
 </div>
 
-<!-- Toast notification -->
+<!-- Message temporaire -->
 <div id="toast" class="fixed bottom-4 right-4 transform translate-y-full opacity-0 transition-all duration-300 z-50">
     <div class="bg-gray-900 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3">
         <span id="toast-message">Message</span>
@@ -238,13 +238,13 @@ function showToast(message, type = 'success') {
     const toastMessage = document.getElementById('toast-message');
     toastMessage.textContent = message;
     
-    // Set color based on type
+    // Couleur selon le type de message
     toast.querySelector('div').className = `${type === 'error' ? 'bg-red-600' : 'bg-gray-900'} text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3`;
     
-    // Show
+    // Affichage
     toast.classList.remove('translate-y-full', 'opacity-0');
     
-    // Hide after 3s
+    // Masqué après 3 secondes
     setTimeout(() => {
         toast.classList.add('translate-y-full', 'opacity-0');
     }, 3000);
@@ -264,7 +264,7 @@ async function createBackup() {
             showToast('Sauvegarde créée avec succès !');
             setTimeout(() => location.reload(), 1000);
         } else {
-            showToast(data.message || 'Erreur', 'error');
+            showToast(data.message || data.error || 'Erreur', 'error');
         }
     } catch (error) {
         showToast('Erreur de connexion', 'error');
@@ -296,7 +296,7 @@ async function restoreBackup(filename) {
             showToast('Base de données restaurée !');
             setTimeout(() => location.reload(), 1500);
         } else {
-            showToast(data.message || 'Erreur', 'error');
+            showToast(data.message || data.error || 'Erreur', 'error');
         }
     } catch (error) {
         showToast('Erreur de connexion', 'error');
@@ -318,7 +318,7 @@ async function deleteBackup(filename) {
             showToast('Sauvegarde supprimée');
             setTimeout(() => location.reload(), 500);
         } else {
-            showToast(data.message || 'Erreur', 'error');
+            showToast(data.message || data.error || 'Erreur', 'error');
         }
     } catch (error) {
         showToast('Erreur de connexion', 'error');

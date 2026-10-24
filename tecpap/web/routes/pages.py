@@ -110,7 +110,8 @@ def client_detail(client_id: int):
     """, (client_id,))
     orders = [dict(order) for order in cursor.fetchall()]
 
-    prediction = AIPredictor(services.db, settings=services.settings).predict_client_behavior(client["nom"])
+    predictor = AIPredictor(services.db, settings=services.settings, llm=services.llm)
+    prediction = predictor.predict_client_behavior(client["nom"])
     return render_template("client_detail.html", client=client, orders=orders, prediction=prediction)
 
 

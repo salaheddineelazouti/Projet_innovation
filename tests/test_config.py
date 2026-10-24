@@ -60,6 +60,12 @@ class TestDefaults:
         assert (settings.rag_enabled, settings.rag_top_k, settings.rag_min_score) == (True, 4, 0.25)
         assert settings.whatsapp_rate_limit_per_minute == 10
 
+    def test_web_security(self, settings):
+        assert settings.csrf_enabled is True
+        assert settings.trust_proxy_headers is False
+        assert (settings.login_max_attempts, settings.login_lockout_minutes) == (5, 15)
+        assert settings.session_cookie_secure is False
+
     def test_auth_and_backups(self, settings):
         assert settings.auth_enabled is True
         assert settings.admin_username == "admin"
@@ -117,6 +123,21 @@ class TestParsing:
         assert settings.database_path == "data/orders.db"
         assert settings.log_level == "DEBUG"
 
+    def test_web_security_variables(self):
+        settings = load_settings({
+            "CSRF_ENABLED": "non", "TRUST_PROXY_HEADERS": "oui", "LOGIN_MAX_ATTEMPTS": "3",
+            "LOGIN_LOCKOUT_MINUTES": "30", "SESSION_COOKIE_SECURE": "true",
+        })
+        assert settings.csrf_enabled is False
+        assert settings.trust_proxy_headers is True
+        assert (settings.login_max_attempts, settings.login_lockout_minutes) == (3, 30)
+        assert settings.session_cookie_secure is True
+
+    @pytest.mark.parametrize("variable", ["LOGIN_MAX_ATTEMPTS", "LOGIN_LOCKOUT_MINUTES"])
+    def test_login_limits_must_be_positive(self, variable):
+        with pytest.raises(ConfigurationError):
+            load_settings({variable: "0"})
+
     def test_app_env_is_case_insensitive(self):
         assert load_settings({"APP_ENV": "Test"}).is_testing
 
@@ -151,6 +172,14 @@ class TestProduction:
     def test_secret_key_override(self):
         assert load_settings({"APP_ENV": "production"}, secret_key="cle").is_production
 
+    def test_secure_cookie_by_default_in_production(self):
+        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": "une-cle-longue"})
+        assert settings.session_cookie_secure is True
+
+    def test_secure_cookie_can_be_disabled_in_production(self):
+        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": "une-cle-longue", "SESSION_COOKIE_SECURE": "0"})
+        assert settings.session_cookie_secure is False
+
 
 class TestForTests:
     """Configuration des tests automatisés."""
@@ -168,6 +197,9 @@ class TestForTests:
         assert settings.gmail_app_password is None
         assert settings.twilio_auth_token is None
         assert settings.auth_enabled is False
+        assert settings.csrf_enabled is False
+        assert settings.trust_proxy_headers is False
+        assert settings.session_cookie_secure is False
         assert settings.twilio_validate_signature is False
         assert settings.backup_scheduler_enabled is False
         assert settings.whatsapp_async_reply is False

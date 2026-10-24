@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from tecpap import __version__
 from tecpap.config import Settings
@@ -35,6 +36,7 @@ EXPECTED_ROUTES = {
     ("/api/backup/delete/<filename>", "DELETE"), ("/api/backup/export-json", "GET"),
     ("/api/backup/scheduler/status", "GET"), ("/api/backup/scheduler/configure", "POST"),
     ("/export/excel", "GET"), ("/export/excel/sage", "GET"), ("/export/csv", "GET"), ("/export/pdf", "GET"),
+    ("/login", "GET"), ("/login", "POST"), ("/logout", "POST"),
 }
 
 
@@ -58,7 +60,7 @@ class TestFactory:
         assert flask_app.extensions["tecpap"].db.db_file == test_settings.database_path
 
     def test_every_blueprint_registered(self, flask_app):
-        assert set(flask_app.blueprints) == {"pages", "api", "webhooks", "backups", "exports"}
+        assert set(flask_app.blueprints) == {"auth", "pages", "api", "webhooks", "backups", "exports"}
 
     def test_routes_and_methods(self, flask_app):
         routes = {
@@ -78,6 +80,18 @@ class TestFactory:
         finally:
             first.extensions["tecpap"].close()
             second.extensions["tecpap"].close()
+
+    def test_proxy_headers_ignored_by_default(self, flask_app):
+        assert not isinstance(flask_app.wsgi_app, ProxyFix)
+
+    def test_proxy_fix_when_trusted(self, tmp_path):
+        app = create_app(Settings.for_tests(tmp_path, trust_proxy_headers=True))
+        try:
+            assert isinstance(app.wsgi_app, ProxyFix)
+            response = app.test_client().get("/healthz", headers={"X-Forwarded-For": "203.0.113.9"})
+            assert response.status_code == 200
+        finally:
+            app.extensions["tecpap"].close()
 
     def test_scheduler_not_started_in_tests(self, flask_app):
         assert flask_app.extensions["tecpap"].backup_scheduler.running is False
@@ -175,8 +189,21 @@ class TestBackupRoutes:
 
     def test_scheduler_configuration_rejects_zero(self, flask_client):
         response = flask_client.post("/api/backup/scheduler/configure", json={"interval_hours": 0})
-        assert response.status_code == 500
-        assert response.get_json()["success"] is False
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data["success"] is False
+        assert data["error"] == "L'intervalle doit être compris entre 1 et 24 heures"
+
+    @pytest.mark.parametrize("payload, message", [
+        ({"interval_hours": "six"}, "L'intervalle doit être un nombre entier d'heures"),
+        ({"interval_hours": 2.5}, "L'intervalle doit être un nombre entier d'heures"),
+        ({"keep_backups": [3]}, "Le nombre de sauvegardes conservées doit être un nombre entier"),
+        ({"keep_backups": 0}, "Le nombre de sauvegardes conservées doit être au moins 1"),
+    ])
+    def test_scheduler_configuration_messages(self, flask_client, payload, message):
+        response = flask_client.post("/api/backup/scheduler/configure", json=payload)
+        assert response.status_code == 400
+        assert response.get_json()["error"] == message
 
     def test_export_json(self, flask_client):
         response = flask_client.get("/api/backup/export-json")

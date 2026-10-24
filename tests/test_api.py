@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import re
 from pathlib import Path
 
 import pytest
+
+from tecpap.db.database import ORDER_UPDATABLE_FIELDS
+from tecpap.web.errors import GENERIC_ERROR_MESSAGE
+from tecpap.web.routes.backups import resolve_backup_path
+
+# Texte d'une exception simulée : il ne doit jamais apparaître dans une réponse.
+SECRET_ERROR_TEXT = "C:/donnees/orders.db verrouillee par le processus 4242"
 
 
 @pytest.fixture
@@ -178,13 +188,22 @@ class TestExportRoutes:
 class TestValidationAPI:
     """Validation et rejet des commandes."""
 
-    def test_validate_order_endpoint_exists(self, client):
-        response = client.post("/api/orders/9999/validate", json={})
-        assert response.status_code == 200
+    @pytest.mark.parametrize("action, body", [("validate", {}), ("reject", {"reason": "test"})])
+    def test_unknown_order_gives_404(self, client, services, action, body):
+        response = client.post(f"/api/orders/9999/{action}", json=body)
+        assert response.status_code == 404
+        assert response.get_json() == {"success": False, "error": "Commande introuvable"}
+        assert services.db.get_all_orders() == []
 
-    def test_reject_order_endpoint_exists(self, client):
-        response = client.post("/api/orders/9999/reject", json={"reason": "test"})
+    @pytest.mark.parametrize("action, body, message", [
+        ("validate", {}, "Commande validée"),
+        ("reject", {"reason": "test"}, "Commande rejetée"),
+    ])
+    def test_existing_order_gives_200(self, client, services, sample_order_data, action, body, message):
+        order_id = services.db.create_order(sample_order_data)
+        response = client.post(f"/api/orders/{order_id}/{action}", json=body)
         assert response.status_code == 200
+        assert response.get_json()["message"] == message
 
     def test_validate_order_updates_status(self, client, services, sample_order_data):
         order_id = services.db.create_order(sample_order_data)
@@ -257,11 +276,106 @@ class TestArticleCodeAPI:
         assert data["success"] is True
         assert data["stats"]["total_orders"] == 0
 
-    def test_sage_fields_only_accepts_sage_columns(self, client, services, sample_order_data):
+    def test_sage_fields_rejects_other_columns(self, client, services, sample_order_data):
         order_id = services.db.create_order(sample_order_data)
-        data = client.put(f"/api/orders/{order_id}/sage-fields", json={"grammage": 80, "statut": "validee"}).get_json()
-        assert data["updated_fields"] == ["grammage"]
-        assert services.db.get_order(order_id)["statut"] == "en_attente"
+        response = client.put(f"/api/orders/{order_id}/sage-fields", json={"grammage": 80, "statut": "validee"})
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data["rejected_fields"] == ["statut"]
+        assert "statut" in data["error"]
+        order = services.db.get_order(order_id)
+        assert order["statut"] == "en_attente"
+        assert order["grammage"] is None
+
+    def test_sage_fields_update(self, client, services, sample_order_data):
+        order_id = services.db.create_order(sample_order_data)
+        data = client.put(f"/api/orders/{order_id}/sage-fields", json={"grammage": "80", "quantite_livree": 1000}).get_json()
+        assert data["success"] is True
+        assert set(data["updated_fields"]) == {"grammage", "quantite_livree", "reste_a_livrer"}
+        order = services.db.get_order(order_id)
+        assert (order["grammage"], order["reste_a_livrer"]) == (80, 4000)
+
+    def test_sage_fields_invalid_number(self, client, services, sample_order_data):
+        order_id = services.db.create_order(sample_order_data)
+        response = client.put(f"/api/orders/{order_id}/sage-fields", json={"laize": "vingt-huit"})
+        assert response.status_code == 400
+        assert response.get_json()["rejected_fields"] == ["laize"]
+
+    def test_sage_fields_unknown_order(self, client):
+        assert client.put("/api/orders/9999/sage-fields", json={"grammage": 80}).status_code == 404
+
+
+class TestOrderUpdateWhitelist:
+    """Seules les colonnes métier et SAGE X3 d'une commande sont modifiables par l'API."""
+
+    @pytest.fixture
+    def order_id(self, services, sample_order_data):
+        return services.db.create_order(sample_order_data)
+
+    @pytest.mark.parametrize("field", ["statut", "client_id", "id", "created_at", "validated_by", "email_from",
+                                       "confiance", "source"])
+    def test_non_editable_column_rejected(self, client, services, order_id, field):
+        before = services.db.get_order(order_id)
+        response = client.post(f"/api/orders/{order_id}/update", json={field: "x", "quantite": 1})
+        assert response.status_code == 400
+        assert response.get_json()["rejected_fields"] == [field]
+        assert services.db.get_order(order_id) == before
+
+    @pytest.mark.parametrize("key", [
+        "statut = 'validee', quantite", "quantite = 0 --", "quantite; DROP TABLE commandes", "1=1) OR (quantite",
+    ])
+    def test_sql_looking_keys_rejected(self, client, services, order_id, key):
+        response = client.post(f"/api/orders/{order_id}/update", json={key: 1})
+        assert response.status_code == 400
+        assert response.get_json()["rejected_fields"] == [key]
+        order = services.db.get_order(order_id)
+        assert (order["statut"], order["quantite"]) == ("en_attente", 5000)
+        assert services.db.connection.execute("SELECT COUNT(*) FROM commandes").fetchone()[0] == 1
+
+    @pytest.mark.parametrize("payload, field", [
+        ({"quantite": "beaucoup"}, "quantite"), ({"grammage": "80.5"}, "grammage"), ({"laize": True}, "laize"),
+        ({"prix_unitaire": [1]}, "prix_unitaire"), ({"commercial": {"nom": "x"}}, "commercial"),
+        ({"quantite": "nan"}, "quantite"), ({"produit_id": "deux"}, "produit_id"),
+    ])
+    def test_invalid_values_rejected(self, client, services, order_id, payload, field):
+        response = client.post(f"/api/orders/{order_id}/update", json=payload)
+        assert response.status_code == 400
+        assert response.get_json()["rejected_fields"] == [field]
+        assert services.db.get_order(order_id)["quantite"] == 5000
+
+    def test_form_values_are_converted(self, client, services, order_id):
+        """Le formulaire de la fiche commande envoie des chaînes ; une chaîne vide efface la valeur."""
+        response = client.post(f"/api/orders/{order_id}/update", json={
+            "quantite": "6000", "grammage": "80", "laize": "28", "prix_unitaire": "0.45", "prix_total": "",
+            "produit_id": "2", "code_article": "KB80L28", "date_livraison": "2025-02-01",
+        })
+        assert response.status_code == 200
+        order = services.db.get_order(order_id)
+        assert (order["quantite"], order["grammage"], order["laize"]) == (6000, 80, 28)
+        assert order["prix_unitaire"] == 0.45
+        assert order["prix_total"] is None
+        assert order["produit_id"] == 2
+        assert order["reste_a_livrer"] == 6000
+        assert order["code_article"] == "KB80L28"
+
+    def test_unknown_order(self, client):
+        assert client.post("/api/orders/9999/update", json={"quantite": 10}).status_code == 404
+
+    def test_order_detail_form_sends_only_editable_fields(self, client, services, order_id):
+        html = client.get(f"/orders/{order_id}").get_data(as_text=True)
+        form = re.search(r'<form id="editForm".*?</form>', html, flags=re.DOTALL).group(0)
+        names = set(re.findall(r'name="([^"]+)"', form))
+        assert names
+        assert names <= set(ORDER_UPDATABLE_FIELDS)
+
+    def test_order_detail_form_round_trip(self, client, services, order_id):
+        """Les valeurs du formulaire, telles que le navigateur les envoie, sont acceptées."""
+        html = client.get(f"/orders/{order_id}").get_data(as_text=True)
+        form = re.search(r'<form id="editForm".*?</form>', html, flags=re.DOTALL).group(0)
+        values = {name: value for name, value in re.findall(r'<input[^>]*name="([^"]+)" value="([^"]*)"', form)}
+        values.update({name: "" for name in re.findall(r'<select name="([^"]+)"', form)})
+        response = client.post(f"/api/orders/{order_id}/update", json=values)
+        assert response.status_code == 200, response.get_json()
 
 
 class TestProcessEmailsAPI:
@@ -321,3 +435,161 @@ class TestAppImports:
         client_id = services.db.get_order(order_id)["client_id"]
         response = client.get(f"/clients/{client_id}")
         assert response.status_code == 200
+
+
+class TestErrorMessages:
+    """Le texte d'une exception n'est jamais renvoyé : message générique et trace dans le journal."""
+
+    @staticmethod
+    def _fail(*args, **kwargs):
+        raise RuntimeError(SECRET_ERROR_TEXT)
+
+    def _assert_generic(self, response, caplog, status=500):
+        assert response.status_code == status
+        body = response.get_data(as_text=True)
+        assert SECRET_ERROR_TEXT not in body
+        assert "RuntimeError" not in body
+        assert SECRET_ERROR_TEXT in caplog.text
+
+    def test_process_emails(self, client, monkeypatch, caplog):
+        monkeypatch.setattr("tecpap.web.routes.api.OrderProcessor", self._fail)
+        with caplog.at_level(logging.ERROR):
+            response = client.post("/api/process-emails")
+        self._assert_generic(response, caplog)
+        assert response.get_json()["success"] is False
+
+    @pytest.mark.parametrize("url", ["/api/article-code/generate", "/api/article-code/suggest"])
+    def test_article_codes(self, client, monkeypatch, caplog, url):
+        monkeypatch.setattr("tecpap.web.routes.api.generate_article_code", self._fail)
+        monkeypatch.setattr("tecpap.web.routes.api.suggest_article_code_from_description", self._fail)
+        with caplog.at_level(logging.ERROR):
+            response = client.post(url, json={"description": "kraft", "paper_type": "kraft"})
+        self._assert_generic(response, caplog)
+        assert response.get_json()["error"] == GENERIC_ERROR_MESSAGE
+
+    def test_generate_all_codes(self, client, services, monkeypatch, caplog, sample_order_data):
+        services.db.create_order(sample_order_data)
+        monkeypatch.setattr("tecpap.web.routes.api._code_for_order", self._fail)
+        with caplog.at_level(logging.ERROR):
+            response = client.post("/api/orders/generate-all-codes")
+        self._assert_generic(response, caplog)
+
+    def test_update_order(self, client, services, monkeypatch, caplog, sample_order_data):
+        order_id = services.db.create_order(sample_order_data)
+        monkeypatch.setattr(services.db, "update_order", self._fail)
+        with caplog.at_level(logging.ERROR):
+            response = client.post(f"/api/orders/{order_id}/update", json={"quantite": 10})
+        self._assert_generic(response, caplog)
+
+    def test_notifications(self, client, services, monkeypatch, caplog):
+        broken_connection = type("ConnexionEnPanne", (), {"cursor": self._fail})()
+        monkeypatch.setattr(services.db, "connection", broken_connection)
+        with caplog.at_level(logging.ERROR):
+            response = client.get("/api/notifications/check?last_id=3")
+        self._assert_generic(response, caplog, status=200)
+
+    def test_whatsapp_status(self, client, services, monkeypatch, caplog):
+        monkeypatch.setattr(services.whatsapp, "connect", self._fail)
+        with caplog.at_level(logging.ERROR):
+            response = client.get("/api/whatsapp/status")
+        self._assert_generic(response, caplog, status=200)
+        assert response.get_json()["connected"] is False
+
+    def test_backup_list(self, client, monkeypatch, caplog):
+        monkeypatch.setattr("tecpap.web.routes.backups.list_backups", self._fail)
+        with caplog.at_level(logging.ERROR):
+            response = client.get("/api/backup/list")
+        self._assert_generic(response, caplog)
+
+    def test_uncaught_exception_in_page(self, flask_app, client, monkeypatch):
+        # En mode test, Flask transmet les exceptions au client de test au lieu de répondre 500.
+        flask_app.config["PROPAGATE_EXCEPTIONS"] = False
+        monkeypatch.setattr("tecpap.web.routes.pages.render_template", self._fail)
+        response = client.get("/process")
+        assert response.status_code == 500
+        assert SECRET_ERROR_TEXT not in response.get_data(as_text=True)
+        assert "Erreur interne" in response.get_data(as_text=True)
+
+    def test_unknown_api_route_returns_json(self, client):
+        response = client.get("/api/route-inexistante")
+        assert response.status_code == 404
+        assert response.get_json()["success"] is False
+
+    def test_wrong_method_keeps_allow_header(self, client):
+        response = client.get("/api/process-emails")
+        assert response.status_code == 405
+        assert "POST" in response.headers["Allow"]
+
+    def test_no_exception_text_in_route_code(self):
+        """Aucune route ne renvoie ``str(exc)`` hormis les messages de validation."""
+        routes = Path(__file__).resolve().parent.parent / "tecpap" / "web" / "routes"
+        for module in routes.glob("*.py"):
+            for line in module.read_text(encoding="utf-8").splitlines():
+                if "str(exc)" in line:
+                    assert "400" in line, f"{module.name} : {line.strip()}"
+
+
+class TestBackupFilenames:
+    """Noms de fichiers reçus par les routes des sauvegardes."""
+
+    @pytest.fixture
+    def backup_file(self, test_settings):
+        os.makedirs(test_settings.backup_dir, exist_ok=True)
+        path = Path(test_settings.backup_dir) / "backup_20250101_000000.db"
+        path.write_bytes(b"SQLite format 3\x00")
+        return path
+
+    @pytest.mark.parametrize("name", [
+        "..%5Corders.db", "%2E%2E", ".", "back%20up.db", "sauvegarde%C3%A9.db", "backup.db%00", "a%3Bb.db",
+        "..backup.db",
+    ])
+    @pytest.mark.parametrize("method, prefix", [
+        ("get", "/api/backup/download/"), ("post", "/api/backup/restore/"), ("delete", "/api/backup/delete/"),
+    ])
+    def test_invalid_names_rejected(self, client, method, prefix, name):
+        response = getattr(client, method)(prefix + name)
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "Nom de fichier de sauvegarde invalide"
+
+    @pytest.mark.parametrize("method, prefix", [
+        ("get", "/api/backup/download/"), ("post", "/api/backup/restore/"), ("delete", "/api/backup/delete/"),
+    ])
+    def test_missing_backup(self, client, method, prefix):
+        response = getattr(client, method)(prefix + "backup_19990101_000000.db")
+        assert response.status_code == 404
+
+    def test_download_existing_backup(self, client, backup_file):
+        response = client.get(f"/api/backup/download/{backup_file.name}")
+        assert response.status_code == 200
+        assert response.data.startswith(b"SQLite")
+
+    def test_delete_existing_backup(self, client, backup_file):
+        assert client.delete(f"/api/backup/delete/{backup_file.name}").status_code == 200
+        assert not backup_file.exists()
+
+    def test_database_outside_backup_dir_is_unreachable(self, client, test_settings):
+        """La base elle-même (dossier parent) ne peut être ni téléchargée ni supprimée."""
+        db_name = Path(test_settings.database_path).name
+        assert client.get(f"/api/backup/download/..%2F{db_name}").status_code in (400, 404)
+        assert client.delete(f"/api/backup/delete/..%5C{db_name}").status_code == 400
+        assert Path(test_settings.database_path).exists()
+
+    def test_resolve_backup_path(self, tmp_path):
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        resolved = resolve_backup_path("backup_1.db.gz", str(backup_dir))
+        assert Path(resolved) == (backup_dir / "backup_1.db.gz").resolve()
+        for name in ("..", ".", "../orders.db", "..\\orders.db", "a/b.db", "", "nom avec espace.db"):
+            assert resolve_backup_path(name, str(backup_dir)) is None
+
+    def test_symlink_leaving_backup_dir_is_refused(self, tmp_path):
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        outside = tmp_path / "secret.db"
+        outside.write_text("secret", encoding="utf-8")
+        link = backup_dir / "backup_lien.db"
+        try:
+            os.symlink(outside, link)
+        except (OSError, NotImplementedError):
+            pytest.skip("création de lien symbolique impossible sur ce poste")
+        assert resolve_backup_path("backup_lien.db", str(backup_dir)) is None

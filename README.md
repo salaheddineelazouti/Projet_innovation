@@ -79,11 +79,15 @@ Projet_innovation/
 │   ├── channels/
 │   │   ├── email_receiver.py   # Réception des emails (IMAP)
 │   │   ├── email_sender.py     # Emails HTML de réception, validation, rejet
-│   │   └── whatsapp.py         # WhatsApp (Twilio), Whisper, vision, PDF
+│   │   └── whatsapp.py         # WhatsApp (Twilio) : messages reçus, téléchargement des médias, envoi
+│   ├── llm/
+│   │   └── client.py           # Client des modèles OpenAI (seul module qui importe le SDK openai)
 │   ├── processing/
+│   │   ├── multimodal.py       # Conversion en texte : PDF (pypdf), images (vision), notes vocales (Whisper)
 │   │   └── order_processor.py  # Traitement des emails de commande
 │   ├── extraction/
 │   │   ├── extractor.py        # Extraction des commandes (OpenAI GPT-4o)
+│   │   ├── prompts.py          # Instructions envoyées au modèle (extraction, renouvellement, priorité)
 │   │   └── article_codes.py    # Codes articles SAGE X3
 │   ├── reporting/
 │   │   ├── analytics.py        # Statistiques, alertes, exports Excel/CSV
@@ -91,13 +95,17 @@ Projet_innovation/
 │   └── web/
 │       ├── __init__.py         # create_app() : fabrique de l'application Flask
 │       ├── services.py         # Services partagés par les routes
+│       ├── auth.py             # Connexion, blocage après trop d'échecs, protection CSRF
+│       ├── errors.py           # Pages et réponses JSON d'erreur au message générique
+│       ├── security_headers.py # En-têtes HTTP de sécurité (CSP, X-Frame-Options…)
 │       ├── scheduler.py        # Planificateur des sauvegardes automatiques
-│       ├── routes/             # Blueprints : pages, api, webhooks, backups, exports
+│       ├── routes/             # Blueprints : auth_routes, pages, api, webhooks, backups, exports
 │       ├── templates/          # Pages HTML (Jinja2 + TailwindCSS)
 │       └── static/             # Logos
 ├── scripts/                    # Outils en ligne de commande
 │   ├── process_emails.py       # Traiter les emails de commande
 │   ├── backup.py               # Sauvegarder, restaurer, exporter la base
+│   ├── hash_password.py        # Empreinte du mot de passe administrateur (ADMIN_PASSWORD_HASH)
 │   └── rename_generic_clients.py  # Renommer les clients au nom provisoire
 ├── tests/                      # Tests (pytest), sans réseau ni clé d'API
 ├── .github/workflows/
@@ -179,6 +187,47 @@ PUBLIC_BASE_URL=https://xxxxx.ngrok-free.app
 SECRET_KEY=valeur-longue-et-aleatoire   # obligatoire en production
 ```
 
+### Accès au tableau de bord
+
+Le tableau de bord exige une connexion avec le compte administrateur (`ADMIN_USERNAME`, `admin`
+par défaut). Le mot de passe n'est jamais écrit dans `.env` : seule son empreinte (hachage) l'est.
+
+```bash
+python scripts/hash_password.py
+```
+
+Le script demande le mot de passe deux fois et affiche la ligne à copier dans `.env`, entre
+apostrophes car l'empreinte contient des caractères `$` :
+
+```env
+ADMIN_PASSWORD_HASH='scrypt:32768:8:1$...'
+```
+
+Sans empreinte, aucune connexion n'est possible (un avertissement est écrit dans le journal au
+démarrage) ; il n'existe pas de mot de passe par défaut.
+
+| Variable | Rôle | Valeur par défaut |
+|---|---|---|
+| `AUTH_ENABLED` | Connexion obligatoire au tableau de bord | `true` |
+| `CSRF_ENABLED` | Protection contre la falsification de requête intersite (CSRF) : chaque requête qui modifie des données porte le jeton de la session | `true` |
+| `LOGIN_MAX_ATTEMPTS` | Échecs de connexion tolérés par adresse IP | `5` |
+| `LOGIN_LOCKOUT_MINUTES` | Durée du blocage après trop d'échecs, en minutes | `15` |
+| `SESSION_COOKIE_SECURE` | Cookie de session envoyé uniquement en HTTPS | activé en production seulement |
+| `TRUST_PROXY_HEADERS` | Lecture des en-têtes `X-Forwarded-*` écrits par un proxy inverse | `false` |
+
+Derrière un tunnel ngrok ou un proxy inverse (nginx) :
+
+- `PUBLIC_BASE_URL` doit contenir l'adresse publique du serveur : Twilio signe l'URL qu'il appelle,
+  et la signature du webhook WhatsApp n'est valide que si l'application reconstruit cette même URL ;
+- `TRUST_PROXY_HEADERS=true` donne à l'application l'adresse IP réelle du client (sans cela, tous les
+  clients partagent l'adresse du proxy et un blocage après trop d'échecs les bloque tous) ainsi que
+  le protocole et le nom d'hôte d'origine. À n'activer que si le proxy écrit lui-même ces en-têtes :
+  sinon un client pourrait les falsifier ;
+- en HTTP simple (sans HTTPS) en production, la session ne tient que si `SESSION_COOKIE_SECURE=false`.
+
+Les compteurs d'échecs de connexion sont gardés en mémoire : ils sont propres à chaque processus
+du serveur et remis à zéro au redémarrage.
+
 ### Dépendances
 
 - `requirements.txt` : dépendances d'exécution (Flask, OpenAI, Twilio, pypdf, pandas, reportlab…) ;
@@ -257,7 +306,7 @@ ruff check .
 ### 1. Extraction Email
 - Connexion IMAP sécurisée à Gmail
 - Récupération intelligente des emails (évite les doublons)
-- Extraction du texte des pièces jointes (PDF, images)
+- Extraction du texte des pièces jointes (PDF, images, notes vocales, fichiers texte), type reconnu d'après le contenu du fichier
 - Analyse IA pour détecter les bons de commande
 - Progress bar temps réel pendant le traitement
 
@@ -267,7 +316,7 @@ ruff check .
   - **Texte** - Extraction directe avec patterns Darija
   - **Images** - OCR avec GPT-4o Vision
   - **Audio** - Transcription Whisper optimisée Darija/Arabe
-  - **Documents PDF** - Extraction PyPDF2 + Vision
+  - **Documents PDF** - Extraction du texte avec pypdf (un PDF scanné, sans couche texte, n'est pas lu)
 - Confirmation automatique au client
 
 ### 3. Support Darija Marocain 🇲🇦
@@ -546,7 +595,7 @@ TECPAP fabrique 4 types de sacs en papier Kraft:
    ├── OUI → Recherche historique client
    │         Auto-remplissage des champs
    │         Nom client exact depuis BDD
-   │         Confiance boostée à 85%
+   │         Confiance : celle indiquée par le modèle
    │
    └── NON → Extraction standard OpenAI
              Détection nom client dans message
@@ -584,7 +633,7 @@ TECPAP fabrique 4 types de sacs en papier Kraft:
 
 ## 🧪 Tests
 
-Le projet dispose d'une suite de 455 tests, exécutés sans réseau ni clé d'API : OpenAI, Twilio,
+Le projet dispose d'une suite de 993 tests, exécutés sans réseau ni clé d'API : OpenAI, Twilio,
 IMAP et SMTP sont simulés, et chaque test utilise une base et des dossiers temporaires.
 
 ### Structure des Tests
@@ -599,9 +648,17 @@ IMAP et SMTP sont simulés, et chaque test utilise une base et des dossiers temp
 | `test_backup.py` | Sauvegarde, restauration, nettoyage, export JSON |
 | `test_email.py` | Envoi des emails (SMTP simulé) |
 | `test_api.py` | Pages et API du tableau de bord |
+| `test_auth.py` | Connexion, déconnexion, blocage après trop d'échecs, redirections |
+| `test_csrf.py` | Protection CSRF des requêtes qui modifient des données |
+| `test_security_headers.py` | En-têtes HTTP de sécurité et politique de sécurité du contenu (CSP) |
+| `test_webhook_security.py` | Signature Twilio du webhook WhatsApp |
+| `test_llm_client.py` | Client des modèles OpenAI (SDK simulé), seconde tentative après une erreur passagère |
+| `test_multimodal.py` | Conversion en texte des PDF, images, notes vocales et fichiers texte |
+| `test_order_processor.py` | Traitement des emails de commande avec un modèle simulé |
 | `test_whatsapp.py` | Messages WhatsApp, médias, transcription, envoi |
 | `test_gmail.py` | Réception des emails (IMAP simulé) |
 | `test_integration.py` | Flux complets sur la base |
+| `test_web_integration.py` | Application assemblée : client des modèles partagé, webhook de bout en bout, tableau de bord avec connexion et CSRF |
 | `test_workflows.py` | Workflows GitHub Actions |
 
 ### Exécution des Tests
@@ -630,7 +687,10 @@ pytest --cov=tecpap --cov-report=html --cov-report=term-missing
 Les fixtures pytest dans `conftest.py` fournissent :
 - `test_settings` : configuration de test (`Settings.for_tests(tmp_path)`)
 - `temp_db` : base de données temporaire initialisée
-- `flask_app`, `flask_client`, `services` : application construite par `create_app(test_settings)`
+- `flask_app`, `flask_client`, `services` : application construite par `create_app(test_settings)`,
+  sans connexion ni protection CSRF
+- `secure_app`, `secure_client`, `login`, `logged_in_client`, `csrf_token_for` : application avec
+  connexion obligatoire et protection CSRF (mot de passe de test `TEST_ADMIN_PASSWORD`)
 - `sample_order_data`, `sample_whatsapp_order` : données de commande de test
 
 ---
