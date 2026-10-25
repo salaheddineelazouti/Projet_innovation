@@ -2,7 +2,12 @@
 codes articles, statistiques, notifications et état du service.
 
 La validation ou le rejet d'une commande prévient le client par email et, pour une commande
-reçue par WhatsApp, par un message WhatsApp.
+reçue par WhatsApp, par un message WhatsApp rédigé à partir des modèles ``order_validated`` et
+``order_rejected`` (:mod:`tecpap.chatbot.messages`), dans la langue de la conversation du
+client ; ce message est enregistré dans la conversation. La validation d'une commande WhatsApp
+vaut vérification du lien entre le numéro de l'expéditeur et le client : le numéro est alors
+enregistré comme téléphone d'un client qui n'en avait pas
+(:meth:`tecpap.db.database.DatabaseManager.attach_phone_to_client`).
 
 Les champs modifiables d'une commande sont limités à
 :data:`tecpap.db.database.ORDER_UPDATABLE_FIELDS` : une requête qui contient un autre champ, ou
@@ -21,8 +26,10 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from tecpap import __version__
+from tecpap.chatbot.messages import DEFAULT_LANGUAGE, order_lines, reason_line, render
 from tecpap.db.database import OrderUpdateError, clean_order_updates
 from tecpap.extraction.article_codes import generate_article_code, suggest_article_code_from_description
+from tecpap.extraction.rules import normalize_phone
 from tecpap.processing.order_processor import OrderProcessor
 from tecpap.reporting.analytics import AIPredictor, AlertSystem, Analytics, ClientHistory
 from tecpap.web.auth import current_user
@@ -76,56 +83,78 @@ def healthz():
 # ---------------------------------------------------------------------- notifications client
 
 def _order_whatsapp_number(order: dict[str, Any]) -> str | None:
-    """Numéro WhatsApp du client d'une commande (téléphone, expéditeur, ou nom provisoire « Client WhatsApp +212… »)."""
-    phone = order.get("client_telephone") or order.get("email_from") or ""
+    """Numéro WhatsApp à prévenir pour une commande, au format international (« +2126… »).
+
+    Dans l'ordre : l'expéditeur du message (``whatsapp_from``), le téléphone du client, puis le
+    numéro d'un nom de client provisoire (« Client WhatsApp +212… »).
+    """
+    for candidate in (order.get("whatsapp_from"), order.get("client_telephone"), order.get("email_from")):
+        phone = normalize_phone(candidate) if candidate else None
+        if phone:
+            return phone
     client_name = order.get("client_nom") or ""
-    if not phone and client_name.startswith("Client WhatsApp"):
+    if client_name.startswith("Client WhatsApp"):
         match = re.search(r"\+\d+", client_name)
         if match:
-            phone = match.group()
-    if not phone:
-        return None
-    return "+" + phone.replace("+", "").replace(" ", "").replace("whatsapp:", "")
+            return normalize_phone(match.group())
+    return None
 
 
-def _send_whatsapp(services: Services, order: dict[str, Any], message: str) -> bool:
-    """Envoie un message WhatsApp au client d'une commande reçue par WhatsApp."""
+def _notification_language(services: Services, number: str) -> tuple[Any, str]:
+    """Conversation WhatsApp du numéro (ou ``None``) et langue de la notification (français sans conversation)."""
+    try:
+        conversation = services.conversation_store().find(number)
+    except Exception:
+        logger.warning("Conversation WhatsApp illisible pour la notification", exc_info=True)
+        return None, DEFAULT_LANGUAGE
+    if conversation is None:
+        return None, DEFAULT_LANGUAGE
+    return conversation, conversation.language or DEFAULT_LANGUAGE
+
+
+def _summary_fields(order: dict[str, Any]) -> dict[str, Any]:
+    """Champs d'une commande lue en base, sous les noms attendus par :func:`order_lines`."""
+    return {
+        "entreprise_cliente": order.get("client_nom"),
+        "type_produit": order.get("produit_type") or order.get("nature_produit"),
+        "quantite": order.get("quantite"),
+        "unite": order.get("unite"),
+        "date_livraison": order.get("date_livraison"),
+    }
+
+
+def _send_whatsapp_notification(services: Services, order: dict[str, Any], template: str, *,
+                                reason: str | None = None) -> bool:
+    """Prévient par WhatsApp le client d'une commande reçue par WhatsApp (validation ou refus).
+
+    Le message est rédigé à partir du modèle ``template`` (``order_validated`` ou
+    ``order_rejected``), dans la langue de la conversation WhatsApp du numéro (français sans
+    conversation), puis enregistré comme message envoyé de cette conversation.
+    """
     if order.get("source") != "whatsapp":
         return False
     number = _order_whatsapp_number(order)
     if not number:
         return False
+    conversation, language = _notification_language(services, number)
+    reference = order.get("numero_commande") or f"CMD-{order.get('id')}"
+    if template == "order_validated":
+        message = render(template, language, reference=reference, lines=order_lines(_summary_fields(order), language))
+    else:
+        message = render(template, language, reference=reference, reason=reason_line(reason, language))
     try:
-        if services.whatsapp.send_reply(number, message):
-            logger.info("Notification WhatsApp envoyée pour la commande %s", order.get("id"))
-            return True
+        if not services.whatsapp.send_reply(number, message):
+            return False
     except Exception:
         logger.warning("Notification WhatsApp impossible pour la commande %s", order.get("id"), exc_info=True)
-    return False
-
-
-def _validation_message(order: dict[str, Any], order_id: int) -> str:
-    return f"""✅ *Commande Validée!*
-
-📋 *Détails:*
-• Client: {order.get('client_nom', 'N/A')}
-• Produit: {order.get('produit_type', order.get('nature_produit', 'N/A'))}
-• Quantité: {order.get('quantite', 'N/A')} {order.get('unite', '')}
-• N° Commande: {order.get('numero_commande') or f"CMD-{order_id}"}
-
-✨ Merci pour votre confiance!
-📞 Pour toute question, contactez-nous."""
-
-
-def _rejection_message(order: dict[str, Any], reason: str) -> str:
-    return f"""❌ *Commande Non Validée*
-
-📋 *Détails:*
-• Client: {order.get('client_nom', 'N/A')}
-• Produit: {order.get('produit_type', order.get('nature_produit', 'N/A'))}
-{f'• Raison: {reason}' if reason else ''}
-
-📞 Veuillez nous contacter pour plus d'informations."""
+        return False
+    logger.info("Notification WhatsApp envoyée pour la commande %s", order.get("id"))
+    if conversation is not None:
+        try:
+            services.conversation_store().add_message(conversation.id, "out", message, intent=template)
+        except Exception:
+            logger.warning("Notification non enregistrée dans la conversation %s", conversation.id, exc_info=True)
+    return True
 
 
 # ---------------------------------------------------------------------- commandes
@@ -152,14 +181,18 @@ def api_validate_order(order_id: int):
     """Valide une commande et prévient le client (email, et WhatsApp si la commande en vient).
 
     L'auteur enregistré est ``validated_by`` s'il est fourni, sinon l'utilisateur connecté.
-    Une commande inexistante donne une erreur 404.
+    Pour une commande WhatsApp dont le client n'a pas encore de téléphone, le numéro de
+    l'expéditeur lui est rattaché. Une commande inexistante donne une erreur 404.
     """
     services = get_services()
-    if not services.db.get_order(order_id):
+    order = services.db.get_order(order_id)
+    if not order:
         return json_error("Commande introuvable", 404)
     validated_by = (_optional_text(_json_body().get("validated_by"), _MAX_VALIDATOR_LENGTH)
                     or current_user() or "Commercial")
     services.db.update_order_status(order_id, "validee", validated_by)
+    if order.get("source") == "whatsapp" and order.get("whatsapp_from") and not order.get("client_telephone"):
+        services.db.attach_phone_to_client(order.get("client_id"), order["whatsapp_from"])
 
     # Commande relue après la validation : la notification contient le statut et la date enregistrés.
     order = services.db.get_order(order_id)
@@ -168,7 +201,7 @@ def api_validate_order(order_id: int):
         email_sent = services.email_sender.send_validation_email(order)
     except Exception:
         logger.warning("Email de validation impossible pour la commande %s", order_id, exc_info=True)
-    whatsapp_sent = _send_whatsapp(services, order, _validation_message(order, order_id))
+    whatsapp_sent = _send_whatsapp_notification(services, order, "order_validated")
 
     return jsonify({
         "success": True,
@@ -199,7 +232,7 @@ def api_reject_order(order_id: int):
         email_sent = services.email_sender.send_rejection_email(order, reason)
     except Exception:
         logger.warning("Email de rejet impossible pour la commande %s", order_id, exc_info=True)
-    whatsapp_sent = _send_whatsapp(services, order, _rejection_message(order, reason))
+    whatsapp_sent = _send_whatsapp_notification(services, order, "order_rejected", reason=reason)
 
     return jsonify({
         "success": True,

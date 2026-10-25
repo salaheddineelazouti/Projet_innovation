@@ -1,10 +1,17 @@
 """Traitement des emails de commande : lecture de la boîte, extraction, enregistrement.
 
-Pour chaque email récent qui n'a pas encore été traité :
+Pour chaque email récent qui n'a pas encore été traité (ni son numéro IMAP, ni son identifiant
+``Message-ID`` ne figurent déjà dans une commande) :
 1. les pièces jointes sont téléchargées et leur texte extrait ;
-2. l'extracteur produit les champs de la commande ;
-3. un bon de commande reconnu est enregistré « en attente » de validation et le client
-   reçoit un accusé de réception par email.
+2. l'extracteur (:class:`tecpap.extraction.extractor.DataExtractor`) analyse le sujet, le corps
+   et le texte des pièces jointes : contrôle des injections d'instructions, langue, modèle,
+   exemples de commandes validées, règles de normalisation. Un email suspect est signalé par
+   une anomalie et un événement de sécurité, jamais écarté ; sans modèle de langue, l'extraction
+   par règles prend le relais ;
+3. un bon de commande reconnu est enregistré « en attente » de validation, avec la traçabilité
+   de l'extraction (``message_sid`` : identifiant ``Message-ID`` de l'email, ``message_brut``,
+   langue, modèle, anomalies, champs manquants), et le client reçoit un accusé de réception
+   par email.
 """
 
 from __future__ import annotations
@@ -90,7 +97,8 @@ class OrderProcessor:
 
         # Vérification avant tout appel au modèle de langue : un email déjà traité ne coûte rien.
         email_id = email_data.get("id")
-        if email_id and self.db.is_email_processed(email_id):
+        if (email_id and self.db.is_email_processed(email_id)) or self.db.is_message_processed(
+                email_data.get("message_id")):
             logger.info("Email déjà traité, ignoré")
             return None
 
@@ -107,7 +115,11 @@ class OrderProcessor:
         return order
 
     def process_single_email(self, email_data: dict[str, Any]) -> dict[str, Any] | None:
-        """Extrait la commande d'un email (corps et pièces jointes) et ajoute ses métadonnées."""
+        """Extrait la commande d'un email (corps et pièces jointes) et ajoute ses métadonnées.
+
+        Le texte analysé (sujet, corps et texte des pièces jointes) est conservé dans
+        ``message_brut`` ; l'identifiant ``Message-ID`` de l'email devient ``message_sid``.
+        """
         attachment_texts: dict[str, str] = {}
 
         if email_data.get("attachments"):
@@ -121,5 +133,7 @@ class OrderProcessor:
             order_data["email_id"] = email_data.get("id")
             order_data["email_subject"] = email_data.get("subject")
             order_data["email_from"] = email_data.get("from")
+            order_data["message_sid"] = email_data.get("message_id")
+            order_data["source"] = "email"
             order_data["processed_at"] = datetime.now().isoformat()
         return order_data

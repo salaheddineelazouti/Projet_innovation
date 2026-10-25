@@ -598,14 +598,34 @@ class TestConstruction:
         assert isinstance(build_embedder(Settings.for_tests(tmp_path), unavailable_llm()), LocalHashEmbedder)
 
     def test_build_embedder_with_client(self, tmp_path):
-        embedder = build_embedder(Settings.for_tests(tmp_path, model_embedding="modele"), FakeLLMClient())
+        settings = Settings.for_tests(tmp_path, model_embedding="modele", rag_embedder="openai")
+        embedder = build_embedder(settings, FakeLLMClient())
         assert isinstance(embedder, OpenAIEmbedder)
         assert embedder.name == "openai:modele"
 
     def test_build_embedder_with_key_creates_client_without_network(self, tmp_path):
-        embedder = build_embedder(Settings.for_tests(tmp_path, openai_api_key="sk-test"))
+        embedder = build_embedder(Settings.for_tests(tmp_path, openai_api_key="sk-test", rag_embedder="openai"))
         assert isinstance(embedder, OpenAIEmbedder)
         assert embedder.available
+
+    def test_local_embedder_is_the_default_even_with_a_client(self, tmp_path):
+        settings = Settings.for_tests(tmp_path, openai_api_key="sk-test")
+        assert settings.rag_embedder == "local"
+        assert isinstance(build_embedder(settings, FakeLLMClient()), LocalHashEmbedder)
+        assert isinstance(build_embedder(settings), LocalHashEmbedder)
+
+    def test_openai_choice_without_client_falls_back_to_local(self, tmp_path):
+        assert isinstance(build_embedder(Settings.for_tests(tmp_path, rag_embedder="openai")), LocalHashEmbedder)
+
+    def test_changing_the_embedder_reindexes(self, conn, tmp_path, knowledge_dir):
+        local = KnowledgeBase.from_settings(conn, Settings.for_tests(tmp_path, knowledge_dir=str(knowledge_dir)))
+        assert local.index().embedder == LocalHashEmbedder().name
+        openai_settings = Settings.for_tests(tmp_path, knowledge_dir=str(knowledge_dir), rag_embedder="openai")
+        remote = KnowledgeBase.from_settings(conn, openai_settings, FakeLLMClient())
+        stats = remote.index()
+        assert stats.embedder == remote.embedder.name != local.embedder.name
+        assert stats.updated == stats.total and stats.unchanged == 0
+        assert remote.search("sachets fond plat")
 
     def test_from_settings(self, conn, tmp_path, knowledge_dir):
         settings = Settings.for_tests(tmp_path, knowledge_dir=str(knowledge_dir))
@@ -798,9 +818,7 @@ class TestAnonymizeText:
 
 @pytest.fixture
 def orders_db(temp_db):
-    """Base des commandes de test avec la colonne message_brut."""
-    temp_db.connection.execute("ALTER TABLE commandes ADD COLUMN message_brut TEXT")
-    temp_db.connection.commit()
+    """Base des commandes de test (la colonne message_brut fait partie du schéma de la base)."""
     return temp_db
 
 
@@ -814,8 +832,16 @@ def add_order(db, *, client: str, product: str, quantity: int, message: str | No
 
 
 class TestOrderExampleRetriever:
-    def test_without_message_column_returns_nothing(self, temp_db):
-        temp_db.create_order({"entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat", "quantite": 10})
+    def test_without_message_column_returns_nothing(self, conn):
+        conn.execute("CREATE TABLE commandes (id INTEGER PRIMARY KEY, statut TEXT, quantite REAL)")
+        conn.execute("INSERT INTO commandes (statut, quantite) VALUES ('validee', 10)")
+        conn.commit()
+        assert OrderExampleRetriever(conn, LocalHashEmbedder()).similar_validated_orders("bghit 3000 sachet") == []
+
+    def test_validated_order_without_message_is_not_an_example(self, temp_db):
+        order_id = temp_db.create_order({"entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat",
+                                         "quantite": 10})
+        temp_db.update_order_status(order_id, "validee")
         retriever = OrderExampleRetriever(temp_db.connection, LocalHashEmbedder())
         assert retriever.similar_validated_orders("bghit 3000 sachet") == []
 

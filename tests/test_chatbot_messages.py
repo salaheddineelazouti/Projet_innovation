@@ -19,6 +19,7 @@ from tecpap.chatbot.messages import (
     order_lines,
     product_label,
     product_menu,
+    reason_line,
     render,
     status_label,
     status_lines,
@@ -31,10 +32,12 @@ REQUIRED_KEYS = {
     "reorder_intro", "confirm_hint", "ask_change", "submitted", "cancelled", "cancel_forwarded", "status_list",
     "status_none", "status_not_found", "handoff", "handoff_ack", "blocked", "no_answer", "sales_will_answer",
     "rate_limited", "media_failed", "error", "reorder_none", "draft_expired", "excerpt_answer", "catalog_list",
+    "order_validated", "order_rejected",
 }
 
 # Valeurs d'exemple pour remplir chaque modèle.
-SAMPLE_VALUES = {"reference": "CMD-12", "lines": "- ligne", "excerpt": "texte", "products": "1. produit"}
+SAMPLE_VALUES = {"reference": "CMD-12", "lines": "- ligne", "excerpt": "texte", "products": "1. produit",
+                 "reason": ""}
 
 # Caractères pictographiques (émojis) : seul ✅ est accepté, dans la confirmation d'enregistrement.
 EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿]")
@@ -244,3 +247,28 @@ def test_package_exports_are_loaded_on_demand():
     assert set(package.__all__) >= {"WhatsAppAssistant", "BotReply", "ConversationStore", "render"}
     with pytest.raises(AttributeError):
         package.inexistant  # noqa: B018
+
+
+class TestOrderNotifications:
+    """Notifications de validation et de refus envoyées par l'équipe commerciale."""
+
+    @pytest.mark.parametrize("language", LANGUAGES)
+    def test_validation_contains_the_reference_and_the_lines(self, language):
+        lines = order_lines({"entreprise_cliente": "Snack Atlas", "type_produit": PRODUCTS[0]["type"],
+                             "quantite": 3000}, language)
+        text = render("order_validated", language, reference="CMD-7", lines=lines)
+        assert "CMD-7" in text and "3 000" in text
+
+    @pytest.mark.parametrize("language, label", [("fr", "Motif : "), ("darija", "Sabab: "), ("ar", "السبب: ")])
+    def test_rejection_reason(self, language, label):
+        reason = reason_line("Stock  insuffisant", language)
+        text = render("order_rejected", language, reference="CMD-7", reason=reason)
+        assert f"\n{label}Stock insuffisant" in text
+        assert "CMD-7" in text
+
+    def test_rejection_without_reason(self):
+        assert reason_line(None, "fr") == reason_line("   ", "ar") == ""
+        assert "Motif" not in render("order_rejected", "fr", reference="CMD-7", reason=reason_line("", "fr"))
+
+    def test_long_reason_is_shortened(self):
+        assert len(reason_line("x" * 1000, "fr")) == len("\nMotif : ") + messages.MAX_REASON_CHARS

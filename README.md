@@ -353,25 +353,24 @@ Et remplit automatiquement depuis l'historique:
 
 ### 6. Notifications WhatsApp
 
-Lors de la **validation** d'une commande:
+La validation ou le refus d'une commande reçue par WhatsApp prévient le client par un message rédigé à
+partir des modèles `order_validated` et `order_rejected` (`tecpap/chatbot/messages.py`), dans la langue de
+sa conversation (français, darija ou arabe standard). Le message est enregistré dans la conversation.
+
+À la validation (exemple en français) :
 ```
-✅ Commande Validée!
-
-Votre commande a été validée avec succès.
-📦 Produit: Sachets fond plat
-🔢 Quantité: 5000 pièces
-
-Merci pour votre confiance!
+Bonne nouvelle : votre commande CMD-12 est validée par notre équipe commerciale.
+- Client : Snack Atlas
+- Produit : Sachets fond plat
+- Quantité : 5 000 pièces
+Merci pour votre confiance.
 ```
 
-Lors du **rejet** d'une commande:
+Au refus, avec le motif saisi par l'équipe commerciale :
 ```
-❌ Commande Non Validée
-
-Votre commande n'a pas pu être validée.
-Raison: [motif de rejet]
-
-Veuillez nous contacter pour plus d'informations.
+Votre commande CMD-12 n'a pas pu être validée par notre équipe commerciale.
+Motif : quantité inférieure au minimum de fabrication
+Écrivez « conseiller » pour en parler avec nous.
 ```
 
 ### 7. Interface Web Moderne
@@ -388,6 +387,10 @@ Veuillez nous contacter pour plus d'informations.
 | `/whatsapp` | Stats et KPIs WhatsApp |
 | `/process` | Traitement des emails avec progress bar |
 | `/backups` | Gestion des sauvegardes de base de données |
+| `/conversations` | Conversations WhatsApp de l'assistant, reprise par l'équipe commerciale |
+| `/conversations/<id>` | Messages d'une conversation, réponse de l'équipe commerciale, fin de la prise en charge |
+| `/knowledge` | Base de connaissances de l'assistant : documents, réindexation, recherche de test |
+| `/security` | Événements de sécurité : tentatives d'injection, réponses bloquées, limites de messages, signatures refusées |
 
 ### 8. Dashboard
 

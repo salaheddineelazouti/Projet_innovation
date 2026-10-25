@@ -1,14 +1,25 @@
-"""Évaluation des composants d'analyse des messages clients sur le jeu annoté.
+"""Évaluation des composants d'analyse des messages clients sur le corpus annoté.
 
 Usage :
-    python evaluation/run_eval.py                 évaluation hors ligne (sans réseau ni clé d'API)
+    python evaluation/run_eval.py                 évaluation hors ligne des deux partitions
+    python evaluation/run_eval.py --split test    évaluation hors ligne d'une seule partition
     python evaluation/run_eval.py --online        extraction complète par le modèle de langue
-    python evaluation/run_eval.py --dataset FICHIER --output-dir DOSSIER --date AAAA-MM-JJ
+    python evaluation/run_eval.py --split dev --dataset FICHIER --output-dir DOSSIER --date AAAA-MM-JJ
 
-Le jeu ``evaluation/dataset/messages.jsonl`` (format JSON Lines : un objet JSON par ligne) associe
-à chaque message ses valeurs de référence, appelées étiquettes (schéma dans
+Le corpus annoté est réparti en deux partitions (« split dev/test ») au format JSON Lines (un
+objet JSON par ligne) :
+
+- ``dev``, ``evaluation/dataset/messages.jsonl`` : jeu de développement, dont les erreurs servent
+  à écrire et à ajuster les règles, les listes de mots-clés et les seuils ;
+- ``test``, ``evaluation/dataset/messages_test.jsonl`` : jeu de test tenu à l'écart, qui ne sert
+  jamais au réglage et mesure la qualité des composants sur des messages qui n'ont pas servi à
+  les mettre au point.
+
+Chaque élément associe à un message ses valeurs de référence, appelées étiquettes (schéma dans
 ``evaluation/README.md``). Chaque composant reçoit le texte du message ; sa sortie est comparée
-à l'étiquette.
+à l'étiquette. Sans option ``--split``, les deux partitions sont évaluées ; ``--split`` limite
+l'évaluation à une partition, et ``--dataset`` (qui demande ``--split``) remplace le fichier de
+cette partition.
 
 Évaluation hors ligne (par défaut), sans réseau ni modèle de langue :
 
@@ -29,9 +40,10 @@ Le jeu ``evaluation/dataset/messages.jsonl`` (format JSON Lines : un objet JSON 
 Mesures, définies aussi dans le rapport :
 
 - exactitude (« accuracy ») : part des éléments dont la valeur obtenue est égale à l'étiquette ;
-- intervalle de confiance à 95 % de Wilson : plage de valeurs de la proportion réelle
-  compatibles avec l'échantillon observé (Wilson, 1927), plus fiable que l'approximation
-  normale pour les petits effectifs et les proportions proches de 0 ou de 1 ;
+- intervalle de confiance à 95 % : intervalle de score de Wilson (Wilson, 1927), plage de valeurs
+  de la proportion réelle compatibles avec l'échantillon observé, plus fiable que
+  l'approximation normale pour les petits effectifs et les proportions proches de 0 ou de 1
+  (formule dans :func:`wilson_interval`) ;
 - matrice de confusion : tableau croisé des étiquettes attendues (lignes) et des valeurs
   obtenues (colonnes) ;
 - pour une détection oui / non, la classe positive est la catégorie à signaler ; vrais positifs
@@ -49,14 +61,17 @@ par l'extraction complète (:class:`tecpap.extraction.extractor.DataExtractor`, 
 données, puis :func:`tecpap.extraction.rules.normalize_order`) et les mêmes champs sont comparés.
 Sans clé, le programme s'arrête avec le code de sortie 2, sans aucun appel réseau.
 
-Sorties, dans ``evaluation/results/`` par défaut : ``rapport_hors_ligne.md`` (rapport en
-français) et ``rapport_hors_ligne.json`` (mêmes chiffres), ou ``rapport_en_ligne.md`` et
-``rapport_en_ligne.json``. Le rapport Markdown est rédigé à partir du dictionnaire écrit dans le
-JSON, si bien que les deux fichiers portent les mêmes chiffres. À données et code identiques,
-seule la date d'exécution change d'une exécution hors ligne à l'autre.
+Sorties, dans ``evaluation/results/`` par défaut, pour chaque partition évaluée :
+``rapport_hors_ligne_<partition>.md`` (rapport en français) et
+``rapport_hors_ligne_<partition>.json`` (mêmes chiffres), ou ``rapport_en_ligne_<partition>.md``
+et ``rapport_en_ligne_<partition>.json``. Quand les deux partitions sont évaluées hors ligne,
+``synthese.md`` compare leurs mesures une à une, avec leurs intervalles de confiance. Les
+rapports Markdown sont rédigés à partir des dictionnaires écrits dans les JSON, si bien que les
+fichiers portent les mêmes chiffres. À données et code identiques, seule la date d'exécution
+change d'une exécution hors ligne à l'autre.
 
-Codes de sortie : 0 succès, 1 jeu de données ou configuration invalide, 2 évaluation en ligne
-sans clé d'API.
+Codes de sortie : 0 succès, 1 jeu de données ou configuration invalide (aucun rapport n'est
+alors écrit), 2 évaluation en ligne sans clé d'API ou option invalide.
 """
 
 from __future__ import annotations
@@ -98,10 +113,40 @@ from tecpap.security.guardrails import SUSPICION_THRESHOLD, InputCheck, inspect_
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATASET = REPO_ROOT / "evaluation" / "dataset" / "messages.jsonl"
+DATASET_DIR = REPO_ROOT / "evaluation" / "dataset"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "evaluation" / "results"
 OFFLINE_REPORT_NAME = "rapport_hors_ligne"
 ONLINE_REPORT_NAME = "rapport_en_ligne"
+SYNTHESIS_NAME = "synthese"
+
+DEV_SPLIT = "dev"
+TEST_SPLIT = "test"
+SPLITS: tuple[str, ...] = (DEV_SPLIT, TEST_SPLIT)
+"""Partitions du corpus annoté, dans l'ordre des rapports et de la synthèse."""
+
+SPLIT_DATASETS: Mapping[str, Path] = MappingProxyType({
+    DEV_SPLIT: DATASET_DIR / "messages.jsonl",
+    TEST_SPLIT: DATASET_DIR / "messages_test.jsonl",
+})
+"""Fichier de chaque partition."""
+
+SPLIT_LABELS: Mapping[str, str] = MappingProxyType({
+    DEV_SPLIT: "jeu de développement",
+    TEST_SPLIT: "jeu de test tenu à l'écart",
+})
+SPLIT_ROLES: Mapping[str, str] = MappingProxyType({
+    DEV_SPLIT: "Ses erreurs servent à écrire et à ajuster les règles, les listes de mots-clés et les seuils : ses "
+               "scores surestiment donc la qualité réelle des composants.",
+    TEST_SPLIT: "Il ne sert jamais au réglage des composants : ses scores estiment leur qualité sur des messages "
+                "qui n'ont pas servi à les mettre au point.",
+})
+SPLIT_USES: Mapping[str, str] = MappingProxyType({
+    DEV_SPLIT: "Réglage des composants",
+    TEST_SPLIT: "Mesure seule, jamais de réglage",
+})
+SPLITS_DEFINITION = ("Le corpus annoté est réparti en deux partitions (« split dev/test ») : le jeu de développement "
+                     "(`dev`) et le jeu de test tenu à l'écart (`test`).")
+DATASET_WITHOUT_SPLIT = "l'option --dataset demande --split dev ou --split test"
 
 EXIT_OK = 0
 EXIT_INVALID_INPUT = 1
@@ -156,7 +201,9 @@ QUANTITY_TOLERANCE = 1e-9
 WILSON_Z = 1.959963984540054
 """Quantile à 97,5 % de la loi normale centrée réduite : intervalle de confiance à 95 %."""
 
-RATE_DECIMALS = 4
+RATE_DECIMALS = 6
+"""Décimales des proportions du JSON. Avec six décimales, l'arrondi du pourcentage à une décimale ne
+subit pas de double arrondi : 4 / 21 s'affiche 19,0 %, et non 19,1 % comme après un arrondi à 0,1905."""
 CONFIDENCE_DECIMALS = 2
 EVALUATION_SENDER = "whatsapp:+212600000000"
 """Expéditeur fictif des messages WhatsApp en évaluation en ligne (forme des numéros du jeu)."""
@@ -420,7 +467,13 @@ def _rounded(value: float | None, decimals: int = RATE_DECIMALS) -> float | None
 
 
 def wilson_interval(successes: int, total: int, z: float = WILSON_Z) -> tuple[float, float] | None:
-    """Intervalle de confiance de Wilson d'une proportion ``successes / total`` ; ``None`` si ``total`` est nul."""
+    """Intervalle de score de Wilson d'une proportion ``successes / total`` ; ``None`` si ``total`` est nul.
+
+    Pour p = k / n (k réussites sur n éléments), l'intervalle est centré sur
+    (p + z² / (2n)) / (1 + z² / n) et sa demi-largeur vaut
+    z √(p (1 − p) / n + z² / (4n²)) / (1 + z² / n). Il reste compris entre 0 et 1 et garde une
+    largeur non nulle quand p vaut 0 ou 1, contrairement à l'approximation normale p ± z √(p (1 − p) / n).
+    """
     if total <= 0:
         return None
     proportion = successes / total
@@ -846,8 +899,8 @@ def offline_summary(report: Mapping[str, Any]) -> list[JsonDict]:
 # ---------------------------------------------------------------- rapports
 
 def build_offline_report(items: Sequence[DatasetItem], *, dataset_path: Path | str, run_date: date,
-                         intent_loader: IntentLoader = load_intent_detector) -> JsonDict:
-    """Évalue tous les composants hors ligne et renvoie le contenu du rapport JSON."""
+                         split: str = DEV_SPLIT, intent_loader: IntentLoader = load_intent_detector) -> JsonDict:
+    """Évalue tous les composants hors ligne sur une partition et renvoie le contenu du rapport JSON."""
     detections = {item.id: detect_language(item.text) for item in items}
     extractions = {item.id: rule_based_extract(item.text, today=run_date) for item in items}
     checks = {item.id: inspect_input(item.text) for item in items}
@@ -855,6 +908,7 @@ def build_offline_report(items: Sequence[DatasetItem], *, dataset_path: Path | s
     detector, reason = intent_loader()
     report: JsonDict = {
         "report": "hors_ligne",
+        "split": split,
         "run_date": run_date.isoformat(),
         "package_version": __version__,
         "dataset": describe_dataset(items, dataset_path),
@@ -890,14 +944,27 @@ def message_for_extraction(item: DatasetItem, run_date: date) -> dict[str, str]:
 
 
 def build_online_extractor(settings: Settings, llm: Any, run_date: date) -> OnlineExtractor:
-    """Fonction d'extraction complète par le modèle de langue, sans base de données (pas d'historique client)."""
+    """Fonction d'extraction complète par le modèle de langue, sans base de données.
+
+    Sans base, ni l'historique des clients ni les exemples de commandes validées ne sont utilisés.
+    Un message WhatsApp passe par :meth:`DataExtractor.extract_text`, comme dans le webhook ; un
+    email par :meth:`DataExtractor.extract_from_email`. La date du jour de l'extracteur est
+    ``run_date``. Une commande extraite par les règles, faute de réponse du modèle, compte comme
+    un échec : l'évaluation en ligne mesure le modèle de langue.
+    """
     # Import différé : l'évaluation hors ligne ne dépend pas de l'extracteur et de ses dépendances.
     from tecpap.extraction.extractor import DataExtractor
 
-    extractor = DataExtractor(db_manager=None, settings=settings, llm=llm)
+    extractor = DataExtractor(db_manager=None, settings=settings, llm=llm, clock=lambda: run_date)
 
     def extract(item: DatasetItem) -> Mapping[str, Any] | None:
-        return extractor.extract_from_email(message_for_extraction(item, run_date))
+        if item.channel == "whatsapp":
+            result = extractor.extract_text(item.text, sender=EVALUATION_SENDER, channel="whatsapp")
+        else:
+            result = extractor.extract_from_email(message_for_extraction(item, run_date))
+        if not result or result.get("modele_llm") is None:
+            return None
+        return result
 
     return extract
 
@@ -958,13 +1025,14 @@ def online_summary(report: Mapping[str, Any]) -> list[JsonDict]:
 
 
 def build_online_report(items: Sequence[DatasetItem], *, dataset_path: Path | str, run_date: date,
-                        extract: OnlineExtractor, models: Mapping[str, Any]) -> JsonDict:
-    """Évalue l'extraction complète sur les commandes du jeu et renvoie le contenu du rapport JSON."""
+                        extract: OnlineExtractor, models: Mapping[str, Any], split: str = DEV_SPLIT) -> JsonDict:
+    """Évalue l'extraction complète sur les commandes d'une partition et renvoie le contenu du rapport JSON."""
     orders = [item for item in items if item.is_order]
     results, failures = run_online_extraction(orders, extract, run_date)
     data = {key: result.data for key, result in results.items()}
     report: JsonDict = {
         "report": "en_ligne",
+        "split": split,
         "run_date": run_date.isoformat(),
         "package_version": __version__,
         "models": dict(models),
@@ -985,8 +1053,12 @@ Block = list[str]
 MEASURE_DEFINITIONS: Mapping[str, tuple[str, str]] = MappingProxyType({
     "accuracy": ("Exactitude", "Part des éléments dont la valeur obtenue est égale à l'étiquette attendue."),
     "interval": ("Intervalle de confiance à 95 %",
-                 "Plage de valeurs de la proportion réelle compatibles avec l'échantillon (méthode de Wilson). "
-                 "Plus l'effectif est petit, plus la plage est large."),
+                 "Intervalle de score de Wilson : plage de valeurs de la proportion réelle compatibles avec "
+                 "l'échantillon. Pour k réussites sur n éléments, avec p = k / n et z = 1,96 (quantile à 97,5 % de "
+                 "la loi normale), il est centré sur (p + z² / (2n)) / (1 + z² / n) et sa demi-largeur vaut "
+                 "z √(p (1 − p) / n + z² / (4n²)) / (1 + z² / n). Il reste compris entre 0 % et 100 % et garde "
+                 "une largeur non nulle quand p vaut 0 % ou 100 %. Plus l'effectif est petit, plus la plage est "
+                 "large."),
     "confusion": ("Matrice de confusion",
                   "Tableau croisé : une ligne par étiquette attendue, une colonne par valeur obtenue. "
                   "Les bonnes réponses sont sur la diagonale."),
@@ -1014,8 +1086,8 @@ ONLINE_MEASURES = ("accuracy", "interval", "positive", "recall", "confidence")
 FIELD_COMPARISONS: Mapping[str, str] = MappingProxyType({
     "type_produit": "Égalité exacte du nom du produit du catalogue.",
     "quantite": "Égalité numérique (10000 et 10000,0 sont égales).",
-    "unite": "Égalité exacte. L'étiquette vaut `US` dès qu'une quantité est donnée "
-             "(`evaluation/README.md`, section 4.7).",
+    "unite": "Égalité exacte avec l'unité écrite par le client : `pièces` pour des pièces ou des unités, `kg`, "
+             "`carton` ou `paquet`, `US` pour une quantité sans unité (`evaluation/README.md`, section 4.7).",
     "entreprise_cliente": "Égalité sans tenir compte de la casse, des accents, des signes diacritiques "
                           "ni des espaces répétées.",
 })
@@ -1106,10 +1178,22 @@ def _language_cell(entry: Mapping[str, Any]) -> str:
     return code(entry["language"])
 
 
+def split_label(split: str) -> str:
+    """Nom en français d'une partition (« jeu de développement »), ou son code s'il est inconnu."""
+    return SPLIT_LABELS.get(split, split)
+
+
+def _split_intro(split: str) -> Block:
+    role = SPLIT_ROLES.get(split)
+    return [f"{SPLITS_DEFINITION} Ce rapport porte sur le {split_label(split)} ({code(split)})."
+            + (f" {role}" if role else "")]
+
+
 def _run_information(report: Mapping[str, Any], extra_rows: Sequence[Sequence[str]] = ()) -> Block:
     dataset = report["dataset"]
     rows = [
         ["Date de l'exécution", report["run_date"]],
+        ["Partition", code(report["split"])],
         ["Jeu de données", code(dataset["path"])],
         ["Empreinte SHA-256 du fichier", code(dataset["sha256"])],
         ["Éléments du jeu", str(dataset["items"])],
@@ -1385,9 +1469,10 @@ def render_offline_markdown(report: Mapping[str, Any]) -> str:
         ("Détection des intentions", lambda number: _intent_blocks(report["intent"], number)),
     ]
     return _join([
-        _heading(1, "Évaluation hors ligne de l'analyse des messages clients"),
+        _heading(1, f"Évaluation hors ligne de l'analyse des messages clients : {split_label(report['split'])}"),
         ["Mesure, sans réseau ni modèle de langue, des composants déterministes qui analysent les messages "
-         "clients, sur le jeu annoté décrit dans `evaluation/README.md`."],
+         "clients, sur le corpus annoté décrit dans `evaluation/README.md`."],
+        _split_intro(report["split"]),
         _run_information(report),
         [SHA_NOTE],
         *_numbered_sections(builders),
@@ -1439,17 +1524,169 @@ def render_online_markdown(report: Mapping[str, Any]) -> str:
         ("Reconnaissance des commandes et normalisation", lambda number: _online_quality_blocks(report)),
     ]
     return _join([
-        _heading(1, "Évaluation en ligne de l'extraction des commandes"),
+        _heading(1, f"Évaluation en ligne de l'extraction des commandes : {split_label(report['split'])}"),
         ["Mesure de l'extraction complète par le modèle de langue, suivie des règles de normalisation, sur les "
-         "commandes du jeu annoté décrit dans `evaluation/README.md`. Les réponses du modèle varient d'une "
+         "commandes du corpus annoté décrit dans `evaluation/README.md`. Les réponses du modèle varient d'une "
          "exécution à l'autre : les chiffres valent pour la date et les modèles indiqués."],
+        _split_intro(report["split"]),
         _run_information(report, extra),
         [SHA_NOTE],
         *_numbered_sections(builders),
     ])
 
 
+# ---------------------------------------------------------------- synthèse des deux partitions
+
+SYNTHESIS_MEASURES = ("accuracy", "interval", "positive", "tp", "fp", "fn", "tn", "precision", "recall", "f1", "fpr",
+                      "macro_f1")
+SYNTHESIS_INTRO = ("Les erreurs du jeu de développement servent à écrire et à ajuster les règles, les listes de "
+                   "mots-clés et les seuils : ses scores surestiment donc la qualité réelle des composants. Le jeu "
+                   "de test ne sert jamais au réglage : ses scores estiment la qualité des composants sur des "
+                   "messages qui n'ont pas servi à les mettre au point (`evaluation/README.md`, section 9).")
+DIFFERENCE_DEFINITION = ("Écart", "Valeur du jeu de test moins valeur du jeu de développement, en points de "
+                         "pourcentage. Pour le taux de faux positifs et les fausses alertes sur les pièges, un "
+                         "écart positif signale davantage d'erreurs ; pour les autres mesures, un écart négatif. "
+                         "« — » : écart non calculable (mesure non définie ou non disponible).")
+MINUS_SIGN = "−"
+
+
+def _entry_rate(entry: Mapping[str, Any] | None) -> float | None:
+    """Valeur exacte d'une ligne de synthèse (effectifs quand ils existent, valeur arrondie sinon)."""
+    if entry is None or entry.get("note"):
+        return None
+    if entry.get("numerator") is not None and entry.get("denominator"):
+        return entry["numerator"] / entry["denominator"]
+    return entry.get("value")
+
+
+def synthesis_rows(reports: Mapping[str, Mapping[str, Any]]) -> list[JsonDict]:
+    """Lignes de synthèse des partitions appariées par composant et par mesure, dans l'ordre des rapports.
+
+    Chaque ligne donne ``component``, ``measure``, ``entries`` (ligne de synthèse de chaque
+    partition, ``None`` si la mesure en est absente), ``difference`` (test moins développement,
+    proportion entre −1 et 1, ou ``None``) et ``disjoint`` (vrai quand les deux intervalles de
+    confiance existent et ne se chevauchent pas).
+    """
+    keys: list[tuple[str, str]] = []
+    by_split: dict[str, dict[tuple[str, str], Mapping[str, Any]]] = {}
+    for split, report in reports.items():
+        by_split[split] = {}
+        for entry in report["summary"]:
+            key = (entry["component"], entry["measure"])
+            by_split[split][key] = entry
+            if key not in keys:
+                keys.append(key)
+    rows: list[JsonDict] = []
+    for component, measure in keys:
+        entries = {split: by_split[split].get((component, measure)) for split in reports}
+        dev, test = entries.get(DEV_SPLIT), entries.get(TEST_SPLIT)
+        dev_rate, test_rate = _entry_rate(dev), _entry_rate(test)
+        difference = None if dev_rate is None or test_rate is None else test_rate - dev_rate
+        disjoint = bool(dev and test and dev.get("ci95") and test.get("ci95")
+                        and (test["ci95"][1] < dev["ci95"][0] or dev["ci95"][1] < test["ci95"][0]))
+        rows.append({"component": component, "measure": measure, "entries": entries,
+                     "difference": difference, "disjoint": disjoint})
+    return rows
+
+
+def format_difference(difference: float | None) -> str:
+    """Écart en points de pourcentage à une décimale, signé (« +2,4 », « −10,5 », « 0,0 ») ; « — » sans valeur."""
+    if difference is None:
+        return NO_VALUE
+    points = round(difference * 100, 1)
+    if points == 0:
+        return "0,0"
+    text = f"{abs(points):.1f}".replace(".", ",")
+    return ("+" if points > 0 else MINUS_SIGN) + text
+
+
+def _split_cells(entry: Mapping[str, Any] | None) -> list[str]:
+    if entry is None:
+        return [NO_VALUE, NO_VALUE, NO_VALUE]
+    return [fraction(entry["numerator"], entry["denominator"]), entry["note"] or format_percent(entry["value"]),
+            format_interval(entry["ci95"])]
+
+
+def _synthesis_dataset_blocks(reports: Mapping[str, Mapping[str, Any]]) -> list[Block]:
+    rows = []
+    for split, report in reports.items():
+        dataset = report["dataset"]
+        rows.append([code(split), split_label(split), SPLIT_USES.get(split, NO_VALUE), code(dataset["path"]),
+                     str(dataset["items"]), str(dataset["orders"]), str(dataset["injections"]),
+                     report["run_date"], code(dataset["sha256"])])
+    return [
+        table(["Partition", "Nom", "Usage", "Fichier", "Éléments", "Commandes", "Injections", "Date de l'exécution",
+               "Empreinte SHA-256"], rows, "llllrrrll"),
+        [SHA_NOTE],
+    ]
+
+
+def _synthesis_table(rows: Sequence[Mapping[str, Any]], splits: Sequence[str]) -> Block:
+    headers = ["Composant", "Mesure"]
+    for split in splits:
+        headers += [f"Effectifs ({split})", f"Valeur ({split})", f"Intervalle de confiance à 95 % ({split})"]
+    headers.append("Écart (points)")
+    lines = [[row["component"], row["measure"],
+              *(cell_text for split in splits for cell_text in _split_cells(row["entries"].get(split))),
+              format_difference(row["difference"])]
+             for row in rows]
+    return table(headers, lines, "ll" + "rrr" * len(splits) + "r")
+
+
+def _disjoint_blocks(rows: Sequence[Mapping[str, Any]]) -> list[Block]:
+    disjoint = [f"{row['component']} — {row['measure']} ({format_difference(row['difference'])} points)"
+                for row in rows if row["disjoint"]]
+    explanation = ("Quand les intervalles de confiance des deux partitions ne se chevauchent pas, l'écart s'explique "
+                   "mal par le seul hasard de l'échantillonnage. Ce critère est prudent : deux intervalles qui se "
+                   "chevauchent n'excluent pas un écart réel, mais ne permettent pas de l'affirmer.")
+    if not disjoint:
+        return [[explanation], ["Aucune mesure n'a des intervalles disjoints entre les deux partitions."]]
+    return [[explanation], ["Mesures dont les intervalles sont disjoints :"], [f"- {line}" for line in disjoint]]
+
+
+def _enumeration(parts: Sequence[str]) -> str:
+    """Énumération à la française : « a », « a et b », « a, b et c »."""
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " et " + parts[-1]
+
+
+def render_synthesis(reports: Mapping[str, Mapping[str, Any]]) -> str:
+    """Synthèse Markdown des rapports hors ligne des partitions, rédigée à partir de leurs JSON.
+
+    Args:
+        reports: rapport hors ligne (contenu du JSON) de chaque partition, par code de partition,
+            dans l'ordre des colonnes.
+    """
+    splits = list(reports)
+    rows = synthesis_rows(reports)
+    report_files = _enumeration([code(f"{report_name(OFFLINE_REPORT_NAME, split)}.md") for split in splits])
+    builders = [
+        ("Partitions évaluées", lambda number: _synthesis_dataset_blocks(reports)),
+        ("Mesures employées", lambda number: [
+            table(["Mesure", "Définition"],
+                  [[f"**{MEASURE_DEFINITIONS[key][0]}**", MEASURE_DEFINITIONS[key][1]] for key in SYNTHESIS_MEASURES]
+                  + [[f"**{DIFFERENCE_DEFINITION[0]}**", DIFFERENCE_DEFINITION[1]]]),
+            ["« Effectifs » : numérateur et dénominateur de la mesure. « n.d. » : mesure non définie "
+             "(dénominateur nul). « — » : aucune valeur. Le F1 et le macro-F1 ne sont pas des proportions "
+             "d'éléments : ils n'ont ni effectifs ni intervalle de confiance."],
+        ]),
+        ("Comparaison par mesure", lambda number: [_synthesis_table(rows, splits)]),
+        ("Écarts entre les partitions", lambda number: _disjoint_blocks(rows)),
+    ]
+    return _join([
+        _heading(1, "Synthèse de l'évaluation hors ligne : jeu de développement et jeu de test"),
+        [f"{SPLITS_DEFINITION} {SYNTHESIS_INTRO}"],
+        [f"Les résultats par langue, les matrices de confusion et les éléments mal classés de chaque partition "
+         f"sont dans {report_files}."],
+        *_numbered_sections(builders),
+    ])
+
+
 # ---------------------------------------------------------------- écriture et ligne de commande
+
+def report_name(base: str, split: str) -> str:
+    """Nom des fichiers d'un rapport, sans extension : ``rapport_hors_ligne_dev``, ``rapport_en_ligne_test``…"""
+    return f"{base}_{split}"
+
 
 def write_report(report: Mapping[str, Any], markdown: str, output_dir: Path | str, name: str) -> tuple[Path, Path]:
     """Écrit ``<name>.md`` et ``<name>.json`` (UTF-8, fins de ligne « \\n ») ; renvoie les deux chemins."""
@@ -1460,6 +1697,16 @@ def write_report(report: Mapping[str, Any], markdown: str, output_dir: Path | st
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     logger.info("Rapport écrit : %s", markdown_path)
     return markdown_path, json_path
+
+
+def write_synthesis(reports: Mapping[str, Mapping[str, Any]], output_dir: Path | str) -> Path:
+    """Écrit ``synthese.md`` (UTF-8, fins de ligne « \\n ») à partir des rapports hors ligne ; renvoie son chemin."""
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{SYNTHESIS_NAME}.md"
+    path.write_text(render_synthesis(reports), encoding="utf-8", newline="\n")
+    logger.info("Synthèse écrite : %s", path)
+    return path
 
 
 def summary_lines(entries: Iterable[Mapping[str, Any]]) -> list[str]:
@@ -1483,16 +1730,35 @@ def _parse_date(value: str) -> date:
 def build_parser() -> argparse.ArgumentParser:
     """Options de la ligne de commande."""
     parser = argparse.ArgumentParser(
-        description="Évalue les composants d'analyse des messages clients sur le jeu annoté.")
+        description="Évalue les composants d'analyse des messages clients sur le corpus annoté.")
     parser.add_argument("--online", action="store_true",
                         help="extraction complète par le modèle de langue (clé OPENAI_API_KEY requise)")
-    parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET,
-                        help="jeu annoté au format JSON Lines (par défaut evaluation/dataset/messages.jsonl)")
+    parser.add_argument("--split", choices=SPLITS,
+                        help="partition à évaluer : dev (jeu de développement) ou test (jeu de test tenu à "
+                             "l'écart) ; par défaut les deux")
+    parser.add_argument("--dataset", type=Path,
+                        help="fichier JSON Lines de la partition choisie par --split, à la place de "
+                             "evaluation/dataset/messages.jsonl (dev) ou messages_test.jsonl (test)")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                         help="dossier des rapports (par défaut evaluation/results)")
     parser.add_argument("--date", type=_parse_date,
                         help="date d'exécution inscrite dans le rapport, AAAA-MM-JJ (par défaut la date du jour)")
     return parser
+
+
+def requested_datasets(split: str | None, dataset: Path | None) -> dict[str, Path]:
+    """Fichier de chaque partition à évaluer : les deux partitions sans ``split``, sinon celle demandée.
+
+    ``dataset`` remplace le fichier de la partition ``split``.
+
+    Raises:
+        ValueError: ``dataset`` donné sans ``split``.
+    """
+    if split is None:
+        if dataset is not None:
+            raise ValueError(DATASET_WITHOUT_SPLIT)
+        return {name: SPLIT_DATASETS[name] for name in SPLITS}
+    return {split: dataset if dataset is not None else SPLIT_DATASETS[split]}
 
 
 def _load_items(path: Path) -> list[DatasetItem] | None:
@@ -1505,9 +1771,21 @@ def _load_items(path: Path) -> list[DatasetItem] | None:
     return None
 
 
+def _load_splits(datasets: Mapping[str, Path]) -> dict[str, list[DatasetItem]] | None:
+    """Lit toutes les partitions avant d'écrire le moindre rapport ; ``None`` si l'une est invalide."""
+    loaded: dict[str, list[DatasetItem]] = {}
+    for split, path in datasets.items():
+        items = _load_items(path)
+        if items is None:
+            return None
+        loaded[split] = items
+    return loaded
+
+
 def _print_outcome(report: Mapping[str, Any], paths: Sequence[Path]) -> None:
     for path in paths:
         print(f"Écrit : {path}")
+    print(f"{split_label(report['split']).capitalize()} ({report['split']}) :")
     for line in summary_lines(report["summary"]):
         print(line)
 
@@ -1522,21 +1800,40 @@ def _online_client(settings: Settings | None, llm: Any) -> tuple[Settings | None
     return settings, (llm if llm is not None else LLMClient.from_settings(settings))
 
 
-def _run_online(args: argparse.Namespace, run_date: date, settings: Settings | None, llm: Any) -> int:
+def _run_online(args: argparse.Namespace, datasets: Mapping[str, Path], run_date: date,
+                settings: Settings | None, llm: Any) -> int:
     settings, client = _online_client(settings, llm)
     if settings is None:
         return EXIT_INVALID_INPUT
     if not client.available:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_NO_API_KEY
-    items = _load_items(args.dataset)
-    if items is None:
+    loaded = _load_splits(datasets)
+    if loaded is None:
         return EXIT_INVALID_INPUT
     models = {"extraction": settings.model_extraction, "light": settings.model_light,
               "temperature": settings.llm_temperature}
-    report = build_online_report(items, dataset_path=args.dataset, run_date=run_date,
-                                 extract=build_online_extractor(settings, client, run_date), models=models)
-    _print_outcome(report, write_report(report, render_online_markdown(report), args.output_dir, ONLINE_REPORT_NAME))
+    extract = build_online_extractor(settings, client, run_date)
+    for split, items in loaded.items():
+        report = build_online_report(items, dataset_path=datasets[split], run_date=run_date, extract=extract,
+                                     models=models, split=split)
+        _print_outcome(report, write_report(report, render_online_markdown(report), args.output_dir,
+                                            report_name(ONLINE_REPORT_NAME, split)))
+    return EXIT_OK
+
+
+def _run_offline(args: argparse.Namespace, datasets: Mapping[str, Path], run_date: date) -> int:
+    loaded = _load_splits(datasets)
+    if loaded is None:
+        return EXIT_INVALID_INPUT
+    reports: dict[str, JsonDict] = {}
+    for split, items in loaded.items():
+        report = build_offline_report(items, dataset_path=datasets[split], run_date=run_date, split=split)
+        _print_outcome(report, write_report(report, render_offline_markdown(report), args.output_dir,
+                                            report_name(OFFLINE_REPORT_NAME, split)))
+        reports[split] = report
+    if set(reports) == set(SPLITS):
+        print(f"Écrit : {write_synthesis(reports, args.output_dir)}")
     return EXIT_OK
 
 
@@ -1549,17 +1846,16 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None,
         llm: client des modèles de langue de l'évaluation en ligne ; par défaut construit depuis
             la configuration.
     """
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        datasets = requested_datasets(args.split, args.dataset)
+    except ValueError as exc:
+        parser.error(str(exc))
     run_date = args.date or date.today()
     if args.online:
-        return _run_online(args, run_date, settings, llm)
-    items = _load_items(args.dataset)
-    if items is None:
-        return EXIT_INVALID_INPUT
-    report = build_offline_report(items, dataset_path=args.dataset, run_date=run_date)
-    _print_outcome(report, write_report(report, render_offline_markdown(report), args.output_dir,
-                                        OFFLINE_REPORT_NAME))
-    return EXIT_OK
+        return _run_online(args, datasets, run_date, settings, llm)
+    return _run_offline(args, datasets, run_date)
 
 
 def _use_utf8_console() -> None:

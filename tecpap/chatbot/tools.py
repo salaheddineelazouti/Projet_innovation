@@ -19,11 +19,12 @@ Commandes visibles par un expéditeur :
 1. les commandes envoyées depuis son numéro (colonne ``whatsapp_from``) ;
 2. les commandes d'un client dont le téléphone est ce numéro, à condition que le lien entre le
    numéro et le client ait été confirmé par l'équipe commerciale : au moins une commande
-   WhatsApp de ce numéro pour ce client a été validée. Cette condition existe parce que
-   :meth:`tecpap.db.database.DatabaseManager.get_or_create_client` complète le téléphone d'un
-   client existant dès la première commande reçue à son nom ; sans elle, un expéditeur pourrait
-   passer commande au nom d'une entreprise sans téléphone enregistré, puis consulter les
-   commandes de cette entreprise reçues par email.
+   WhatsApp de ce numéro pour ce client a été validée. Le téléphone d'un expéditeur n'est
+   rattaché à un client existant qu'à la validation d'une de ses commandes
+   (:meth:`tecpap.db.database.DatabaseManager.attach_phone_to_client`, appelée par l'API de
+   validation) ; la condition protège en plus les téléphones enregistrés autrement (saisie,
+   bases plus anciennes). Sans ces deux règles, un expéditeur pourrait passer commande au nom
+   d'une entreprise, puis consulter les commandes de cette entreprise reçues par email.
 
 Les numéros sont comparés sous une forme normalisée des deux côtés : préfixe « whatsapp: »,
 espaces, tirets, points, parenthèses et préfixe interurbain « (0) » retirés dans la colonne, et
@@ -73,12 +74,20 @@ VISIBLE_STATUSES: tuple[str, ...] = ("en_attente", "validee", "rejetee")
 MAX_REFERENCE_CHARS = 40
 MAX_QUERY_CHARS = 300
 MAX_PRODUCT_CHARS = 80
+MAX_MESSAGE_SID_CHARS = 200
 
-ORDER_METADATA_FIELDS: tuple[str, ...] = ("message_brut", "langue", "modele_llm", "anomalies", "champs_manquants")
-"""Informations de traçabilité transmises avec une commande (enregistrées quand la table a ces colonnes)."""
+ORDER_METADATA_FIELDS: tuple[str, ...] = (
+    "message_brut", "langue", "modele_llm", "routage_modele", "anomalies", "champs_manquants",
+)
+"""Informations de traçabilité transmises avec une commande.
+
+Ce sont les colonnes de :data:`tecpap.db.database.ORDER_AUDIT_FIELDS`, hors ``message_sid``,
+fixé par :meth:`AssistantTools.submit_order`.
+"""
 
 _SUBMITTABLE_FIELDS = frozenset(name for name in ORDER_FIELD_KINDS if name != "est_bon_commande") \
     | frozenset(ORDER_METADATA_FIELDS)
+_LIST_METADATA_FIELDS = frozenset({"anomalies", "champs_manquants"})
 _REORDER_FIELDS = ("nature_produit", "quantite", "unite", "type_papier", "grammage", "laize", "format_sac",
                    "type_sac", "impression_client", "code_article")
 _REFERENCE_ID_RE = re.compile(r"(?:CMD-?)?(\d{1,12})")
@@ -361,26 +370,29 @@ class AssistantTools:
 
         Args:
             draft: commande normalisée (``entreprise_cliente``, ``type_produit``, ``quantite``…).
-            message_sid: identifiant Twilio du message de confirmation ; un même identifiant ne
-                crée qu'une commande.
+            message_sid: identifiant Twilio du message de confirmation, enregistré dans
+                ``commandes.message_sid`` ; un même identifiant ne crée qu'une commande.
 
         Raises:
             ValueError: un champ obligatoire manque.
         """
+        # Une liste de traçabilité vide (aucune anomalie) est gardée : elle est enregistrée « [] ».
         order = {name: value for name, value in draft.items() if name in _SUBMITTABLE_FIELDS
-                 and value not in (None, "", [], {})}
+                 and (value not in (None, "", [], {}) or (name in _LIST_METADATA_FIELDS and value == []))}
         missing = [name for name in REQUIRED_ORDER_FIELDS if name not in order]
         if missing:
             raise ValueError(f"commande incomplète, champs manquants : {', '.join(missing)}")
 
         if message_sid:
-            email_id = f"whatsapp_chat_{str(message_sid).strip()[:64]}"
-            existing = self._existing_order("email_id", email_id)
-            if existing is not None and existing[1]:
-                logger.info("Commande déjà enregistrée pour ce message (id %s)", existing[0])
-                return existing[0]
-            if existing is None:
-                order["email_id"] = email_id
+            sid = str(message_sid).strip()[:MAX_MESSAGE_SID_CHARS]
+            identifiers = {"message_sid": sid, "email_id": f"whatsapp_chat_{sid[:64]}"}
+            for column, value in identifiers.items():
+                existing = self._existing_order(column, value)
+                if existing is not None and existing[1]:
+                    logger.info("Commande déjà enregistrée pour ce message (id %s)", existing[0])
+                    return existing[0]
+                if existing is None:
+                    order[column] = value
 
         numero = order.get("numero_commande")
         if numero:

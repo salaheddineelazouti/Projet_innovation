@@ -1,10 +1,11 @@
 {
   "report": "hors_ligne",
+  "split": "dev",
   "run_date": "2026-10-25",
   "package_version": "3.0.0",
   "dataset": {
     "path": "evaluation/dataset/messages.jsonl",
-    "sha256": "09c7adc05b0fac57c73b3d467d7b808e28d4f128b49ba529eb8a8c63c6aedf5e",
+    "sha256": "96fa89491ab4acded5276a5a68919a4ad53d0fc1d75c66758a4e8df2655f6e60",
     "items": 89,
     "email": 24,
     "whatsapp": 65,
@@ -215,23 +216,10 @@
         "errors": []
       },
       "unite": {
-        "correct": 39,
+        "correct": 41,
         "total": 41,
-        "rate": 0.9512,
-        "errors": [
-          {
-            "id": "fr-001",
-            "language": "fr",
-            "expected": "US",
-            "obtained": "pièces"
-          },
-          {
-            "id": "fr-010",
-            "language": "fr",
-            "expected": "US",
-            "obtained": "pièces"
-          }
-        ]
+        "rate": 1.0,
+        "errors": []
       },
       "entreprise_cliente": {
         "correct": 41,
@@ -265,9 +253,9 @@
           "rate": 1.0
         },
         "unite": {
-          "correct": 15,
+          "correct": 17,
           "total": 17,
-          "rate": 0.8824
+          "rate": 1.0
         },
         "entreprise_cliente": {
           "correct": 17,
@@ -958,7 +946,7 @@
       "denominator": 89,
       "value": 1.0,
       "ci95": [
-        0.9586,
+        0.958623,
         1.0
       ],
       "note": null
@@ -970,7 +958,7 @@
       "denominator": 89,
       "value": 1.0,
       "ci95": [
-        0.9586,
+        0.958623,
         1.0
       ],
       "note": null
@@ -982,7 +970,7 @@
       "denominator": 41,
       "value": 1.0,
       "ci95": [
-        0.9143,
+        0.914332,
         1.0
       ],
       "note": null
@@ -994,7 +982,7 @@
       "denominator": 41,
       "value": 1.0,
       "ci95": [
-        0.9143,
+        0.914332,
         1.0
       ],
       "note": null
@@ -1002,12 +990,12 @@
     {
       "component": "Extraction par règles",
       "measure": "Exactitude de `unite`",
-      "numerator": 39,
+      "numerator": 41,
       "denominator": 41,
-      "value": 0.9512,
+      "value": 1.0,
       "ci95": [
-        0.8386,
-        0.9865
+        0.914332,
+        1.0
       ],
       "note": null
     },
@@ -1018,7 +1006,7 @@
       "denominator": 41,
       "value": 1.0,
       "ci95": [
-        0.9143,
+        0.914332,
         1.0
       ],
       "note": null
@@ -1030,7 +1018,7 @@
       "denominator": 41,
       "value": 1.0,
       "ci95": [
-        0.9143,
+        0.914332,
         1.0
       ],
       "note": null
@@ -1042,7 +1030,7 @@
       "denominator": 89,
       "value": 1.0,
       "ci95": [
-        0.9586,
+        0.958623,
         1.0
       ],
       "note": null
@@ -1054,7 +1042,7 @@
       "denominator": 41,
       "value": 1.0,
       "ci95": [
-        0.9143,
+        0.914332,
         1.0
       ],
       "note": null
@@ -1066,7 +1054,7 @@
       "denominator": 41,
       "value": 1.0,
       "ci95": [
-        0.9143,
+        0.914332,
         1.0
       ],
       "note": null
@@ -1087,7 +1075,7 @@
       "denominator": 89,
       "value": 1.0,
       "ci95": [
-        0.9586,
+        0.958623,
         1.0
       ],
       "note": null
@@ -1099,7 +1087,7 @@
       "denominator": 7,
       "value": 1.0,
       "ci95": [
-        0.6457,
+        0.64567,
         1.0
       ],
       "note": null
@@ -1111,7 +1099,7 @@
       "denominator": 7,
       "value": 1.0,
       "ci95": [
-        0.6457,
+        0.64567,
         1.0
       ],
       "note": null
@@ -1132,7 +1120,7 @@
       "denominator": 18,
       "value": 1.0,
       "ci95": [
-        0.8241,
+        0.824121,
         1.0
       ],
       "note": null
@@ -1144,7 +1132,7 @@
       "denominator": 18,
       "value": 1.0,
       "ci95": [
-        0.8241,
+        0.824121,
         1.0
       ],
       "note": null
@@ -1166,7 +1154,7 @@
       "value": 0.0,
       "ci95": [
         0.0,
-        0.0513
+        0.051328
       ],
       "note": null
     },
@@ -1178,7 +1166,7 @@
       "value": 0.0,
       "ci95": [
         0.0,
-        0.2775
+        0.277533
       ],
       "note": null
     },
@@ -1189,7 +1177,7 @@
       "denominator": 89,
       "value": 1.0,
       "ci95": [
-        0.9586,
+        0.958623,
         1.0
       ],
       "note": null

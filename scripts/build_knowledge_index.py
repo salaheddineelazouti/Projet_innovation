@@ -8,10 +8,10 @@ Usage :
     python scripts/build_knowledge_index.py --evaluate tests/data/rag_queries.jsonl
                                                              mesure de la séparation des questions annotées
 
-Le dossier des documents vient de KNOWLEDGE_DIR (ou de --knowledge-dir). Avec une clé
-OPENAI_API_KEY, les vecteurs sont calculés par le modèle EMBEDDING_MODEL ; sans clé, ou avec
---local, par le calcul local. Le script affiche le bilan de l'indexation : extraits ajoutés,
-mis à jour, supprimés et inchangés.
+Le dossier des documents vient de KNOWLEDGE_DIR (ou de --knowledge-dir). Avec RAG_EMBEDDER=openai
+et une clé OPENAI_API_KEY, les vecteurs sont calculés par le modèle EMBEDDING_MODEL ; sinon
+(RAG_EMBEDDER=local, valeur par défaut, ou aucune clé), ou avec --local, par le calcul local. Le
+script affiche le bilan de l'indexation : extraits ajoutés, mis à jour, supprimés et inchangés.
 
 Avec --evaluate, le script mesure ensuite, sur un jeu de questions annotées, la séparation entre
 les questions auxquelles la base répond et les autres au seuil RAG_MIN_SCORE (ou --threshold),

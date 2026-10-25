@@ -16,14 +16,14 @@ from tecpap.llm.client import LLMClient
 from tecpap.logging_config import configure_logging
 from tecpap.web.auth import init_auth
 from tecpap.web.errors import register_error_handlers
-from tecpap.web.routes import api, auth_routes, backups, exports, pages, webhooks
+from tecpap.web.routes import api, assistant, auth_routes, backups, exports, pages, webhooks
 from tecpap.web.scheduler import should_start_in_this_process
 from tecpap.web.security_headers import init_security_headers
 from tecpap.web.services import EXTENSION_KEY, Services, get_services
 
 __all__ = ["create_app", "get_services"]
 
-BLUEPRINTS = (auth_routes.bp, pages.bp, api.bp, webhooks.bp, backups.bp, exports.bp)
+BLUEPRINTS = (auth_routes.bp, pages.bp, assistant.bp, api.bp, webhooks.bp, backups.bp, exports.bp)
 
 
 def create_app(settings: Settings | None = None, *, llm: LLMClient | None = None) -> Flask:

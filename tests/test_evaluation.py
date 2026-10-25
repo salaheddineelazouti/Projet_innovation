@@ -1,9 +1,14 @@
 """Tests du programme d'évaluation ``evaluation/run_eval.py``.
 
-Le programme est exécuté hors ligne sur le jeu annoté du dépôt et sur de petits jeux écrits dans
-le dossier temporaire du test. Les rapports sont écrits dans ``tmp_path`` : les fichiers de
+Le programme est exécuté hors ligne sur les deux partitions du corpus annoté du dépôt (jeu de
+développement et jeu de test tenu à l'écart) et sur de petits jeux écrits dans le dossier
+temporaire du test. Les rapports sont écrits dans ``tmp_path`` : les fichiers de
 ``evaluation/results/`` ne sont jamais modifiés. L'évaluation en ligne est exercée avec une
 doublure du client des modèles de langue, sans réseau ni clé d'API.
+
+Les contrôles portant sur le jeu de test sont structurels (schéma, effectifs, cohérence des
+rapports, absence de messages communs avec le jeu de développement) : leurs messages d'échec ne
+citent aucun texte de ce jeu.
 """
 
 from __future__ import annotations
@@ -26,8 +31,11 @@ from tests.fakes import FakeLLMClient
 ROOT = Path(__file__).resolve().parent.parent
 RUN_EVAL_PATH = ROOT / "evaluation" / "run_eval.py"
 DATASET_PATH = ROOT / "evaluation" / "dataset" / "messages.jsonl"
+TEST_DATASET_PATH = ROOT / "evaluation" / "dataset" / "messages_test.jsonl"
 RUN_DATE = date(2026, 1, 15)
 OTHER_DATE = date(2026, 3, 2)
+REPORT_FILES = ("rapport_hors_ligne_dev.md", "rapport_hors_ligne_dev.json", "rapport_hors_ligne_test.md",
+                "rapport_hors_ligne_test.json", "synthese.md")
 
 
 def _load_run_eval():
@@ -87,15 +95,21 @@ def small_dataset(tmp_path) -> Path:
     return write_dataset(tmp_path / "petit.jsonl", SMALL_ITEMS)
 
 
-@pytest.fixture(scope="module")
-def dataset_items():
-    return run_eval.load_dataset(DATASET_PATH)
+@pytest.fixture(scope="module", params=run_eval.SPLITS)
+def split(request) -> str:
+    """Partition du corpus du dépôt : chaque test qui en dépend est exécuté sur les deux."""
+    return request.param
 
 
 @pytest.fixture(scope="module")
-def offline_report(dataset_items):
-    return run_eval.build_offline_report(dataset_items, dataset_path=DATASET_PATH, run_date=RUN_DATE,
-                                         intent_loader=no_intents)
+def dataset_items(split):
+    return run_eval.load_dataset(run_eval.SPLIT_DATASETS[split])
+
+
+@pytest.fixture(scope="module")
+def offline_report(dataset_items, split):
+    return run_eval.build_offline_report(dataset_items, dataset_path=run_eval.SPLIT_DATASETS[split],
+                                         run_date=RUN_DATE, split=split, intent_loader=no_intents)
 
 
 @pytest.fixture(scope="module")
@@ -104,20 +118,35 @@ def offline_markdown(offline_report):
 
 
 @pytest.fixture(scope="module")
+def dev_items():
+    return run_eval.load_dataset(DATASET_PATH)
+
+
+@pytest.fixture(scope="module")
 def full_run(tmp_path_factory):
-    """Exécution complète de la ligne de commande sur le jeu du dépôt, rapports dans un dossier temporaire."""
+    """Exécution complète de la ligne de commande sur les deux partitions du dépôt, dans un dossier temporaire."""
     output_dir = tmp_path_factory.mktemp("rapports")
     code = run_eval.main(["--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()])
-    markdown = (output_dir / "rapport_hors_ligne.md").read_text(encoding="utf-8")
-    report = json.loads((output_dir / "rapport_hors_ligne.json").read_text(encoding="utf-8"))
-    return SimpleNamespace(code=code, output_dir=output_dir, markdown=markdown, report=report)
+    markdown = {split: (output_dir / f"rapport_hors_ligne_{split}.md").read_text(encoding="utf-8")
+                for split in run_eval.SPLITS}
+    reports = {split: json.loads((output_dir / f"rapport_hors_ligne_{split}.json").read_text(encoding="utf-8"))
+               for split in run_eval.SPLITS}
+    synthesis = (output_dir / "synthese.md").read_text(encoding="utf-8")
+    return SimpleNamespace(code=code, output_dir=output_dir, markdown=markdown, reports=reports, synthesis=synthesis)
+
+
+def small_split_datasets(tmp_path: Path, test_items: list[dict] | None = None) -> dict[str, Path]:
+    """Petits fichiers des deux partitions, à substituer à ``run_eval.SPLIT_DATASETS``."""
+    return {"dev": write_dataset(tmp_path / "dev.jsonl", SMALL_ITEMS),
+            "test": write_dataset(tmp_path / "test.jsonl", test_items if test_items is not None else SMALL_ITEMS[:3])}
 
 
 # ---------------------------------------------------------------- lecture du jeu
 
 class TestLoadDataset:
-    def test_repository_dataset_loads_every_line(self, dataset_items):
-        lines = [line for line in DATASET_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    def test_repository_dataset_loads_every_line(self, dataset_items, split):
+        path = run_eval.SPLIT_DATASETS[split]
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         assert len(dataset_items) == len(lines)
         assert len({item.id for item in dataset_items}) == len(dataset_items)
 
@@ -132,6 +161,29 @@ class TestLoadDataset:
         assert reorder.is_order and reorder.is_reorder
         trap = next(item for item in dataset_items if item.category == "piege_faux_positif")
         assert trap.is_trap and not trap.is_injection
+
+    def test_quantity_and_unit_are_given_together(self, dataset_items):
+        mismatched = sum((item.expected["quantite"] is None) != (item.expected["unite"] is None)
+                         for item in dataset_items)
+        assert mismatched == 0, "quantité sans unité ou unité sans quantité"
+
+    def test_split_files(self):
+        assert run_eval.SPLITS == ("dev", "test")
+        assert run_eval.SPLIT_DATASETS == {"dev": DATASET_PATH, "test": TEST_DATASET_PATH}
+
+    def test_test_split_shares_no_message_with_the_development_split(self, dev_items):
+        test_items = run_eval.load_dataset(TEST_DATASET_PATH)
+        shared_ids = len({item.id for item in dev_items} & {item.id for item in test_items})
+        shared_texts = len({run_eval.comparable_name(item.text) for item in dev_items}
+                           & {run_eval.comparable_name(item.text) for item in test_items})
+        unprefixed = sum(not item.id.startswith("test-") for item in test_items)
+        assert (shared_ids, shared_texts, unprefixed) == (0, 0, 0)
+
+    @pytest.mark.parametrize(("identifier", "written"), [("fr-001", "unités"), ("fr-010", "pièces")])
+    def test_unit_written_by_the_client_is_the_label(self, dev_items, identifier, written):
+        item = next(candidate for candidate in dev_items if candidate.id == identifier)
+        assert written in item.text
+        assert item.expected["unite"] == "pièces"
 
     def test_blank_lines_and_byte_order_mark_are_ignored(self, tmp_path):
         path = tmp_path / "jeu.jsonl"
@@ -269,7 +321,7 @@ class TestMeasures:
         assert ratio.as_dict() == {"correct": 0, "total": 0, "rate": None}
         for ok in (True, False, True):
             ratio.add(ok)
-        assert ratio.as_dict() == {"correct": 2, "total": 3, "rate": 0.6667}
+        assert ratio.as_dict() == {"correct": 2, "total": 3, "rate": round(2 / 3, run_eval.RATE_DECIMALS)}
 
     def test_binary_counts(self):
         counts = run_eval.BinaryCounts()
@@ -323,9 +375,13 @@ class TestMeasures:
 
     def test_summary_entry_of_a_proportion(self):
         entry = run_eval.summary_entry("Composant", "Exactitude", 39, 41)
-        assert entry["value"] == round(39 / 41, 4)
+        assert entry["value"] == round(39 / 41, run_eval.RATE_DECIMALS)
         low, high = entry["ci95"]
         assert low < entry["value"] < high
+
+    def test_percentage_is_rounded_once(self):
+        entry = run_eval.summary_entry("Composant", "Rappel", 4, 21)
+        assert run_eval.format_percent(entry["value"]) == "19,0 %"
 
     def test_summary_entry_without_proportion(self):
         entry = run_eval.summary_entry("Composant", "F1", value=0.97)
@@ -338,7 +394,7 @@ class TestMeasures:
 
 def assert_ratio(ratio: dict) -> None:
     assert 0 <= ratio["correct"] <= ratio["total"]
-    expected_rate = round(ratio["correct"] / ratio["total"], 4) if ratio["total"] else None
+    expected_rate = round(ratio["correct"] / ratio["total"], run_eval.RATE_DECIMALS) if ratio["total"] else None
     assert ratio["rate"] == expected_rate
 
 
@@ -348,22 +404,23 @@ def assert_binary(section: dict, positives: int) -> None:
     assert section["tp"] + section["fn"] == section["positives"] == positives
     assert len(section["false_positives"]) == section["fp"]
     assert len(section["false_negatives"]) == section["fn"]
-    assert section["accuracy"] == round((section["tp"] + section["tn"]) / section["total"], 4)
+    assert section["accuracy"] == round((section["tp"] + section["tn"]) / section["total"], run_eval.RATE_DECIMALS)
     if section["tp"] + section["fp"]:
-        assert section["precision"] == round(section["tp"] / (section["tp"] + section["fp"]), 4)
+        assert section["precision"] == round(section["tp"] / (section["tp"] + section["fp"]), run_eval.RATE_DECIMALS)
     for key in ("tp", "fp", "fn", "tn", "total"):
         assert sum(counts_by_language[key] for counts_by_language in section["by_language"].values()) == section[key]
 
 
 class TestOfflineReportConsistency:
-    def test_dataset_counts_add_up(self, offline_report, dataset_items):
+    def test_dataset_counts_add_up(self, offline_report, dataset_items, split):
         dataset = offline_report["dataset"]
+        assert offline_report["split"] == split
         assert dataset["items"] == len(dataset_items)
         assert dataset["email"] + dataset["whatsapp"] == dataset["items"]
         for key in ("items", "email", "whatsapp", "orders", "reorders", "injections", "traps"):
             assert sum(counts[key] for counts in dataset["by_language"].values()) == dataset[key]
         assert dataset["orders"] == sum(item.is_order for item in dataset_items)
-        assert dataset["path"] == "evaluation/dataset/messages.jsonl"
+        assert dataset["path"] == f"evaluation/dataset/{run_eval.SPLIT_DATASETS[split].name}"
         assert re.fullmatch(r"[0-9a-f]{64}", dataset["sha256"])
 
     def test_language_section(self, offline_report):
@@ -425,10 +482,14 @@ class TestOfflineReportConsistency:
         summary = offline_report["summary"]
         assert summary == run_eval.offline_summary(offline_report)
         for entry in summary:
-            if entry["numerator"] is not None:
-                assert entry["value"] == round(entry["numerator"] / entry["denominator"], 4)
-                low, high = entry["ci95"]
-                assert low <= entry["value"] <= high
+            if entry["numerator"] is None:
+                continue
+            if entry["denominator"] == 0:
+                assert entry["value"] is None and entry["ci95"] is None
+                continue
+            assert entry["value"] == round(entry["numerator"] / entry["denominator"], run_eval.RATE_DECIMALS)
+            low, high = entry["ci95"]
+            assert low <= entry["value"] <= high
         language = offline_report["language"]["code"]
         assert (summary[0]["numerator"], summary[0]["denominator"]) == (language["correct"], language["total"])
 
@@ -477,17 +538,23 @@ class TestOfflineMarkdown:
 
     def test_tables_are_well_formed(self, offline_markdown):
         tables = table_rows(offline_markdown)
-        assert len(tables) > 20
+        assert len(tables) >= 20
         for rows in tables:
             width = cell_count(rows[0])
             assert re.fullmatch(r"\|( ---:? \|)+", rows[1])
             assert all(cell_count(row) == width for row in rows), rows[0]
 
-    def test_header_gives_date_dataset_and_size(self, offline_markdown, offline_report):
-        assert offline_markdown.startswith("# Évaluation hors ligne de l'analyse des messages clients\n")
+    def test_header_gives_split_date_dataset_and_size(self, offline_markdown, offline_report, split):
+        label = run_eval.split_label(split)
+        assert offline_markdown.startswith(f"# Évaluation hors ligne de l'analyse des messages clients : {label}\n")
+        assert f"Ce rapport porte sur le {label} (`{split}`). {run_eval.SPLIT_ROLES[split]}" in offline_markdown
+        assert f"| Partition | `{split}` |" in offline_markdown
         assert f"| Date de l'exécution | {RUN_DATE.isoformat()} |" in offline_markdown
         assert f"| Éléments du jeu | {offline_report['dataset']['items']} |" in offline_markdown
         assert f"`{offline_report['dataset']['sha256']}`" in offline_markdown
+
+    def test_unit_comparison_follows_the_written_unit(self, offline_markdown):
+        assert "Égalité exacte avec l'unité écrite par le client : `pièces`" in offline_markdown
 
     def test_measures_are_defined_before_the_summary(self, offline_markdown):
         definitions = offline_markdown.index("## 2. Mesures employées")
@@ -521,15 +588,15 @@ class TestOfflineMarkdown:
         forbidden = r"\b(?:désormais|nouveau|nouvelle|maintenant|corrigé|renuméroté|à venir|comme convenu)\b"
         assert not re.search(forbidden, offline_markdown, re.IGNORECASE)
 
-    def test_rendering_is_deterministic(self, dataset_items, offline_report, offline_markdown):
-        again = run_eval.build_offline_report(dataset_items, dataset_path=DATASET_PATH, run_date=RUN_DATE,
-                                              intent_loader=no_intents)
+    def test_rendering_is_deterministic(self, dataset_items, offline_report, offline_markdown, split):
+        again = run_eval.build_offline_report(dataset_items, dataset_path=run_eval.SPLIT_DATASETS[split],
+                                              run_date=RUN_DATE, split=split, intent_loader=no_intents)
         assert again == offline_report
         assert run_eval.render_offline_markdown(again) == offline_markdown
 
-    def test_only_the_run_date_changes_between_runs(self, dataset_items, offline_report, offline_markdown):
-        later = run_eval.build_offline_report(dataset_items, dataset_path=DATASET_PATH, run_date=OTHER_DATE,
-                                              intent_loader=no_intents)
+    def test_only_the_run_date_changes_between_runs(self, dataset_items, offline_report, offline_markdown, split):
+        later = run_eval.build_offline_report(dataset_items, dataset_path=run_eval.SPLIT_DATASETS[split],
+                                              run_date=OTHER_DATE, split=split, intent_loader=no_intents)
         assert {key for key in later if later[key] != offline_report[key]} == {"run_date"}
         changed = [(old, new) for old, new in zip(offline_markdown.splitlines(),
                                                   run_eval.render_offline_markdown(later).splitlines(), strict=True)
@@ -642,9 +709,9 @@ class TestIntents:
         assert sum(entry["support"] for entry in section["per_intent"].values()) == len(items)
         order, other = section["per_intent"]["order"], section["per_intent"]["other"]
         assert (order["tp"], order["fn"], order["precision"], order["recall"]) == (1, 1, 1.0, 0.5)
-        assert (other["tp"], other["fn"], other["recall"]) == (2, 1, round(2 / 3, 4))
+        assert (other["tp"], other["fn"], other["recall"]) == (2, 1, round(2 / 3, run_eval.RATE_DECIMALS))
         # Intentions présentes dans le jeu : order (F1 = 2/3) et other (F1 = 4/5).
-        assert section["macro_f1"] == round((2 / 3 + 0.8) / 2, 4)
+        assert section["macro_f1"] == round((2 / 3 + 0.8) / 2, run_eval.RATE_DECIMALS)
 
     def test_detector_receives_the_detected_language(self, items):
         calls = []
@@ -745,12 +812,14 @@ class TestOnline:
         assert extraction["fields"]["quantite"]["correct"] == 2
         assert extraction["fields"]["type_produit"]["correct"] == 1
         assert [entry["id"] for entry in extraction["fields"]["type_produit"]["errors"]] == ["fr-902", "fr-906"]
-        assert report["order_recognition"] == {"correct": 2, "total": 3, "rate": 0.6667, "errors": ["fr-906"]}
+        assert report["order_recognition"] == {"correct": 2, "total": 3, "rate": round(2 / 3, run_eval.RATE_DECIMALS), "errors": ["fr-906"]}
         assert report["normalization"]["successes"] == 2
         assert report["normalization"]["mean_confidence"] is not None
         assert report["summary"] == run_eval.online_summary(report)
         markdown = run_eval.render_online_markdown(report)
-        assert markdown.startswith("# Évaluation en ligne de l'extraction des commandes\n")
+        assert markdown.startswith("# Évaluation en ligne de l'extraction des commandes : jeu de développement\n")
+        assert report["split"] == "dev"
+        assert "| Partition | `dev` |" in markdown
         assert "`modele-test`" in markdown
         assert "Extractions en échec :\n\n`fr-906`." in markdown
         for rows in table_rows(markdown):
@@ -781,10 +850,25 @@ class TestOnline:
         assert "Configuration invalide : LLM_TIMEOUT" in capsys.readouterr().err
 
     def test_online_with_missing_dataset_exits_with_code_1(self, tmp_path):
-        code = run_eval.main(["--online", "--dataset", str(tmp_path / "absent.jsonl"), "--output-dir",
-                              str(tmp_path / "sortie")], settings=Settings.for_tests(tmp_path), llm=FakeLLMClient())
+        code = run_eval.main(["--online", "--split", "dev", "--dataset", str(tmp_path / "absent.jsonl"),
+                              "--output-dir", str(tmp_path / "sortie")],
+                             settings=Settings.for_tests(tmp_path), llm=FakeLLMClient())
         assert code == 1
         assert not (tmp_path / "sortie").exists()
+
+    def test_online_run_covers_both_splits_without_synthesis(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_eval, "SPLIT_DATASETS", small_split_datasets(tmp_path))
+        output_dir = tmp_path / "sortie"
+        code = run_eval.main(["--online", "--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()],
+                             settings=Settings.for_tests(tmp_path), llm=FakeLLMClient())
+        assert code == 0
+        assert sorted(path.name for path in output_dir.iterdir()) == [
+            "rapport_en_ligne_dev.json", "rapport_en_ligne_dev.md", "rapport_en_ligne_test.json",
+            "rapport_en_ligne_test.md"]
+        test_report = json.loads((output_dir / "rapport_en_ligne_test.json").read_text(encoding="utf-8"))
+        assert test_report["split"] == "test"
+        assert test_report["extraction"]["items"] == 2
+        assert test_report["failures"] == ["fr-901", "fr-902"]
 
     def test_without_api_key_exits_with_code_2(self, tmp_path, capsys):
         code = run_eval.main(["--online", "--output-dir", str(tmp_path / "sortie")],
@@ -814,11 +898,13 @@ class TestOnline:
         llm = FakeLLMClient(chat_json=[respond] * 20)
         settings = Settings.for_tests(tmp_path)
         output_dir = tmp_path / "sortie"
-        code = run_eval.main(["--online", "--dataset", str(small_dataset), "--output-dir", str(output_dir),
-                              "--date", RUN_DATE.isoformat()], settings=settings, llm=llm)
+        code = run_eval.main(["--online", "--split", "dev", "--dataset", str(small_dataset), "--output-dir",
+                              str(output_dir), "--date", RUN_DATE.isoformat()], settings=settings, llm=llm)
         assert code == 0
-        report = json.loads((output_dir / "rapport_en_ligne.json").read_text(encoding="utf-8"))
-        markdown = (output_dir / "rapport_en_ligne.md").read_text(encoding="utf-8")
+        assert sorted(path.name for path in output_dir.iterdir()) == ["rapport_en_ligne_dev.json",
+                                                                      "rapport_en_ligne_dev.md"]
+        report = json.loads((output_dir / "rapport_en_ligne_dev.json").read_text(encoding="utf-8"))
+        markdown = (output_dir / "rapport_en_ligne_dev.md").read_text(encoding="utf-8")
         assert report["models"] == {"extraction": settings.model_extraction, "light": settings.model_light,
                                     "temperature": settings.llm_temperature}
         assert report["failures"] == []
@@ -835,42 +921,114 @@ class TestOnline:
 # ---------------------------------------------------------------- ligne de commande
 
 class TestCommandLine:
-    def test_full_run_writes_both_reports(self, full_run):
+    def test_full_run_writes_both_splits_and_the_synthesis(self, full_run):
         assert full_run.code == 0
-        assert full_run.report["report"] == "hors_ligne"
-        assert full_run.report["run_date"] == RUN_DATE.isoformat()
-        assert full_run.markdown.startswith("# Évaluation hors ligne")
+        assert sorted(path.name for path in full_run.output_dir.iterdir()) == sorted(REPORT_FILES)
+        for split, report in full_run.reports.items():
+            assert report["report"] == "hors_ligne"
+            assert report["split"] == split
+            assert report["run_date"] == RUN_DATE.isoformat()
+            assert report["dataset"]["path"] == f"evaluation/dataset/{run_eval.SPLIT_DATASETS[split].name}"
+            assert full_run.markdown[split].startswith(
+                f"# Évaluation hors ligne de l'analyse des messages clients : {run_eval.split_label(split)}\n")
 
     def test_markdown_is_rendered_from_the_json(self, full_run):
-        assert run_eval.render_offline_markdown(full_run.report) == full_run.markdown
+        for split, report in full_run.reports.items():
+            assert run_eval.render_offline_markdown(report) == full_run.markdown[split]
+
+    def test_synthesis_is_rendered_from_both_json_reports(self, full_run):
+        assert run_eval.render_synthesis(full_run.reports) == full_run.synthesis
 
     def test_full_run_intent_section_is_consistent(self, full_run):
-        section = full_run.report["intent"]
-        if not section["available"]:
-            assert section["reason"]
-            assert f"Section {run_eval.UNAVAILABLE} : {section['reason']}." in full_run.markdown
-            return
-        assert_ratio(section["accuracy"])
-        assert len(section["errors"]) == section["accuracy"]["total"] - section["accuracy"]["correct"]
-        assert sum(entry["support"] for entry in section["per_intent"].values()) == section["items"]
-        assert sum(sum(row.values()) for row in section["confusion_matrix"]["counts"].values()) == section["items"]
+        for split, report in full_run.reports.items():
+            section = report["intent"]
+            if not section["available"]:
+                assert section["reason"]
+                assert f"Section {run_eval.UNAVAILABLE} : {section['reason']}." in full_run.markdown[split]
+                continue
+            assert_ratio(section["accuracy"])
+            assert len(section["errors"]) == section["accuracy"]["total"] - section["accuracy"]["correct"]
+            assert sum(entry["support"] for entry in section["per_intent"].values()) == section["items"]
+            assert sum(sum(row.values()) for row in section["confusion_matrix"]["counts"].values()) == section["items"]
 
     def test_full_run_prints_paths_and_summary(self, tmp_path, small_dataset, capsys):
-        code = run_eval.main(["--dataset", str(small_dataset), "--output-dir", str(tmp_path / "sortie")])
+        code = run_eval.main(["--split", "dev", "--dataset", str(small_dataset), "--output-dir", str(tmp_path / "sortie")])
         assert code == 0
         output = capsys.readouterr().out
-        assert f"Écrit : {tmp_path / 'sortie' / 'rapport_hors_ligne.md'}" in output
-        assert "Détection de la langue — Exactitude du code de langue : 80,0\u00a0% (4/5)" in output
+        assert f"Écrit : {tmp_path / 'sortie' / 'rapport_hors_ligne_dev.md'}" in output
+        assert "Jeu de développement (dev) :" in output
+        assert "Détection de la langue — Exactitude du code de langue : 80,0 % (4/5)" in output
+
+    def test_default_run_reads_both_split_files(self, tmp_path, monkeypatch, capsys):
+        datasets = small_split_datasets(tmp_path)
+        monkeypatch.setattr(run_eval, "SPLIT_DATASETS", datasets)
+        output_dir = tmp_path / "sortie"
+        assert run_eval.main(["--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()]) == 0
+        assert sorted(path.name for path in output_dir.iterdir()) == sorted(REPORT_FILES)
+        reports = {split: json.loads((output_dir / f"rapport_hors_ligne_{split}.json").read_text(encoding="utf-8"))
+                   for split in run_eval.SPLITS}
+        assert {split: report["dataset"]["items"] for split, report in reports.items()} == {"dev": 5, "test": 3}
+        assert {split: report["dataset"]["sha256"] for split, report in reports.items()} == {
+            split: run_eval.file_sha256(path) for split, path in datasets.items()}
+        output = capsys.readouterr().out
+        assert f"Écrit : {output_dir / 'synthese.md'}" in output
+        assert "Jeu de test tenu à l'écart (test) :" in output
+
+    @pytest.mark.parametrize("split", run_eval.SPLITS)
+    def test_single_split_writes_its_reports_only(self, tmp_path, monkeypatch, split):
+        monkeypatch.setattr(run_eval, "SPLIT_DATASETS", small_split_datasets(tmp_path))
+        output_dir = tmp_path / "sortie"
+        assert run_eval.main(["--split", split, "--output-dir", str(output_dir)]) == 0
+        assert sorted(path.name for path in output_dir.iterdir()) == [f"rapport_hors_ligne_{split}.json",
+                                                                      f"rapport_hors_ligne_{split}.md"]
+        report = json.loads((output_dir / f"rapport_hors_ligne_{split}.json").read_text(encoding="utf-8"))
+        assert report["split"] == split
+        assert report["dataset"]["items"] == {"dev": 5, "test": 3}[split]
+
+    def test_dataset_replaces_the_file_of_the_chosen_split(self, tmp_path, small_dataset):
+        output_dir = tmp_path / "sortie"
+        assert run_eval.main(["--split", "test", "--dataset", str(small_dataset), "--output-dir", str(output_dir)]) == 0
+        report = json.loads((output_dir / "rapport_hors_ligne_test.json").read_text(encoding="utf-8"))
+        assert report["split"] == "test"
+        assert report["dataset"]["path"] == small_dataset.resolve().as_posix()
+
+    def test_dataset_without_split_is_refused(self, tmp_path, small_dataset, capsys):
+        with pytest.raises(SystemExit) as exit_info:
+            run_eval.main(["--dataset", str(small_dataset), "--output-dir", str(tmp_path / "sortie")])
+        assert exit_info.value.code == 2
+        assert run_eval.DATASET_WITHOUT_SPLIT in capsys.readouterr().err
+        assert not (tmp_path / "sortie").exists()
+
+    def test_unknown_split_is_refused(self, tmp_path):
+        with pytest.raises(SystemExit) as exit_info:
+            run_eval.main(["--split", "validation", "--output-dir", str(tmp_path)])
+        assert exit_info.value.code == 2
+
+    def test_requested_datasets(self, tmp_path):
+        assert run_eval.requested_datasets(None, None) == dict(run_eval.SPLIT_DATASETS)
+        assert run_eval.requested_datasets("test", None) == {"test": TEST_DATASET_PATH}
+        assert run_eval.requested_datasets("dev", tmp_path / "x.jsonl") == {"dev": tmp_path / "x.jsonl"}
+        with pytest.raises(ValueError, match="--split"):
+            run_eval.requested_datasets(None, tmp_path / "x.jsonl")
+
+    def test_invalid_split_file_writes_nothing(self, tmp_path, monkeypatch, capsys):
+        datasets = small_split_datasets(tmp_path)
+        datasets["test"].write_text("{faux\n", encoding="utf-8")
+        monkeypatch.setattr(run_eval, "SPLIT_DATASETS", datasets)
+        assert run_eval.main(["--output-dir", str(tmp_path / "sortie")]) == run_eval.EXIT_INVALID_INPUT
+        assert "ligne 1 : JSON invalide" in capsys.readouterr().err
+        assert not (tmp_path / "sortie").exists()
 
     def test_missing_dataset(self, tmp_path, capsys):
-        code = run_eval.main(["--dataset", str(tmp_path / "absent.jsonl"), "--output-dir", str(tmp_path)])
+        code = run_eval.main(["--split", "dev", "--dataset", str(tmp_path / "absent.jsonl"),
+                              "--output-dir", str(tmp_path)])
         assert code == run_eval.EXIT_INVALID_INPUT == 1
         assert "introuvable" in capsys.readouterr().err
 
     def test_invalid_dataset(self, tmp_path, capsys):
         path = tmp_path / "jeu.jsonl"
         path.write_text("{faux\n", encoding="utf-8")
-        assert run_eval.main(["--dataset", str(path), "--output-dir", str(tmp_path / "sortie")]) == 1
+        assert run_eval.main(["--split", "dev", "--dataset", str(path), "--output-dir", str(tmp_path / "sortie")]) == 1
         assert "ligne 1 : JSON invalide" in capsys.readouterr().err
         assert not (tmp_path / "sortie").exists()
 
@@ -882,14 +1040,138 @@ class TestCommandLine:
     def test_script_runs_from_another_directory(self, tmp_path, small_dataset):
         output_dir = tmp_path / "sortie"
         completed = subprocess.run(
-            [sys.executable, str(RUN_EVAL_PATH), "--dataset", str(small_dataset), "--output-dir", str(output_dir),
-             "--date", RUN_DATE.isoformat()],
+            [sys.executable, str(RUN_EVAL_PATH), "--split", "dev", "--dataset", str(small_dataset),
+             "--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()],
             cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=120, check=False,
         )
         assert completed.returncode == 0, completed.stderr
-        assert (output_dir / "rapport_hors_ligne.md").is_file()
-        assert (output_dir / "rapport_hors_ligne.json").is_file()
+        assert (output_dir / "rapport_hors_ligne_dev.md").is_file()
+        assert (output_dir / "rapport_hors_ligne_dev.json").is_file()
         assert "Exactitude du code de langue" in completed.stdout
+
+
+# ---------------------------------------------------------------- synthèse des deux partitions
+
+def small_report(items: list[dict], tmp_path: Path, split: str) -> dict:
+    path = write_dataset(tmp_path / f"{split}.jsonl", items)
+    return run_eval.build_offline_report(run_eval.load_dataset(path), dataset_path=path, run_date=RUN_DATE,
+                                         split=split, intent_loader=no_intents)
+
+
+class TestSynthesis:
+    @pytest.fixture
+    def reports(self, tmp_path):
+        dev = small_report(SMALL_ITEMS, tmp_path, "dev")
+        # Jeu de test réduit aux deux commandes et à la salutation mal étiquetée : la langue est
+        # juste sur 2 éléments sur 3.
+        test = small_report(SMALL_ITEMS[:3], tmp_path, "test")
+        return {"dev": dev, "test": test}
+
+    @pytest.fixture
+    def synthesis(self, reports):
+        return run_eval.render_synthesis(reports)
+
+    def test_rows_pair_the_measures_of_both_splits(self, reports):
+        rows = run_eval.synthesis_rows(reports)
+        assert [(row["component"], row["measure"]) for row in rows] == [
+            (entry["component"], entry["measure"]) for entry in reports["dev"]["summary"]]
+        language = rows[0]
+        assert language["entries"]["dev"]["numerator"] == 4 and language["entries"]["test"]["numerator"] == 2
+        assert language["difference"] == pytest.approx(2 / 3 - 4 / 5)
+        assert language["disjoint"] is False
+
+    def test_difference_is_undefined_without_value(self, reports):
+        rows = {(row["component"], row["measure"]): row for row in run_eval.synthesis_rows(reports)}
+        recall = rows[("Détection des injections", "Rappel")]
+        assert recall["entries"]["test"]["value"] is None
+        assert recall["difference"] is None
+        intents = rows[("Détection des intentions", "Exactitude")]
+        assert intents["entries"]["dev"]["note"] == run_eval.UNAVAILABLE
+        assert intents["difference"] is None
+
+    def test_disjoint_intervals(self):
+        def entry(numerator, denominator):
+            return run_eval.summary_entry("Composant", "Exactitude", numerator, denominator)
+
+        reports = {"dev": {"summary": [entry(100, 100)]}, "test": {"summary": [entry(10, 100)]}}
+        row = run_eval.synthesis_rows(reports)[0]
+        assert row["disjoint"] is True
+        assert row["difference"] == pytest.approx(-0.9)
+        reports["test"]["summary"] = [entry(97, 100)]
+        assert run_eval.synthesis_rows(reports)[0]["disjoint"] is False
+
+    def test_measure_present_in_one_split_only(self):
+        reports = {"dev": {"summary": [run_eval.summary_entry("A", "Exactitude", 1, 2)]},
+                   "test": {"summary": [run_eval.summary_entry("B", "Exactitude", 1, 2)]}}
+        rows = run_eval.synthesis_rows(reports)
+        assert [(row["component"], row["entries"]["dev"] is None, row["entries"]["test"] is None) for row in rows] == [
+            ("A", False, True), ("B", True, False)]
+        assert all(row["difference"] is None and not row["disjoint"] for row in rows)
+
+    def test_sections_and_tables(self, synthesis):
+        assert synthesis.startswith("# Synthèse de l'évaluation hors ligne : jeu de développement et jeu de test\n")
+        numbers = [int(match) for match in re.findall(r"^## (\d+)\. ", synthesis, re.MULTILINE)]
+        assert numbers == [1, 2, 3, 4]
+        for rows in table_rows(synthesis):
+            assert re.fullmatch(r"\|( ---:? \|)+", rows[1])
+            assert all(cell_count(row) == cell_count(rows[0]) for row in rows), rows[0]
+
+    def test_wilson_interval_is_defined(self, synthesis):
+        assert "**Intervalle de confiance à 95 %** | Intervalle de score de Wilson" in synthesis
+        assert "z = 1,96" in synthesis
+        assert "(p + z² / (2n)) / (1 + z² / n)" in synthesis
+        assert synthesis.index("## 2. Mesures employées") < synthesis.index("## 3. Comparaison par mesure")
+        for name in ("Classe positive", "VP (vrai positif)", "FP (faux positif)", "FN (faux négatif)",
+                     "VN (vrai négatif)", "Écart"):
+            assert synthesis.index(f"**{name}**") < synthesis.index("## 3. Comparaison par mesure")
+
+    def test_rows_carry_the_numbers_of_both_reports(self, synthesis, reports):
+        for row in run_eval.synthesis_rows(reports):
+            cells = [row["component"], row["measure"]]
+            for split in run_eval.SPLITS:
+                entry = row["entries"][split]
+                cells += [run_eval.fraction(entry["numerator"], entry["denominator"]),
+                          entry["note"] or run_eval.format_percent(entry["value"]),
+                          run_eval.format_interval(entry["ci95"])]
+            cells.append(run_eval.format_difference(row["difference"]))
+            assert "| " + " | ".join(cells) + " |" in synthesis
+
+    def test_datasets_are_described(self, synthesis, reports):
+        for split, report in reports.items():
+            assert f"| `{split}` | {run_eval.split_label(split)} | {run_eval.SPLIT_USES[split]} |" in synthesis
+            assert f"`{report['dataset']['sha256']}`" in synthesis
+        assert "`rapport_hors_ligne_dev.md` et `rapport_hors_ligne_test.md`" in synthesis
+
+    def test_without_disjoint_intervals(self, synthesis):
+        assert "Aucune mesure n'a des intervalles disjoints entre les deux partitions." in synthesis
+
+    def test_disjoint_measures_are_listed(self, tmp_path):
+        dev = small_report(SMALL_ITEMS, tmp_path, "dev")
+        test = json.loads(json.dumps(dev))
+        test["split"] = "test"
+        test["summary"][0] = run_eval.summary_entry(dev["summary"][0]["component"], dev["summary"][0]["measure"],
+                                                    0, 100)
+        test["summary"][1] = run_eval.summary_entry(dev["summary"][1]["component"], dev["summary"][1]["measure"],
+                                                    0, 100)
+        synthesis = run_eval.render_synthesis({"dev": dev, "test": test})
+        assert "Mesures dont les intervalles sont disjoints :\n\n- Détection de la langue — Exactitude du code de " \
+               "langue (−80,0 points)\n- Détection de la langue — Exactitude de la langue de réponse " \
+               "(\u2212100,0 points)\n" in synthesis
+
+    def test_synthesis_does_not_talk_about_its_own_writing(self, synthesis):
+        forbidden = r"\b(?:désormais|nouveau|nouvelle|maintenant|corrigé|renuméroté|à venir|comme convenu)\b"
+        assert not re.search(forbidden, synthesis, re.IGNORECASE)
+
+    @pytest.mark.parametrize(("difference", "text"), [
+        (None, "—"), (0.0, "0,0"), (-0.0004, "0,0"), (0.024, "+2,4"), (-0.105, "−10,5"), (1.0, "+100,0"),
+    ])
+    def test_format_difference(self, difference, text):
+        assert run_eval.format_difference(difference) == text
+
+    def test_write_synthesis(self, tmp_path, reports, synthesis):
+        path = run_eval.write_synthesis(reports, tmp_path / "d")
+        assert path == tmp_path / "d" / "synthese.md"
+        assert path.read_bytes() == synthesis.encode("utf-8")
 
 
 # ---------------------------------------------------------------- mise en forme
@@ -927,6 +1209,7 @@ class TestFormatting:
 
     def test_display_path(self, tmp_path):
         assert run_eval.display_path(DATASET_PATH) == "evaluation/dataset/messages.jsonl"
+        assert run_eval.display_path(TEST_DATASET_PATH) == "evaluation/dataset/messages_test.jsonl"
         assert run_eval.display_path(tmp_path / "x.jsonl") == (tmp_path / "x.jsonl").resolve().as_posix()
 
     def test_write_report_uses_unix_line_endings(self, tmp_path):

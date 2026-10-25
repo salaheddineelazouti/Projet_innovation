@@ -1,28 +1,59 @@
 """Extraction des commandes à partir des messages (emails et WhatsApp) avec un modèle de langue.
 
-Étapes :
-1. le texte du message et celui des pièces jointes sont réunis ; les pièces jointes et les
-   médias sont convertis en texte par :class:`~tecpap.processing.multimodal.MediaProcessor` ;
-2. un modèle léger (``Settings.model_light``) détecte une demande de renouvellement
-   (« comme d'habitude », « kif dima ») et le nom du client cité dans le message ;
-3. pour un renouvellement, la dernière commande du client est cherchée en base par des
-   requêtes SQL fixes et paramétrées : le modèle ne reçoit jamais d'accès libre à la base ;
-4. le modèle d'extraction (``Settings.model_extraction``, température basse) renvoie la
-   commande au format JSON ; les champs manquants d'un renouvellement sont complétés depuis
-   l'historique ;
-5. un code article SAGE X3 est calculé par des règles fixes s'il n'a pas été trouvé.
+Le modèle de langue n'est jamais la seule source de vérité : sa réponse est validée par le schéma
+(:mod:`tecpap.extraction.schema`), contrôlée et complétée par des règles fixes
+(:mod:`tecpap.extraction.rules`), et chaque commande reste « en attente » jusqu'à la validation
+par l'équipe commerciale.
 
-Le message est transmis au modèle dans un bloc délimité, présenté comme des données et jamais
-comme des instructions (voir :mod:`tecpap.extraction.prompts`). La confiance indiquée est celle
-déclarée par le modèle ; la commande extraite reste « en attente » jusqu'à la validation par
-l'équipe commerciale.
+Étapes (:meth:`DataExtractor.extract_text`, :meth:`DataExtractor.extract_from_email`) :
+
+1. le texte est nettoyé (:func:`tecpap.security.guardrails.sanitize_text` : forme NFKC,
+   caractères de contrôle et invisibles retirés) ; pour un email, le sujet, le corps et le texte
+   des pièces jointes sont d'abord réunis, les pièces jointes et les médias étant convertis en
+   texte par :class:`~tecpap.processing.multimodal.MediaProcessor` ;
+2. tout le contenu est contrôlé par :func:`tecpap.security.guardrails.inspect_input` : un contenu
+   qui ressemble à une tentative d'injection d'instructions (texte rédigé pour détourner le
+   modèle de sa tâche) est signalé par une anomalie et un événement de sécurité, mais la
+   commande n'est jamais écartée : l'équipe commerciale en décide ;
+3. la langue est détectée (:func:`tecpap.nlp.language.detect_language`) et le modèle choisi par
+   :class:`tecpap.llm.router.ModelRouter` (tâches ``extraction`` et ``reorder_detection``) ;
+4. l'instruction d'extraction (:mod:`tecpap.extraction.prompts`) contient le message dans un
+   bloc délimité et jusqu'à trois commandes validées proches, anonymisées et sans prix
+   (:class:`tecpap.rag.retriever.OrderExampleRetriever`) ; la réponse JSON du modèle passe par
+   :func:`tecpap.extraction.schema.parse_llm_order` ;
+5. renouvellement (« comme d'habitude », « kif dima ») : les règles
+   (:func:`tecpap.extraction.rules.detect_reorder`) décident d'abord ; le modèle léger n'est
+   consulté que si elles ne trouvent rien dans un texte assez long pour être ambigu
+   (:data:`REORDER_MODEL_MIN_CHARS`) ;
+6. pour un renouvellement, la dernière commande du client est cherchée en base par des requêtes
+   SQL fixes et paramétrées (le modèle ne reçoit jamais d'accès libre à la base) et seuls les
+   champs manquants sont complétés depuis cet historique ;
+7. un code article SAGE X3 est calculé par des règles fixes s'il n'a pas été trouvé ;
+8. :func:`tecpap.extraction.rules.normalize_order` normalise les champs, rédige les anomalies,
+   liste les champs obligatoires manquants et calcule la confiance ; chaque anomalie du
+   traitement (contenu suspect, extraction par règles) retire à son tour
+   :data:`~tecpap.extraction.rules.ANOMALY_PENALTY` points.
+
+Sans modèle de langue (clé d'API absente) ou quand l'appel échoue, l'extraction par règles
+(:func:`tecpap.extraction.rules.rule_based_extract`) prend le relais avec l'anomalie
+:data:`RULES_FALLBACK_ANOMALY` : la commande arrive quand même au tableau de bord, où l'équipe
+commerciale vérifie tous les champs.
+
+Le résultat contient, en plus des champs de la commande : ``langue`` (code de
+:func:`~tecpap.nlp.language.detect_language`), ``modele_llm`` (``None`` pour l'extraction par
+règles), ``routage_modele`` (raison du choix du modèle), ``anomalies`` et ``champs_manquants``
+(listes), ``confiance`` (calculée par les règles), ``is_reorder`` et ``message_brut`` (le texte
+analysé, au plus :data:`MESSAGE_MAX_CHARS` caractères).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import threading
 import unicodedata
+from collections.abc import Callable, Mapping
+from datetime import date
 from typing import Any
 
 from tecpap.catalog import ALL_REORDER_PATTERNS, COMPANY_INFO, PRODUCT_TYPES
@@ -30,25 +61,66 @@ from tecpap.config import Settings, load_settings
 from tecpap.extraction.article_codes import generate_article_code, suggest_article_code_from_description
 from tecpap.extraction.prompts import (
     EXTRACTION_SYSTEM_PROMPT,
+    MAX_EXAMPLES,
     REORDER_SYSTEM_PROMPT,
     build_extraction_prompt,
     build_reorder_prompt,
 )
+from tecpap.extraction.rules import (
+    ANOMALY_PENALTY,
+    detect_reorder,
+    extract_client_name,
+    normalize_order,
+    rule_based_extract,
+)
+from tecpap.extraction.schema import parse_llm_order
 from tecpap.llm.client import LLMClient
+from tecpap.llm.router import ModelRouter
+from tecpap.nlp.language import detect_language
 from tecpap.processing.multimodal import MediaProcessor
+from tecpap.rag.retriever import OrderExampleRetriever, build_embedder
+from tecpap.security.events import KIND_PROMPT_INJECTION, log_security_event
+from tecpap.security.guardrails import inspect_input, sanitize_text
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "COMPANY_INFO",
+    "INJECTION_ANOMALY",
+    "MESSAGE_MAX_CHARS",
+    "PROCESSING_ANOMALIES",
     "PRODUCT_TYPES",
     "REORDER_PATTERNS",
+    "RULES_FALLBACK_ANOMALY",
     "DataExtractor",
     "auto_generate_article_code",
+    "build_message_content",
 ]
 
 REORDER_PATTERNS: list[str] = list(ALL_REORDER_PATTERNS)
 """Expressions de renouvellement, toutes langues confondues (voir ``tecpap.catalog``)."""
+
+MESSAGE_MAX_CHARS = 20_000
+"""Longueur maximale du texte analysé (et conservé dans ``message_brut``)."""
+
+REORDER_MODEL_MIN_CHARS = 60
+"""Longueur à partir de laquelle un texte sans expression de renouvellement connue est soumis au
+modèle léger : un message plus court qui n'en contient aucune n'est pas ambigu."""
+
+EXTRACTION_MAX_TOKENS = 1000
+REORDER_MAX_TOKENS = 300
+
+INJECTION_ANOMALY = "Contenu suspect : tentative possible d'injection d'instructions"
+"""Anomalie d'un contenu signalé par :func:`tecpap.security.guardrails.inspect_input`."""
+
+RULES_FALLBACK_ANOMALY = "Extraction par règles (modèle de langue indisponible) : vérifier tous les champs"
+"""Anomalie d'une commande extraite sans modèle de langue."""
+
+PROCESSING_ANOMALIES: frozenset[str] = frozenset({INJECTION_ANOMALY, RULES_FALLBACK_ANOMALY})
+"""Anomalies qui décrivent le traitement du message plutôt que les valeurs de la commande."""
+
+RULES_ROUTING_REASON = "Extraction par règles : aucun modèle de langue disponible pour ce message."
+"""Raison enregistrée dans ``routage_modele`` pour une extraction par règles."""
 
 # Champs complétés depuis la dernière commande du client lors d'un renouvellement :
 # champ de la commande extraite -> colonne de la commande en base.
@@ -66,6 +138,9 @@ HISTORY_FIELDS = {
 CLIENT_MATCH_THRESHOLD = 0.3
 
 TRUE_WORDS = frozenset({"true", "oui", "yes", "1"})
+
+CHANNELS = ("email", "whatsapp")
+"""Canaux d'origine d'un message, enregistrés dans le journal des événements de sécurité."""
 
 
 def _as_bool(value: Any) -> bool:
@@ -118,49 +193,80 @@ CONTENU:
 
 
 class DataExtractor:
-    """Extraction des données de commande avec un modèle de langue.
+    """Extraction des données de commande (étapes décrites dans la documentation du module).
+
+    Un même extracteur peut servir plusieurs fils d'exécution : la base est lue par la connexion
+    du fil courant (:attr:`tecpap.db.database.DatabaseManager.connection`).
 
     Args:
-        db_manager: base des commandes, utilisée pour retrouver l'historique d'un client.
+        db_manager: base des commandes : historique des clients, exemples de commandes validées
+            et journal des événements de sécurité. Sans base, ces trois étapes sont omises.
         settings: configuration ; par défaut celle de l'environnement (:func:`load_settings`).
         llm: client des modèles de langue ; par défaut construit depuis la configuration
-            (:meth:`LLMClient.from_settings`). Sans clé d'API, l'extraction renvoie ``None``.
+            (:meth:`LLMClient.from_settings`). Sans clé d'API, l'extraction se fait par règles.
+        router: choix des modèles ; par défaut construit depuis ``settings``.
+        embedder: calcul des plongements des exemples ; par défaut celui de la configuration
+            (:func:`tecpap.rag.retriever.build_embedder`).
+        clock: date du jour (dates sans année, dates de livraison passées) ; par défaut la date
+            du système.
     """
 
-    def __init__(self, db_manager: Any = None, settings: Settings | None = None, llm: LLMClient | None = None):
+    def __init__(self, db_manager: Any = None, settings: Settings | None = None, llm: LLMClient | None = None,
+                 *, router: ModelRouter | None = None, embedder: Any = None,
+                 clock: Callable[[], date] | None = None):
         self.settings = settings or load_settings()
         self.llm = llm if llm is not None else LLMClient.from_settings(self.settings)
         self.media = MediaProcessor(self.llm, self.settings)
         self.model = self.settings.model_extraction
+        self.router = router if router is not None else ModelRouter(self.settings)
         self.db = db_manager
+        self._embedder = embedder
+        self._clock = clock or date.today
+        self._local = threading.local()
 
     def set_database(self, db_manager: Any) -> None:
         """Définit la base utilisée pour l'historique des clients."""
         self.db = db_manager
 
+    def _connection(self) -> Any:
+        """Connexion du fil courant à la base, ou ``None``."""
+        if not self.db:
+            return None
+        try:
+            return self.db.connection
+        except Exception:
+            logger.warning("Base des commandes inaccessible", exc_info=True)
+            return None
+
     # ------------------------------------------------------------------ renouvellement
 
-    def detect_reorder_intent(self, email_content: str) -> dict[str, Any]:
+    def detect_reorder_intent(self, email_content: str, language: str | None = None) -> dict[str, Any]:
         """Demande au modèle léger si le message est un renouvellement et quel client il cite.
+
+        Args:
+            email_content: texte du message.
+            language: code de langue du message ; détecté depuis le texte quand il est absent.
 
         Returns:
             ``is_reorder`` (booléen), ``client_name`` (texte non vide ou ``None``),
             ``confidence`` et, quand le modèle les fournit, les expressions détectées
-            (``reorder_indicators``).
+            (``reorder_indicators``). ``model_reason`` donne la raison du choix du modèle.
         """
         default: dict[str, Any] = {"is_reorder": False, "client_name": None, "confidence": 0}
         if not self.llm.available:
             logger.warning("Détection de renouvellement impossible : clé OPENAI_API_KEY absente")
             return default
 
+        code = language or detect_language(email_content).code
+        choice = self.router.route("reorder_detection", code)
         result = self.llm.chat_json(
-            model=self.settings.model_light,
+            model=choice.model,
             system=REORDER_SYSTEM_PROMPT,
             user=build_reorder_prompt(email_content),
-            temperature=self.settings.llm_temperature,
-            max_tokens=300,
+            temperature=choice.temperature,
+            max_tokens=REORDER_MAX_TOKENS,
         )
-        if result is None:
+        if not isinstance(result, dict):
             logger.warning("Détection de renouvellement en échec : réponse du modèle absente ou illisible")
             return default
 
@@ -168,6 +274,7 @@ class DataExtractor:
         client_name = result.get("client_name")
         result["is_reorder"] = _as_bool(result.get("is_reorder"))
         result["client_name"] = client_name.strip() if isinstance(client_name, str) and client_name.strip() else None
+        result["model_reason"] = choice.reason
         return result
 
     @staticmethod
@@ -186,10 +293,11 @@ class DataExtractor:
         Le score est la part de mots communs (rapportée au nom le plus long), augmentée de 0,3
         quand un mot de plus de trois lettres du nom cherché figure dans le nom du client.
         """
-        if not self.db or not self.db.connection:
+        connection = self._connection()
+        if connection is None:
             return None
 
-        cursor = self.db.connection.cursor()
+        cursor = connection.cursor()
         cursor.execute("SELECT id, nom FROM clients")
         clients = cursor.fetchall()
 
@@ -218,14 +326,15 @@ class DataExtractor:
 
     def get_client_last_order(self, client_name: str) -> dict[str, Any] | None:
         """Renvoie la dernière commande validée du client, à défaut sa dernière commande."""
-        if not self.db or not self.db.connection:
+        connection = self._connection()
+        if connection is None:
             return None
 
         matched_name = self.find_matching_client(client_name)
         if matched_name:
             client_name = matched_name
 
-        cursor = self.db.connection.cursor()
+        cursor = connection.cursor()
         base_query = """
             SELECT c.*, p.type as produit_type, cl.nom as client_nom
             FROM commandes c
@@ -273,78 +382,196 @@ class DataExtractor:
 
         return extracted_data
 
+    def _reorder(self, text: str, language: str, data: Mapping[str, Any], reasons: list[str],
+                 *, use_model: bool) -> tuple[bool, str | None]:
+        """Renouvellement et client cité : règles d'abord, modèle léger pour un texte long et ambigu."""
+        if detect_reorder(text):
+            return True, data.get("entreprise_cliente") or extract_client_name(text)
+        if not use_model or len(text) < REORDER_MODEL_MIN_CHARS:
+            return False, None
+        info = self.detect_reorder_intent(text, language)
+        if info.get("model_reason"):
+            reasons.append(info["model_reason"])
+        if not info.get("is_reorder"):
+            return False, None
+        logger.info("Renouvellement détecté par le modèle (indices : %s)", info.get("reorder_indicators", []))
+        return True, info.get("client_name") or data.get("entreprise_cliente")
+
+    def _fill_reorder(self, data: dict[str, Any], client_name: str | None) -> dict[str, Any]:
+        """Complète un renouvellement depuis la dernière commande du client cité (requêtes SQL fixes)."""
+        if not client_name:
+            logger.info("Renouvellement sans nom de client : aucun historique consulté")
+            return data
+        last_order = self.get_client_last_order(client_name)
+        if not last_order:
+            logger.info("Aucun historique pour le client cité : extraction standard")
+            return data
+        logger.info("Dernière commande retenue : %s",
+                    last_order.get("numero_commande") or f"ID-{last_order.get('id')}")
+        # Le nom exact enregistré en base remplace le nom approximatif cité dans le message.
+        data["entreprise_cliente"] = last_order.get("client_nom") or client_name
+        data = self.fill_from_history(data, last_order)
+        data["est_bon_commande"] = True
+        return data
+
+    # ------------------------------------------------------------------ exemples et sécurité
+
+    def _example_retriever(self, connection: Any) -> OrderExampleRetriever:
+        """Recherche d'exemples du fil courant (son cache de vecteurs est propre à la connexion)."""
+        cached = getattr(self._local, "examples", None)
+        if cached is None or cached.conn is not connection:
+            if self._embedder is None:
+                self._embedder = build_embedder(self.settings, self.llm)
+            cached = OrderExampleRetriever(connection, self._embedder)
+            self._local.examples = cached
+        return cached
+
+    def _examples(self, text: str) -> list[Any]:
+        """Commandes validées proches du message, anonymisées ; liste vide sans base ou en cas d'erreur."""
+        connection = self._connection()
+        if connection is None:
+            return []
+        try:
+            return self._example_retriever(connection).similar_validated_orders(text, k=MAX_EXAMPLES)
+        except Exception:
+            logger.warning("Exemples de commandes validées indisponibles", exc_info=True)
+            return []
+
+    def _log_injection(self, channel: str, sender: str | None, score: int, reasons: list[str]) -> None:
+        connection = self._connection()
+        if connection is None:
+            logger.warning("Contenu suspect (canal %s, score %d) : aucune base pour l'événement de sécurité",
+                           channel, score)
+            return
+        log_security_event(connection, channel=channel, sender=sender, kind=KIND_PROMPT_INJECTION,
+                           score=score, details=reasons)
+
     # ------------------------------------------------------------------ extraction
 
     def extract_from_email(self, email_data: dict[str, Any],
                            attachment_texts: dict[str, str] | None = None) -> dict[str, Any] | None:
-        """Extrait une commande d'un message (email, ou message WhatsApp présenté comme un email).
+        """Extrait une commande d'un email : sujet, expéditeur, date, corps et texte des pièces jointes.
 
         Args:
-            email_data: ``subject``, ``from``, ``date`` et ``body`` du message.
+            email_data: ``subject``, ``from``, ``date`` et ``body`` du message ; ``source``
+                (« whatsapp ») désigne le canal quand il ne s'agit pas d'un email.
             attachment_texts: texte de chaque pièce jointe, par nom de fichier.
 
         Returns:
-            Les champs de la commande (dont ``est_bon_commande``), ou ``None`` en cas d'échec
-            ou sans clé d'API.
+            Les champs de la commande (dont ``est_bon_commande``) et la traçabilité de
+            l'extraction (voir la documentation du module).
         """
+        channel = email_data.get("source") if email_data.get("source") in CHANNELS else "email"
+        content = build_message_content(email_data, attachment_texts)
+        return self._extract(content, channel=channel, sender=email_data.get("from"), use_history=True)
+
+    def extract_text(self, text: str, *, sender: str | None = None, channel: str = "whatsapp") -> dict[str, Any] | None:
+        """Extrait une commande d'un texte (message WhatsApp, transcription d'une note vocale…).
+
+        Args:
+            text: texte du message, transcription ou texte lu dans un média.
+            sender: expéditeur (numéro ou adresse), pour le journal des événements de sécurité.
+            channel: canal d'origine (« whatsapp » ou « email »).
+
+        Returns:
+            La commande extraite (voir la documentation du module), ou ``None`` pour un texte vide.
+        """
+        if not isinstance(text, str) or not text.strip():
+            return None
+        return self._extract(text, channel=channel, sender=sender, use_history=True)
+
+    def assistant_extractor(self) -> Callable[[str, str], dict[str, Any] | None]:
+        """Fonction ``extract(text, sender)`` attendue par :class:`tecpap.chatbot.bot.WhatsAppAssistant`.
+
+        L'historique des clients n'y est pas consulté, et le renouvellement n'y est lu que par les
+        règles (aucun appel au modèle de détection) : l'assistant renouvelle une commande avec
+        ses propres outils, limités aux commandes de l'expéditeur
+        (:meth:`tecpap.chatbot.tools.AssistantTools.last_validated_order_draft`). La recherche par
+        nom de client, qui ne dépend pas de l'expéditeur, ferait apparaître dans le récapitulatif
+        envoyé au client la dernière commande d'une autre entreprise citée dans le message.
+        """
+        def extract(text: str, sender: str) -> dict[str, Any] | None:
+            if not isinstance(text, str) or not text.strip():
+                return None
+            return self._extract(text, channel="whatsapp", sender=sender, use_history=False)
+
+        return extract
+
+    def _extract(self, content: str, *, channel: str, sender: str | None, use_history: bool) -> dict[str, Any]:
+        """Chaîne d'extraction complète ; ne lève pas d'exception pour une réponse du modèle invalide."""
+        text = sanitize_text(content, max_chars=None)
+        check = inspect_input(text, max_chars=None)
+        text = text[:MESSAGE_MAX_CHARS]
+        anomalies: list[str] = []
+        if check.is_suspicious:
+            logger.warning("Contenu suspect reçu par %s (score %d) : commande signalée à l'équipe commerciale",
+                           channel, check.score)
+            anomalies.append(INJECTION_ANOMALY)
+            self._log_injection(channel, sender, check.score, check.reasons)
+
+        language = detect_language(text).code
         if not self.llm.available:
-            logger.warning("Extraction impossible : clé OPENAI_API_KEY absente")
-            return None
+            logger.warning("Modèle de langue indisponible (clé OPENAI_API_KEY absente) : extraction par règles")
+            return self._rules_extraction(text, language, anomalies, use_history)
 
-        email_content = build_message_content(email_data, attachment_texts)
-
-        reorder_info = self.detect_reorder_intent(email_content)
-        if reorder_info.get("is_reorder") and reorder_info.get("client_name"):
-            reordered = self._extract_reorder(email_content, reorder_info)
-            if reordered:
-                return reordered
-
-        return self._extract_with_llm(email_content)
-
-    def _extract_reorder(self, email_content: str, reorder_info: dict[str, Any]) -> dict[str, Any] | None:
-        """Extraction d'un renouvellement : la commande est complétée depuis l'historique du client."""
-        client_name = reorder_info["client_name"]
-        logger.info("Renouvellement détecté pour %s (indices : %s)", client_name,
-                    reorder_info.get("reorder_indicators", []))
-
-        last_order = self.get_client_last_order(client_name)
-        if not last_order:
-            logger.info("Aucun historique pour %s : extraction standard", client_name)
-            return None
-
-        logger.info("Dernière commande retenue : %s",
-                    last_order.get("numero_commande") or f"ID-{last_order.get('id')}")
-        extracted = self._extract_with_llm(email_content)
-        if not extracted:
-            return None
-
-        # Le nom exact enregistré en base remplace le nom approximatif cité dans le message.
-        extracted["entreprise_cliente"] = last_order.get("client_nom") or client_name
-        extracted = self.fill_from_history(extracted, last_order)
-        extracted["est_bon_commande"] = True
-        extracted["is_reorder"] = True
-        return extracted
-
-    def _extract_with_llm(self, content: str) -> dict[str, Any] | None:
-        """Envoie le contenu au modèle d'extraction et renvoie la commande décodée du JSON."""
-        extracted_data = self.llm.chat_json(
-            model=self.model,
+        choice = self.router.route("extraction", language)
+        raw = self.llm.chat_json(
+            model=choice.model,
             system=EXTRACTION_SYSTEM_PROMPT,
-            user=build_extraction_prompt(content),
-            temperature=self.settings.llm_temperature,
-            max_tokens=1000,
+            user=build_extraction_prompt(text, self._examples(text)),
+            temperature=choice.temperature,
+            max_tokens=EXTRACTION_MAX_TOKENS,
         )
-        if extracted_data is None:
-            logger.error("Extraction en échec : réponse du modèle absente ou illisible")
-            return None
+        if not isinstance(raw, dict):
+            logger.error("Extraction en échec : réponse du modèle absente ou illisible ; extraction par règles")
+            return self._rules_extraction(text, language, anomalies, use_history)
 
-        if not extracted_data.get("code_article"):
-            auto_code = auto_generate_article_code(extracted_data)
+        data = parse_llm_order(raw)
+        reasons = [choice.reason]
+        # Sans historique (assistant WhatsApp), le renouvellement n'est lu que par les règles :
+        # l'assistant le traite avec ses propres outils, et un appel au modèle serait inutile.
+        is_reorder, client_name = self._reorder(text, language, data, reasons, use_model=use_history)
+        data["is_reorder"] = is_reorder
+        if is_reorder and use_history:
+            data = self._fill_reorder(data, client_name)
+        return self._finish(data, text, language, choice.model, " ; ".join(reasons), anomalies)
+
+    def _rules_extraction(self, text: str, language: str, anomalies: list[str], use_history: bool) -> dict[str, Any]:
+        """Extraction de secours par règles, signalée par :data:`RULES_FALLBACK_ANOMALY`."""
+        data = rule_based_extract(text, today=self._clock())
+        if data.get("is_reorder") and use_history:
+            data = self._fill_reorder(data, data.get("entreprise_cliente"))
+        anomalies.append(RULES_FALLBACK_ANOMALY)
+        return self._finish(data, text, language, None, RULES_ROUTING_REASON, anomalies)
+
+    def _finish(self, data: dict[str, Any], text: str, language: str, model: str | None, reason: str,
+                anomalies: list[str]) -> dict[str, Any]:
+        """Code article, normalisation par les règles et traçabilité de l'extraction."""
+        if not data.get("code_article"):
+            auto_code = auto_generate_article_code(data)
             if auto_code:
-                extracted_data["code_article"] = auto_code
+                data["code_article"] = auto_code
                 logger.info("Code article calculé : %s", auto_code)
 
-        return extracted_data
+        result = normalize_order(data, source_text=text, today=self._clock())
+        order = result.data
+        order.setdefault("est_bon_commande", False)
+        order["is_reorder"] = bool(data.get("is_reorder"))
+        # Les anomalies du traitement (contenu suspect, extraction par règles) retirent les mêmes
+        # points de confiance que les anomalies des valeurs.
+        confidence = max(0, result.confidence - ANOMALY_PENALTY * len(anomalies))
+        order.update({
+            "confiance": confidence,
+            "langue": language,
+            "modele_llm": model,
+            "routage_modele": reason,
+            "anomalies": [*anomalies, *(item for item in result.anomalies if item not in anomalies)],
+            "champs_manquants": list(result.missing_fields),
+            "message_brut": text,
+        })
+        logger.info("Commande extraite (langue %s, modèle %s) : %d anomalie(s), champs manquants %s, confiance %d",
+                    language, model or "règles", len(order["anomalies"]), order["champs_manquants"], confidence)
+        return order
 
     # ------------------------------------------------------------------ pièces jointes
 

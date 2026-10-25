@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from tecpap.config import Settings, is_reloader_child_process
+from tecpap.extraction.extractor import RULES_FALLBACK_ANOMALY
 from tecpap.processing.order_processor import OrderProcessor
 from tecpap.web import create_app
 from tecpap.web.errors import GENERIC_ERROR_MESSAGE
@@ -28,7 +29,6 @@ from tests.fakes import FakeLLMClient
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "tecpap" / "web" / "templates"
 
-NOT_A_REORDER = {"is_reorder": False, "client_name": None, "confidence": 90}
 WHATSAPP_MESSAGE = {"From": "whatsapp:+212612345678", "Body": "salam, bghit 2000 sachet fond plat", "NumMedia": "0",
                     "MessageSid": "SM0123456789abcdef0123456789abcdef"}
 
@@ -130,11 +130,13 @@ class TestSharedLLMClient:
         assert services.llm.available is False
         assert services.whatsapp.llm is services.llm
 
-    def test_webhook_passes_the_shared_client(self, llm_app, fake_llm):
-        with patch("tecpap.web.routes.webhooks.DataExtractor") as extractor_class:
-            extractor_class.return_value.extract_from_email.return_value = {"est_bon_commande": False}
-            llm_app.test_client().post("/webhook/whatsapp", data=WHATSAPP_MESSAGE)
-        assert extractor_class.call_args.kwargs["llm"] is fake_llm
+    def test_webhook_uses_the_shared_client(self, llm_app, fake_llm):
+        services = llm_app.extensions["tecpap"]
+        assert services.extractor.llm is fake_llm
+        assert services.extractor.router is services.router
+        assistant = services.assistant()
+        assert assistant.llm is fake_llm
+        assert assistant.router is services.router
 
     def test_process_emails_passes_the_shared_client(self, llm_app, fake_llm, monkeypatch):
         received = {}
@@ -171,39 +173,48 @@ class TestSharedLLMClient:
 
 
 class TestWhatsAppEndToEnd:
-    """Message WhatsApp reçu par le webhook, extrait par le modèle simulé, enregistré en base."""
+    """Message WhatsApp reçu par le webhook sans assistant, extrait par le modèle simulé, enregistré en base."""
 
-    def test_order_is_extracted_and_saved(self, llm_app, fake_llm):
+    @pytest.fixture
+    def one_shot_app(self, tmp_path, fake_llm):
+        app = create_app(Settings.for_tests(tmp_path, chatbot_enabled=False), llm=fake_llm)
+        yield app
+        app.extensions["tecpap"].close()
+
+    def test_order_is_extracted_and_saved(self, one_shot_app, fake_llm):
         order = {"est_bon_commande": True, "entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat",
                  "quantite": 2000, "unite": "pièces", "confiance": 85}
-        fake_llm.queue("chat_json", NOT_A_REORDER, order)
+        fake_llm.queue("chat_json", order)
 
-        response = llm_app.test_client().post("/webhook/whatsapp", data=WHATSAPP_MESSAGE)
+        response = one_shot_app.test_client().post("/webhook/whatsapp", data=WHATSAPP_MESSAGE)
 
         assert response.status_code == 200
-        assert "Commande reçue" in response.get_data(as_text=True)
-        saved = llm_app.extensions["tecpap"].db.get_all_orders()
+        saved = one_shot_app.extensions["tecpap"].db.get_all_orders()
         assert len(saved) == 1
+        assert f"CMD-{saved[0]['id']}" in response.get_data(as_text=True)
         assert saved[0]["client_nom"] == "Snack Atlas"
         assert saved[0]["quantite"] == 2000
         assert saved[0]["statut"] == "en_attente"
         assert saved[0]["source"] == "whatsapp"
+        # Message court sans expression de renouvellement : un seul appel, celui de l'extraction.
+        (extraction_call,) = fake_llm.calls_to("chat_json")
         # Le message du client est transmis au modèle d'extraction dans un bloc délimité.
-        extraction_prompt = fake_llm.calls_to("chat_json")[1]["user"]
-        assert "bghit 2000 sachet" in extraction_prompt
+        assert "bghit 2000 sachet" in extraction_call["user"]
 
-    def test_message_without_order_creates_nothing(self, llm_app, fake_llm):
-        fake_llm.queue("chat_json", NOT_A_REORDER, {"est_bon_commande": False})
-        response = llm_app.test_client().post("/webhook/whatsapp", data=dict(WHATSAPP_MESSAGE, Body="salam"))
+    def test_message_without_order_creates_nothing(self, one_shot_app, fake_llm):
+        fake_llm.queue("chat_json", {"est_bon_commande": False})
+        response = one_shot_app.test_client().post("/webhook/whatsapp", data=dict(WHATSAPP_MESSAGE, Body="salam"))
         assert response.status_code == 200
-        assert llm_app.extensions["tecpap"].db.get_all_orders() == []
+        assert one_shot_app.extensions["tecpap"].db.get_all_orders() == []
 
-    def test_model_failure_creates_nothing(self, llm_app):
+    def test_model_failure_falls_back_to_rules(self, one_shot_app):
         # File de réponses vide : chaque appel renvoie None, comme le client réel en cas d'échec.
-        response = llm_app.test_client().post("/webhook/whatsapp", data=WHATSAPP_MESSAGE)
+        response = one_shot_app.test_client().post("/webhook/whatsapp", data=WHATSAPP_MESSAGE)
         assert response.status_code == 200
-        assert "Si vous souhaitez passer une commande" in response.get_data(as_text=True)
-        assert llm_app.extensions["tecpap"].db.get_all_orders() == []
+        (saved,) = one_shot_app.extensions["tecpap"].db.get_all_orders()
+        assert (saved["statut"], saved["quantite"], saved["produit_type"]) == ("en_attente", 2000, "Sachets fond plat")
+        assert saved["modele_llm"] is None
+        assert RULES_FALLBACK_ANOMALY in saved["anomalies_list"]
 
 
 # ---------------------------------------------------------------------- planificateur

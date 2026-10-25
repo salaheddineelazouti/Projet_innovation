@@ -54,20 +54,35 @@
         </div>
     </div>
 
+    {% if current_conversation %}
+    <!-- Filtre par numéro WhatsApp -->
+    <div class="card p-4 border-l-4 border-l-green-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3" id="conversationFilter">
+        <p class="text-sm text-slate-700">
+            <i class="fab fa-whatsapp text-green-600 mr-1"></i>
+            Commandes du numéro <strong class="font-mono">{{ current_conversation.phone }}</strong> : envoyées depuis ce numéro ou passées par un client dont c'est le téléphone.
+        </p>
+        <div class="flex items-center gap-3 text-sm">
+            <a href="/conversations/{{ current_conversation.id }}" class="text-brand-600 hover:text-brand-700 font-medium">Voir la conversation</a>
+            <a href="/orders{% if current_filter %}?status={{ current_filter|urlencode }}{% endif %}" class="text-slate-500 hover:text-slate-700">Retirer le filtre</a>
+        </div>
+    </div>
+    {% endif %}
+    {% set conversation_query = 'conversation=' ~ current_conversation.id if current_conversation else '' %}
+
     <!-- Filtres -->
     <div class="card p-4">
         <div class="flex flex-wrap items-center gap-3">
             <span class="text-sm font-medium text-slate-600">Filtrer par statut:</span>
-            <a href="/orders" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if not current_filter %}bg-brand-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+            <a href="/orders{% if conversation_query %}?{{ conversation_query }}{% endif %}" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if not current_filter %}bg-brand-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
                 Toutes
             </a>
-            <a href="/orders?status=en_attente" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == 'en_attente' %}bg-amber-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+            <a href="/orders?status=en_attente{% if conversation_query %}&amp;{{ conversation_query }}{% endif %}" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == 'en_attente' %}bg-amber-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
                 <i class="fas fa-clock mr-1"></i>En attente
             </a>
-            <a href="/orders?status=validee" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == 'validee' %}bg-emerald-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+            <a href="/orders?status=validee{% if conversation_query %}&amp;{{ conversation_query }}{% endif %}" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == 'validee' %}bg-emerald-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
                 <i class="fas fa-check mr-1"></i>Validées
             </a>
-            <a href="/orders?status=rejetee" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == 'rejetee' %}bg-red-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+            <a href="/orders?status=rejetee{% if conversation_query %}&amp;{{ conversation_query }}{% endif %}" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == 'rejetee' %}bg-red-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
                 <i class="fas fa-times mr-1"></i>Rejetées
             </a>
         </div>
@@ -125,6 +140,7 @@
                             <span class="text-slate-400 text-sm">{{ order.unite or 'unités' }}</span>
                         </td>
                         <td>
+                            <div class="flex flex-col items-start gap-1">
                             {% if order.source == 'whatsapp' %}
                             <span class="inline-flex items-center px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
                                 <i class="fab fa-whatsapp mr-1"></i>WhatsApp
@@ -134,12 +150,19 @@
                                 <i class="fas fa-envelope mr-1"></i>Email
                             </span>
                             {% endif %}
+                            {% if order.langue %}
+                            <span class="inline-flex items-center px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium" title="Langue détectée : {{ language_label(order.langue) }}" data-language="{{ order.langue }}">
+                                <i class="fas fa-language mr-1"></i>{{ language_label(order.langue, short=True) }}
+                            </span>
+                            {% endif %}
+                            </div>
                         </td>
                         <td>
                             <p class="text-slate-600">{{ (order.created_at or order.date_commande or '')[:10] if (order.created_at or order.date_commande) else 'N/A' }}</p>
                             <p class="text-xs text-slate-400">{{ (order.created_at or '')[11:16] if order.created_at and (order.created_at|string|length) > 11 else '' }}</p>
                         </td>
                         <td>
+                            <div class="flex flex-col items-start gap-1">
                             {% if order.statut == 'en_attente' %}
                             <span class="badge badge-pending"><i class="fas fa-clock mr-1.5 text-xs"></i>En attente</span>
                             {% elif order.statut == 'validee' %}
@@ -149,6 +172,12 @@
                             {% else %}
                             <span class="badge bg-slate-100 text-slate-600">{{ order.statut }}</span>
                             {% endif %}
+                            {% if order.anomalies_list %}
+                            <span class="badge bg-amber-100 text-amber-800" title="{{ order.anomalies_list|join(' ; ') }}" data-anomalies="{{ order.anomalies_list|length }}">
+                                <i class="fas fa-exclamation-triangle mr-1.5 text-xs"></i>{{ order.anomalies_list|length }} anomalie{% if order.anomalies_list|length > 1 %}s{% endif %}
+                            </span>
+                            {% endif %}
+                            </div>
                         </td>
                         <td>
                             <div class="flex items-center gap-2">

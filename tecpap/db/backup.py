@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any
 
 from tecpap.config import load_settings
+from tecpap.db.database import close_connections_to
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,10 @@ def restore_backup(backup_filename: str, db_path: str | None = None, backup_dir:
     """Restaure la base depuis une sauvegarde du dossier ``backup_dir``.
 
     La base actuelle est d'abord copiée dans ``pre_restore_AAAAMMJJ_HHMMSS.db`` pour pouvoir
-    revenir en arrière. Les fichiers ``.db.gz`` sont décompressés avant la restauration.
+    revenir en arrière. Les fichiers ``.db.gz`` sont décompressés avant la restauration. Juste
+    avant la copie, toutes les connexions des gestionnaires ouverts sur cette base sont fermées
+    (:func:`tecpap.db.database.close_connections_to`) : aucune lecture en cours ne porte sur
+    l'ancienne base, et chaque gestionnaire reprend au prochain ``connect()``.
 
     Returns:
         ``True`` si la restauration a réussi.
@@ -142,6 +146,9 @@ def restore_backup(backup_filename: str, db_path: str | None = None, backup_dir:
                 shutil.copyfileobj(f_in, f_out)
             source = temp_restore
 
+        closed = close_connections_to(db_path)
+        if closed:
+            logger.info("%d connexion(s) à la base fermée(s) avant la restauration", closed)
         _sqlite_copy(source, db_path)
         logger.info("Base de données restaurée depuis %s", backup_filename)
         return True

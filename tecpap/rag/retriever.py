@@ -268,8 +268,9 @@ class KnowledgeBase:
     def from_settings(cls, conn: sqlite3.Connection, settings: Any, llm_client: Any = None) -> KnowledgeBase:
         """Construit la base avec le dossier ``settings.knowledge_dir``.
 
-        Avec un client des modèles configuré (clé d'API), les vecteurs viennent du modèle
-        ``settings.model_embedding`` ; sinon, du calcul local.
+        Le calcul des plongements suit ``settings.rag_embedder`` (voir :func:`build_embedder`) :
+        calcul local par défaut, modèle ``settings.model_embedding`` avec ``openai`` et un client
+        des modèles configuré.
         """
         return cls(conn, build_embedder(settings, llm_client), settings.knowledge_dir)
 
@@ -432,11 +433,18 @@ class KnowledgeBase:
 
 
 def build_embedder(settings: Any, llm_client: Any = None) -> Embedder:
-    """Calcul des plongements selon la configuration.
+    """Calcul des plongements selon la configuration (``settings.rag_embedder``, variable ``RAG_EMBEDDER``).
 
-    :class:`OpenAIEmbedder` (modèle ``settings.model_embedding``) quand un client des modèles est
-    fourni ou qu'une clé ``openai_api_key`` est configurée ; :class:`LocalHashEmbedder` sinon.
+    - ``local`` (valeur par défaut) : :class:`LocalHashEmbedder`, hors ligne et déterministe ;
+    - ``openai`` : :class:`OpenAIEmbedder` (modèle ``settings.model_embedding``) quand un client
+      des modèles disponible est fourni ou qu'une clé ``openai_api_key`` est configurée ;
+      :class:`LocalHashEmbedder` sinon.
+
+    La question et les extraits sont toujours comparés dans le même espace vectoriel : après un
+    changement de ce réglage, :meth:`KnowledgeBase.index` recalcule les vecteurs de l'index.
     """
+    if getattr(settings, "rag_embedder", "local") != "openai":
+        return LocalHashEmbedder()
     if llm_client is None and getattr(settings, "openai_api_key", None):
         from tecpap.llm.client import LLMClient
 

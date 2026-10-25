@@ -47,7 +47,10 @@ repassent par ce filtre avant l'envoi.
 Chaque message reçu et envoyé est enregistré (:class:`tecpap.chatbot.conversation.ConversationStore`).
 L'extraction d'une commande est une dépendance ``extract(text, sender) -> dict | None`` ; sans
 elle, ou quand elle échoue, l'extraction par règles (:func:`tecpap.extraction.rules.rule_based_extract`)
-est utilisée. Chaque résultat passe par :func:`tecpap.extraction.rules.normalize_order`.
+est utilisée. Chaque résultat passe par :func:`tecpap.extraction.rules.normalize_order`. La
+traçabilité fournie par l'extraction (modèle de langue utilisé, raison de ce choix, anomalies du
+traitement comme l'extraction par règles faute de modèle) est gardée avec la commande en cours et
+enregistrée avec la commande confirmée.
 """
 
 from __future__ import annotations
@@ -57,7 +60,7 @@ import logging
 import re
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -73,7 +76,9 @@ from tecpap.chatbot.messages import (
 )
 from tecpap.chatbot.tools import AssistantTools, ToolResult
 from tecpap.db.database import is_generic_client_name
+from tecpap.extraction.extractor import PROCESSING_ANOMALIES
 from tecpap.extraction.rules import (
+    ANOMALY_PENALTY,
     ORDER_FIELD_KINDS,
     clean_text,
     extract_client_name,
@@ -140,6 +145,8 @@ MAX_DRAFT_MESSAGE_CHARS = 1000
 ROUTING_MAX_TOKENS = 300
 
 _ASK_TEMPLATES = {"type_produit": "ask_product", "quantite": "ask_quantity", "entreprise_cliente": "ask_client"}
+# Traçabilité de l'extraction reprise de l'extracteur et enregistrée avec la commande confirmée.
+_AUDIT_FIELDS = ("modele_llm", "routage_modele")
 _DRAFT_FIELDS = frozenset(name for name in ORDER_FIELD_KINDS if name not in ("est_bon_commande", "confiance"))
 _SIDE_INTENTS = frozenset({"status", "question", "greeting"})
 _NOT_A_NAME_INTENTS = frozenset({"confirm_yes", "confirm_no", "greeting", "status", "question", "cancel", "human",
@@ -211,6 +218,7 @@ class _Turn:
     detected: LanguageResult
     message_sid: str | None
     tools: AssistantTools
+    audit: dict[str, Any] = field(default_factory=dict)
 
     @property
     def language(self) -> str:
@@ -488,11 +496,39 @@ class WhatsAppAssistant:
                 data = None
         if not isinstance(data, Mapping) or not data:
             data = rule_based_extract(turn.text)
+        else:
+            self._remember_audit(turn, data)
         result = normalize_order(data, source_text=turn.text)
         fields = {name: value for name, value in result.data.items() if name in _DRAFT_FIELDS}
         if is_generic_client_name(fields.get("entreprise_cliente")):
             del fields["entreprise_cliente"]
         return fields
+
+    @staticmethod
+    def _remember_audit(turn: _Turn, data: Mapping[str, Any]) -> None:
+        """Garde la traçabilité donnée par l'extracteur : modèle, raison du choix, anomalies du traitement."""
+        audit = {name: data[name] for name in _AUDIT_FIELDS if name in data}
+        anomalies = data.get("anomalies")
+        if isinstance(anomalies, (list, tuple)):
+            audit["anomalies"] = [item for item in anomalies if item in PROCESSING_ANOMALIES]
+        turn.audit.update(audit)
+
+    @staticmethod
+    def _merged_audit(previous: Any, current: Mapping[str, Any]) -> dict[str, Any]:
+        """Traçabilité de la commande en cours après un message de plus.
+
+        Le modèle (et la raison de son choix) retenu est celui de la première extraction faite par
+        un modèle de langue, en général celle du message qui a ouvert la commande ; les anomalies
+        du traitement de tous les messages sont réunies.
+        """
+        merged = dict(previous) if isinstance(previous, Mapping) else {}
+        if merged.get("modele_llm") is None and (current.get("modele_llm") is not None
+                                                 or "routage_modele" not in merged):
+            merged.update({name: current[name] for name in _AUDIT_FIELDS if name in current})
+        anomalies = list(merged.get("anomalies") or [])
+        anomalies += [item for item in current.get("anomalies") or [] if item not in anomalies]
+        merged["anomalies"] = anomalies
+        return merged
 
     def _start_order(self, turn: _Turn) -> BotReply:
         draft = self._new_draft(turn)
@@ -510,6 +546,8 @@ class WhatsAppAssistant:
         result = normalize_order(draft["order"])
         draft["order"] = {name: value for name, value in result.data.items() if name in _DRAFT_FIELDS}
         draft["updated_at"] = self.store.timestamp()
+        if turn.audit:
+            draft["audit"] = self._merged_audit(draft.get("audit"), turn.audit)
         conversation.draft = draft
         missing = [name for name in ASK_ORDER if name in result.missing_fields]
         intent = "reorder" if turn.intent.intent == "reorder" else "order"
@@ -652,12 +690,16 @@ class WhatsAppAssistant:
         if any(name in result.missing_fields for name in REQUIRED_ORDER_FIELDS):
             return self._advance(turn, draft)
         order = {name: value for name, value in result.data.items() if name in _DRAFT_FIELDS}
+        audit = draft.get("audit") if isinstance(draft.get("audit"), dict) else {}
+        processing = [item for item in audit.get("anomalies") or [] if item in PROCESSING_ANOMALIES]
         order.update({
-            "confiance": result.confidence,
+            # Comme dans l'extracteur, chaque anomalie du traitement retire ANOMALY_PENALTY points.
+            "confiance": max(0, result.confidence - ANOMALY_PENALTY * len(processing)),
             "message_brut": "\n".join(draft.get("messages", [])),
             "langue": draft.get("language_code") or turn.detected.code,
-            "anomalies": result.anomalies,
+            "anomalies": [*processing, *(item for item in result.anomalies if item not in processing)],
             "champs_manquants": result.missing_fields,
+            **{name: audit[name] for name in _AUDIT_FIELDS if name in audit},
         })
         try:
             order_id = turn.tools.submit_order(order, message_sid=turn.message_sid)

@@ -12,6 +12,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from tecpap import __version__
 from tecpap.config import Settings
+from tecpap.extraction.extractor import RULES_FALLBACK_ANOMALY
 from tecpap.web import create_app, get_services
 from tecpap.web.scheduler import BackupScheduler, next_backup_time, should_start_in_this_process
 from tecpap.web.services import Services
@@ -37,6 +38,9 @@ EXPECTED_ROUTES = {
     ("/api/backup/scheduler/status", "GET"), ("/api/backup/scheduler/configure", "POST"),
     ("/export/excel", "GET"), ("/export/excel/sage", "GET"), ("/export/csv", "GET"), ("/export/pdf", "GET"),
     ("/login", "GET"), ("/login", "POST"), ("/logout", "POST"),
+    ("/conversations", "GET"), ("/conversations/<int:conversation_id>", "GET"),
+    ("/conversations/<int:conversation_id>/reset", "POST"), ("/conversations/<int:conversation_id>/reply", "POST"),
+    ("/knowledge", "GET"), ("/knowledge/reindex", "POST"), ("/security", "GET"),
 }
 
 
@@ -60,7 +64,7 @@ class TestFactory:
         assert flask_app.extensions["tecpap"].db.db_file == test_settings.database_path
 
     def test_every_blueprint_registered(self, flask_app):
-        assert set(flask_app.blueprints) == {"auth", "pages", "api", "webhooks", "backups", "exports"}
+        assert set(flask_app.blueprints) == {"auth", "pages", "api", "webhooks", "backups", "exports", "assistant"}
 
     def test_routes_and_methods(self, flask_app):
         routes = {
@@ -229,33 +233,50 @@ class TestWhatsAppPage:
 
 
 class TestWhatsAppWebhook:
-    """Webhook Twilio avec un extracteur simulé."""
+    """Webhook Twilio sans assistant (traitement en une fois), avec un extracteur simulé."""
 
-    def _post(self, client, body="bghit 2000 sachet"):
-        return client.post("/webhook/whatsapp", data={"From": "whatsapp:+212612345678", "Body": body, "NumMedia": "0"})
+    @pytest.fixture
+    def one_shot_app(self, tmp_path):
+        app = create_app(Settings.for_tests(tmp_path, chatbot_enabled=False))
+        yield app
+        app.extensions["tecpap"].close()
 
-    def test_order_is_saved_and_acknowledged(self, flask_client, services):
+    def _post(self, client, body="bghit 2000 sachet", sid="SM00000000000000000000000000000001"):
+        return client.post("/webhook/whatsapp", data={"From": "whatsapp:+212612345678", "Body": body, "NumMedia": "0",
+                                                      "MessageSid": sid})
+
+    def test_order_is_saved_and_acknowledged(self, one_shot_app, monkeypatch):
+        services = one_shot_app.extensions["tecpap"]
         order = {"est_bon_commande": True, "type_produit": "Sachets fond plat", "quantite": 2000, "unite": "pièces"}
-        with patch("tecpap.web.routes.webhooks.DataExtractor") as extractor_class:
-            extractor_class.return_value.extract_from_email.return_value = order
-            response = self._post(flask_client)
+        monkeypatch.setattr(services.extractor, "extract_text", lambda text, **kwargs: dict(order))
+        response = self._post(one_shot_app.test_client())
 
         assert response.status_code == 200
         assert response.content_type.startswith("application/xml")
-        assert "Commande reçue" in response.get_data(as_text=True)
         saved = services.db.get_all_orders()[0]
+        assert f"CMD-{saved['id']}" in response.get_data(as_text=True)
         assert saved["source"] == "whatsapp"
         assert saved["whatsapp_from"] == "whatsapp:+212612345678"
         assert saved["client_nom"] == "Client WhatsApp +212612345678"
+        assert saved["message_sid"] == "SM00000000000000000000000000000001"
 
-    def test_message_without_order(self, flask_client, services):
-        with patch("tecpap.web.routes.webhooks.DataExtractor") as extractor_class:
-            extractor_class.return_value.extract_from_email.return_value = {"est_bon_commande": False}
-            response = self._post(flask_client, "salam")
+    def test_message_without_order(self, one_shot_app, monkeypatch):
+        services = one_shot_app.extensions["tecpap"]
+        monkeypatch.setattr(services.extractor, "extract_text", lambda text, **kwargs: {"est_bon_commande": False})
+        response = self._post(one_shot_app.test_client(), "bonjour")
         assert "Si vous souhaitez passer une commande" in response.get_data(as_text=True)
         assert services.db.get_all_orders() == []
 
-    def test_without_openai_key_no_order_is_created(self, flask_client, services):
+    def test_without_openai_key_the_order_is_extracted_by_rules(self, one_shot_app):
+        response = self._post(one_shot_app.test_client())
+        assert response.status_code == 200
+        (saved,) = one_shot_app.extensions["tecpap"].db.get_all_orders()
+        assert saved["statut"] == "en_attente"
+        assert saved["quantite"] == 2000
+        assert saved["modele_llm"] is None
+        assert RULES_FALLBACK_ANOMALY in saved["anomalies_list"]
+
+    def test_assistant_waits_for_the_client_before_creating_an_order(self, flask_client, services):
         response = self._post(flask_client)
         assert response.status_code == 200
         assert services.db.get_all_orders() == []

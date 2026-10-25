@@ -30,6 +30,16 @@ def _decode_header_value(value: str | None) -> str:
     return decoded
 
 
+MESSAGE_ID_MAX_CHARS = 200
+"""Longueur maximale conservée de l'en-tête ``Message-ID``."""
+
+
+def _message_id(msg: Message) -> str | None:
+    """Identifiant unique de l'email (en-tête ``Message-ID``, espaces retirés), ou ``None``."""
+    value = " ".join(str(msg.get("Message-ID") or "").split())
+    return value[:MESSAGE_ID_MAX_CHARS] or None
+
+
 def _safe_filename(filename: str) -> str:
     """Garde uniquement le nom de fichier, sans dossier : un nom de pièce jointe est une donnée externe."""
     name = os.path.basename(filename.replace("\\", "/")).strip()
@@ -124,7 +134,12 @@ class GmailReceiver:
             return []
 
     def _fetch_email(self, email_id: bytes) -> dict[str, Any] | None:
-        """Télécharge un email et renvoie son sujet, expéditeur, date, corps et pièces jointes."""
+        """Télécharge un email et renvoie son sujet, expéditeur, date, corps et pièces jointes.
+
+        ``id`` est le numéro IMAP de l'email dans le dossier ; ``message_id`` est l'identifiant
+        unique attribué par la messagerie d'envoi (en-tête ``Message-ID``), stable d'une lecture
+        de la boîte à l'autre, ou ``None`` s'il est absent.
+        """
         try:
             status, msg_data = self.connection.fetch(email_id, "(RFC822)")
             if status != "OK":
@@ -135,6 +150,7 @@ class GmailReceiver:
                     msg = email.message_from_bytes(response_part[1])
                     return {
                         "id": email_id.decode(),
+                        "message_id": _message_id(msg),
                         "subject": _decode_header_value(msg["Subject"]),
                         "from": _decode_header_value(msg.get("From", "")),
                         "date": msg.get("Date", ""),

@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+
+{% block title %}Sécurité - TECPAP{% endblock %}
+{% block page_title %}Sécurité{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Sécurité</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <p class="text-slate-500">Événements enregistrés par les contrôles de sécurité de l'assistant et de l'extraction : tentatives d'injection d'instructions (messages qui cherchent à détourner les consignes données au modèle de langue), réponses générées bloquées par le filtre de sortie, dépassements de la limite de messages par minute. L'expéditeur est enregistré masqué.</p>
+
+    <!-- Décompte sur la période -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4" id="kindCounts">
+        <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase font-medium">Total sur {{ window_days }} jours</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1" id="weekTotal">{{ week_total }}</p>
+        </div>
+        {% for item in counts %}
+        <a href="/security?kind={{ item.kind|urlencode }}" class="card p-4 hover:border-brand-300 transition {% if current_kind == item.kind %}ring-2 ring-brand-500{% endif %}" data-kind="{{ item.kind }}">
+            <p class="text-xs text-slate-500 uppercase font-medium">{{ event_kind_label(item.kind) }}</p>
+            <p class="text-2xl font-bold {% if item.count %}text-red-600{% else %}text-slate-400{% endif %} mt-1" data-count="{{ item.count }}">{{ item.count }}</p>
+            <p class="text-xs text-slate-400 mt-1">sur {{ window_days }} jours</p>
+        </a>
+        {% endfor %}
+    </div>
+
+    <!-- Filtres -->
+    <div class="card p-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <span class="text-sm font-medium text-slate-600">Filtrer par nature :</span>
+            <a href="/security" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if not current_kind %}bg-brand-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">Toutes</a>
+            {% for item in counts %}
+            <a href="/security?kind={{ item.kind|urlencode }}" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_kind == item.kind %}bg-brand-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">{{ event_kind_label(item.kind) }}</a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Événements -->
+    <div class="card overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i class="fas fa-shield-alt text-brand-500"></i>
+                Derniers événements{% if current_kind %} : {{ event_kind_label(current_kind) }}{% endif %}
+            </h3>
+            <span class="text-xs text-slate-400">{{ events|length }} événement(s){% if events|length >= event_limit %} : les {{ event_limit }} plus récents{% endif %}</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full table-pro" id="eventsTable">
+                <thead>
+                    <tr>
+                        <th>Date (UTC)</th>
+                        <th>Canal</th>
+                        <th>Expéditeur</th>
+                        <th>Nature</th>
+                        <th>Score</th>
+                        <th>Détails</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for event in events %}
+                    <tr data-kind="{{ event.kind }}">
+                        <td class="text-sm text-slate-600 whitespace-nowrap">{{ event.created_at|timestamp }}</td>
+                        <td class="text-sm text-slate-600">{{ channel_label(event.channel) }}</td>
+                        <td class="font-mono text-sm text-slate-700">{{ event.sender or '—' }}</td>
+                        <td><span class="badge bg-red-50 text-red-700">{{ event_kind_label(event.kind) }}</span></td>
+                        <td>
+                            <span class="font-semibold {% if event.score >= 70 %}text-red-600{% elif event.score >= 40 %}text-amber-600{% else %}text-slate-600{% endif %}" title="Score de suspicion, de 0 à 100">{{ event.score }}</span>
+                        </td>
+                        <td class="text-sm text-slate-600 max-w-lg break-words" dir="auto">{{ event.details or '—' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-16">
+                            <div class="text-slate-400">
+                                <i class="fas fa-shield-alt text-5xl mb-4"></i>
+                                <p class="font-medium text-lg">Aucun événement de sécurité</p>
+                                <p class="text-sm mt-1">{% if current_kind %}Aucun événement de cette nature{% else %}Les contrôles de sécurité n'ont rien signalé{% endif %}</p>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

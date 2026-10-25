@@ -23,6 +23,14 @@ from dotenv import load_dotenv
 
 ENVIRONMENTS = ("development", "production", "test")
 
+RAG_EMBEDDERS = ("local", "openai")
+"""Calculs de plongements vectoriels de la base de connaissances (variable ``RAG_EMBEDDER``).
+
+- ``local`` : n-grammes de caractères hachés, calculés sur le serveur (hors ligne, gratuit et
+  déterministe : le même texte donne toujours le même vecteur) ;
+- ``openai`` : modèle ``EMBEDDING_MODEL`` de l'API OpenAI (clé ``OPENAI_API_KEY`` nécessaire).
+"""
+
 TRUE_VALUES = frozenset({"1", "true", "yes", "oui"})
 FALSE_VALUES = frozenset({"0", "false", "no", "non"})
 
@@ -73,6 +81,11 @@ def _parse_env(value: str, name: str) -> str:
     return value.lower()
 
 
+def _parse_choice(value: str, name: str) -> str:
+    """Valeur choisie dans une liste fermée, sans tenir compte de la casse (vérifiée par Settings)."""
+    return value.lower()
+
+
 @dataclass(frozen=True)
 class Settings:
     """Configuration complète de l'application (immuable).
@@ -120,6 +133,7 @@ class Settings:
     rag_enabled: bool = True
     rag_top_k: int = 4
     rag_min_score: float = 0.23
+    rag_embedder: str = "local"
     whatsapp_rate_limit_per_minute: int = 10
     max_media_bytes: int = 16 * 1024 * 1024
 
@@ -161,6 +175,10 @@ class Settings:
                 raise ConfigurationError(f"{name} : valeur strictement positive attendue")
         if self.llm_timeout <= 0:
             raise ConfigurationError("LLM_TIMEOUT : valeur strictement positive attendue")
+        if self.rag_embedder not in RAG_EMBEDDERS:
+            raise ConfigurationError(
+                f"RAG_EMBEDDER : valeur {self.rag_embedder!r} inconnue (valeurs acceptées : {', '.join(RAG_EMBEDDERS)})"
+            )
 
     @property
     def is_production(self) -> bool:
@@ -247,6 +265,7 @@ _ENV_SPEC: tuple[tuple[str, str, Callable[[str, str], Any]], ...] = (
     ("RAG_ENABLED", "rag_enabled", parse_bool),
     ("RAG_TOP_K", "rag_top_k", _parse_int),
     ("RAG_MIN_SCORE", "rag_min_score", _parse_float),
+    ("RAG_EMBEDDER", "rag_embedder", _parse_choice),
     ("WHATSAPP_RATE_LIMIT_PER_MINUTE", "whatsapp_rate_limit_per_minute", _parse_int),
     ("MAX_MEDIA_BYTES", "max_media_bytes", _parse_int),
     ("AUTH_ENABLED", "auth_enabled", parse_bool),

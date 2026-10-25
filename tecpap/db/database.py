@@ -3,13 +3,27 @@
 La table ``commandes`` suit le format des commandes SAGE X3 (numéro, ligne, site de vente,
 code client, code article, quantités livrées et facturées…) pour que l'export vers l'ERP soit
 direct. Les noms de colonnes sont en français, comme dans l'ERP.
+
+Chaque commande garde aussi la trace de son extraction, pour l'audit et la validation par
+l'équipe commerciale (:data:`ORDER_AUDIT_FIELDS`) : identifiant du message reçu
+(``message_sid`` : identifiant Twilio d'un message WhatsApp ou identifiant d'un email), texte
+analysé (``message_brut``), langue détectée, modèle de langue utilisé et raison de ce choix,
+anomalies et champs obligatoires manquants (listes enregistrées en JSON). Ces colonnes ne sont
+jamais modifiables depuis le tableau de bord.
+
+Fils d'exécution : une connexion SQLite n'est jamais partagée entre deux fils. Chaque fil
+(requête du serveur web, tâche de fond) obtient sa propre connexion, ouverte à la première
+utilisation (voir :class:`DatabaseManager`).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import sqlite3
+import threading
+import weakref
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +66,32 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("laize", "INTEGER"),
     ("impression_client", "TEXT"),
     ("updated_at", "TIMESTAMP"),
+    ("message_sid", "TEXT"),
+    ("message_brut", "TEXT"),
+    ("langue", "TEXT"),
+    ("modele_llm", "TEXT"),
+    ("routage_modele", "TEXT"),
+    ("anomalies", "TEXT"),
+    ("champs_manquants", "TEXT"),
+)
+
+ORDER_AUDIT_FIELDS: tuple[str, ...] = (
+    "message_sid", "message_brut", "langue", "modele_llm", "routage_modele", "anomalies", "champs_manquants",
+)
+"""Colonnes de traçabilité de l'extraction, écrites à la création de la commande et jamais modifiées.
+
+``anomalies`` et ``champs_manquants`` sont des listes de textes enregistrées en JSON ;
+:meth:`DatabaseManager.get_order` et :meth:`DatabaseManager.get_all_orders` les renvoient aussi
+décodées (``anomalies_list``, ``champs_manquants_list``).
+"""
+
+MESSAGE_BRUT_MAX_CHARS = 20_000
+"""Longueur maximale du texte analysé conservé avec une commande (colonne ``message_brut``)."""
+
+_MESSAGE_SID_MAX_CHARS = 200
+_CREATE_MESSAGE_SID_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_commandes_message_sid ON commandes(message_sid) "
+    "WHERE message_sid IS NOT NULL"
 )
 
 _CREATE_CLIENTS = """
@@ -115,6 +155,14 @@ _CREATE_COMMANDES = """
         validated_at TIMESTAMP,
         validated_by TEXT,
         motif_rejet TEXT,
+        updated_at TIMESTAMP,
+        message_sid TEXT,
+        message_brut TEXT,
+        langue TEXT,
+        modele_llm TEXT,
+        routage_modele TEXT,
+        anomalies TEXT,
+        champs_manquants TEXT,
         FOREIGN KEY (client_id) REFERENCES clients(id),
         FOREIGN KEY (produit_id) REFERENCES produits(id)
     )
@@ -141,6 +189,7 @@ _ORDER_COLUMNS = (
     "type_sac", "format_sac", "type_papier", "grammage", "laize", "impression_client",
     "informations_supplementaires", "confiance", "source",
     "email_id", "email_subject", "email_from", "whatsapp_from",
+    *ORDER_AUDIT_FIELDS,
 )
 
 ORDER_STATUSES: tuple[str, ...] = ("en_attente", "validee", "rejetee", "supprimee")
@@ -158,9 +207,10 @@ ORDER_UPDATABLE_FIELDS: tuple[str, ...] = (
 """Colonnes de ``commandes`` modifiables par :meth:`DatabaseManager.update_order`.
 
 Ce sont les données métier et SAGE X3 qu'un commercial peut corriger. L'identifiant, le client,
-le statut, la confiance de l'extraction, la source, les traces de réception (email, WhatsApp) et
-les dates de création ou de validation n'en font pas partie : elles ne changent que par les
-méthodes dédiées (:meth:`DatabaseManager.update_order_status`, par exemple).
+le statut, la confiance de l'extraction, la source, les traces de réception (email, WhatsApp),
+la traçabilité de l'extraction (:data:`ORDER_AUDIT_FIELDS`) et les dates de création ou de
+validation n'en font pas partie : elles ne changent que par les méthodes dédiées
+(:meth:`DatabaseManager.update_order_status`, par exemple).
 """
 
 _UPDATABLE_FIELD_SET = frozenset(ORDER_UPDATABLE_FIELDS)
@@ -278,12 +328,121 @@ def is_generic_client_name(name: str | None) -> bool:
     return bool(name) and name.startswith(GENERIC_CLIENT_PREFIXES)
 
 
+def encode_text_list(value: Any) -> str | None:
+    """Liste de textes (anomalies, champs manquants) au format JSON enregistré en base.
+
+    ``None`` reste ``None`` ; une chaîne qui contient déjà une liste JSON est reprise, une autre
+    chaîne devient une liste d'un élément. Les caractères non ASCII (accents, arabe) sont écrits
+    tels quels.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            decoded = [value]
+        items = decoded if isinstance(decoded, list) else [value]
+    elif isinstance(value, Iterable) and not isinstance(value, (bytes, Mapping)):
+        items = list(value)
+    else:
+        items = [value]
+    return json.dumps([str(item) for item in items if item is not None and str(item) != ""], ensure_ascii=False)
+
+
+def decode_text_list(raw: Any) -> list[str]:
+    """Liste de textes lue dans une colonne JSON.
+
+    Un texte qui n'est pas une liste JSON donne une liste d'un élément ; une valeur vide, une liste vide.
+    """
+    if raw is None or raw == "":
+        return []
+    try:
+        decoded = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return [str(raw)]
+    if isinstance(decoded, list):
+        return [str(item) for item in decoded if item is not None]
+    return [str(raw)]
+
+
+def _with_decoded_lists(order: dict[str, Any]) -> dict[str, Any]:
+    """Ajoute à une commande lue en base ses listes décodées (``anomalies_list``, ``champs_manquants_list``)."""
+    order["anomalies_list"] = decode_text_list(order.get("anomalies"))
+    order["champs_manquants_list"] = decode_text_list(order.get("champs_manquants"))
+    return order
+
+
+def _clean_message_sid(value: Any) -> str | None:
+    """Identifiant de message nettoyé (espaces retirés, longueur limitée), ou ``None``."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:_MESSAGE_SID_MAX_CHARS] or None
+
+
+class _ThreadState(threading.local):
+    """Connexion du fil d'exécution courant.
+
+    Attributes:
+        conn: connexion ouverte par ce fil, ou ``None``.
+        generation: génération des connexions à laquelle ``conn`` appartient ; une fermeture
+            générale (:meth:`DatabaseManager.close_all`) change de génération.
+        detached: vrai après :meth:`DatabaseManager.disconnect` dans ce fil : aucune connexion
+            n'est rouverte automatiquement avant le prochain :meth:`DatabaseManager.connect`.
+    """
+
+    def __init__(self) -> None:
+        self.conn: sqlite3.Connection | None = None
+        self.generation = -1
+        self.detached = False
+
+
+_MANAGERS: weakref.WeakSet[DatabaseManager] = weakref.WeakSet()
+_MANAGERS_LOCK = threading.Lock()
+
+
+def _same_database(first: str, second: str) -> bool:
+    if first == ":memory:" or second == ":memory:":
+        return False
+    try:
+        return Path(first).resolve() == Path(second).resolve()
+    except OSError:
+        return first == second
+
+
+def close_connections_to(db_file: str) -> int:
+    """Ferme toutes les connexions de tous les gestionnaires ouverts sur la base ``db_file``.
+
+    Utilisé avant une restauration : aucune connexion ne garde une lecture en cours sur
+    l'ancienne base. Les gestionnaires rouvrent leurs connexions au prochain
+    :meth:`DatabaseManager.connect`.
+
+    Returns:
+        Le nombre de connexions fermées.
+    """
+    with _MANAGERS_LOCK:
+        managers = [manager for manager in _MANAGERS if _same_database(manager.db_file, db_file)]
+    return sum(manager.close_all() for manager in managers)
+
+
 class DatabaseManager:
     """Gestionnaire de la base SQLite des commandes.
 
-    Une seule connexion est ouverte par instance ; elle est partagée entre les fils d'exécution
-    du serveur web (``check_same_thread=False``) et utilise le mode WAL (journal à écriture
-    anticipée), qui laisse les lectures se poursuivre pendant une écriture.
+    Une connexion SQLite n'est jamais partagée entre fils d'exécution : chaque fil (requête du
+    serveur web, tâche de fond) obtient la sienne par la propriété :attr:`connection`, ouverte
+    à la première utilisation avec les mêmes réglages : mode WAL (journal à écriture anticipée,
+    qui laisse les lectures se poursuivre pendant une écriture) et attente de 30 secondes quand
+    la base est verrouillée par une autre connexion. L'ouverture automatique n'a lieu qu'une
+    fois le gestionnaire ouvert par :meth:`connect` (ou :meth:`init_database`).
+
+    - :meth:`connect` ouvre la connexion du fil courant ;
+    - :meth:`disconnect` ferme la connexion du fil courant ;
+    - :meth:`close_all` ferme les connexions de tous les fils (arrêt de l'application,
+      restauration d'une sauvegarde) ; un :meth:`connect` ultérieur rouvre le gestionnaire.
+
+    Les connexions des fils terminés sont fermées à l'ouverture suivante. Une base en mémoire
+    (``":memory:"``) n'existe que dans sa connexion : celle-ci est alors partagée par tous les fils.
 
     Args:
         db_file: chemin du fichier SQLite. Par défaut, ``Settings.database_path``.
@@ -291,51 +450,166 @@ class DatabaseManager:
 
     def __init__(self, db_file: str | None = None):
         self.db_file = db_file if db_file is not None else load_settings().database_path
-        self.connection: sqlite3.Connection | None = None
+        self._local = _ThreadState()
+        self._lock = threading.RLock()
+        # Connexions ouvertes : (fil propriétaire, connexion) ; fil None pour une base en mémoire.
+        self._connections: list[tuple[weakref.ref[threading.Thread] | None, sqlite3.Connection]] = []
+        self._generation = 0
+        self._open = False
         self._initialized = False
+        with _MANAGERS_LOCK:
+            _MANAGERS.add(self)
 
     # ------------------------------------------------------------------ connexion
 
+    @property
+    def connection(self) -> sqlite3.Connection | None:
+        """Connexion du fil courant, ouverte à la première utilisation ; ``None`` si le gestionnaire est fermé."""
+        state = self._current_state()
+        if state.conn is not None:
+            return state.conn
+        if state.detached or not self._open:
+            return None
+        return self._open_connection(state)
+
+    @connection.setter
+    def connection(self, value: sqlite3.Connection | None) -> None:
+        """Remplace la connexion du fil courant (sans fermer la précédente) ; ``None`` la détache."""
+        state = self._current_state()
+        state.conn = value
+        state.detached = value is None
+
+    def _current_state(self) -> _ThreadState:
+        state = self._local
+        if state.generation != self._generation:
+            state.conn, state.detached, state.generation = None, False, self._generation
+        return state
+
+    def _new_connection(self) -> sqlite3.Connection:
+        if self.db_file != ":memory:":
+            Path(self.db_file).parent.mkdir(parents=True, exist_ok=True)
+        # check_same_thread=False permet seulement à close_all() de fermer la connexion d'un autre
+        # fil ; chaque connexion n'est utilisée que par le fil qui l'a ouverte.
+        connection = sqlite3.connect(self.db_file, check_same_thread=False, timeout=30.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
+        return connection
+
+    def _open_connection(self, state: _ThreadState) -> sqlite3.Connection | None:
+        """Ouvre la connexion du fil courant (ou reprend la connexion partagée d'une base en mémoire)."""
+        with self._lock:
+            self._close_dead_threads()
+            if self.db_file == ":memory:" and self._connections:
+                connection = self._connections[0][1]
+            else:
+                try:
+                    connection = self._new_connection()
+                except (sqlite3.Error, OSError):
+                    logger.exception("Échec de la connexion à la base de données %s", self.db_file)
+                    return None
+                owner = None if self.db_file == ":memory:" else weakref.ref(threading.current_thread())
+                self._connections.append((owner, connection))
+                logger.debug("Connexion à la base de données %s (fil %s)", self.db_file,
+                             threading.current_thread().name)
+            state.conn, state.detached, state.generation = connection, False, self._generation
+            return connection
+
+    def _close_dead_threads(self) -> None:
+        """Ferme les connexions des fils terminés (appelée sous verrou)."""
+        alive = []
+        for owner, connection in self._connections:
+            thread = owner() if owner is not None else None
+            if owner is not None and (thread is None or not thread.is_alive()):
+                try:
+                    connection.close()
+                except sqlite3.Error:
+                    logger.debug("Fermeture de la connexion d'un fil terminé impossible", exc_info=True)
+            else:
+                alive.append((owner, connection))
+        self._connections = alive
+
     def connect(self) -> bool:
-        """Ouvre la connexion si elle ne l'est pas déjà. Renvoie ``False`` en cas d'échec."""
-        if self.connection:
-            return True
-        try:
-            if self.db_file != ":memory:":
-                Path(self.db_file).parent.mkdir(parents=True, exist_ok=True)
-            self.connection = sqlite3.connect(self.db_file, check_same_thread=False, timeout=30.0)
-            self.connection.row_factory = sqlite3.Row
-            self.connection.execute("PRAGMA journal_mode=WAL")
-            self.connection.execute("PRAGMA busy_timeout=30000")
-            logger.info("Connexion à la base de données %s", self.db_file)
-            return True
-        except (sqlite3.Error, OSError):
-            logger.exception("Échec de la connexion à la base de données %s", self.db_file)
-            self.connection = None
+        """Ouvre la connexion du fil courant si elle ne l'est pas déjà. Renvoie ``False`` en cas d'échec."""
+        state = self._current_state()
+        state.detached = False
+        if state.conn is None and self._open_connection(state) is None:
             return False
+        if not self._open:
+            logger.info("Connexion à la base de données %s", self.db_file)
+        self._open = True
+        return True
 
     def disconnect(self) -> None:
-        """Ferme la connexion si elle est ouverte."""
-        if not self.connection:
+        """Ferme la connexion du fil courant ; les autres fils gardent la leur.
+
+        Pour une base en mémoire, la connexion partagée est fermée pour tous les fils.
+        """
+        if self.db_file == ":memory:":
+            self.close_all()
+            self._current_state().detached = True
             return
+        state = self._current_state()
+        connection, state.conn, state.detached = state.conn, None, True
+        if connection is None:
+            return
+        with self._lock:
+            self._connections = [entry for entry in self._connections if entry[1] is not connection]
         try:
-            self.connection.close()
+            connection.close()
             logger.info("Déconnexion de la base de données %s", self.db_file)
         except sqlite3.Error:
             logger.warning("Erreur à la fermeture de la base de données %s", self.db_file, exc_info=True)
-        finally:
-            self.connection = None
+
+    def close_all(self) -> int:
+        """Ferme les connexions de tous les fils ; le gestionnaire reste fermé jusqu'au prochain :meth:`connect`.
+
+        Une requête en cours dans un autre fil échoue : à réserver à l'arrêt de l'application et
+        à la restauration d'une sauvegarde.
+
+        Returns:
+            Le nombre de connexions fermées.
+        """
+        with self._lock:
+            connections = [connection for _, connection in self._connections]
+            self._connections = []
+            self._generation += 1
+            self._open = False
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                logger.warning("Erreur à la fermeture d'une connexion à %s", self.db_file, exc_info=True)
+        if connections:
+            logger.info("Connexions à la base de données %s fermées (%d)", self.db_file, len(connections))
+        return len(connections)
+
+    def open_connection_count(self) -> int:
+        """Nombre de connexions ouvertes, tous fils confondus."""
+        with self._lock:
+            return len(self._connections)
 
     def init_database(self) -> None:
-        """Crée les tables manquantes, ajoute les colonnes absentes et insère le catalogue produits."""
+        """Crée les tables manquantes, ajoute les colonnes absentes et insère le catalogue produits.
+
+        Crée aussi l'index d'unicité de ``commandes.message_sid`` et les tables du journal de
+        sécurité, de l'index de la base de connaissances et des conversations WhatsApp.
+        """
+        # Imports différés : ces modules dépendent indirectement de celui-ci.
+        from tecpap.chatbot.conversation import ensure_schema as ensure_conversation_schema
+        from tecpap.rag.store import ensure_schema as ensure_rag_schema
+        from tecpap.security.events import ensure_schema as ensure_security_schema
+
         if not self.connection:
             self.connect()
+        connection = self.connection
 
-        cursor = self.connection.cursor()
+        cursor = connection.cursor()
         cursor.execute(_CREATE_CLIENTS)
         cursor.execute(_CREATE_PRODUITS)
         cursor.execute(_CREATE_COMMANDES)
         self._add_missing_columns(cursor)
+        cursor.execute(_CREATE_MESSAGE_SID_INDEX)
         cursor.execute(_CREATE_LOGS)
 
         for product in PRODUCT_CATALOG:
@@ -344,7 +618,10 @@ class DatabaseManager:
                 (product["id"], product["type"], product["description"]),
             )
 
-        self.connection.commit()
+        connection.commit()
+        ensure_security_schema(connection)
+        ensure_rag_schema(connection)
+        ensure_conversation_schema(connection)
         self._initialized = True
         logger.info("Base de données initialisée")
         self._log_action("INIT", "database", None, "Database initialized")
@@ -360,12 +637,12 @@ class DatabaseManager:
 
     def _log_action(self, action: str, table_name: str | None, record_id: int | None, details: str) -> None:
         """Ajoute une ligne à la table ``logs`` (trace des créations et modifications)."""
-        cursor = self.connection.cursor()
-        cursor.execute(
+        connection = self.connection
+        connection.execute(
             "INSERT INTO logs (action, table_name, record_id, details) VALUES (?, ?, ?, ?)",
             (action, table_name, record_id, details),
         )
-        self.connection.commit()
+        connection.commit()
 
     # ------------------------------------------------------------------ clients
 
@@ -375,7 +652,11 @@ class DatabaseManager:
 
         Règles :
         - un nom réel (pas un nom provisoire « Client WhatsApp … ») est cherché par nom, sans
-          tenir compte de la casse ; le téléphone est complété s'il manquait ;
+          tenir compte de la casse ;
+        - le téléphone d'un message n'est jamais rattaché à un client existant trouvé par son
+          nom : n'importe qui peut écrire « ana <nom d'un client> » depuis un numéro inconnu. Le
+          rattachement a lieu à la validation de la commande par l'équipe commerciale
+          (:meth:`attach_phone_to_client`) ; un client créé ici reçoit en revanche le téléphone ;
         - le téléphone n'identifie pas un client : une même personne peut commander pour
           plusieurs entreprises ;
         - pour un nom provisoire, le client est cherché par téléphone puis par email.
@@ -389,9 +670,6 @@ class DatabaseManager:
             cursor.execute("SELECT * FROM clients WHERE LOWER(nom) = LOWER(?)", (nom,))
             client = cursor.fetchone()
             if client:
-                if telephone and not client["telephone"]:
-                    cursor.execute("UPDATE clients SET telephone = ? WHERE id = ?", (telephone, client["id"]))
-                    self.connection.commit()
                 return dict(client)
             return self._insert_client(cursor, nom, email, telephone)
 
@@ -417,6 +695,36 @@ class DatabaseManager:
         self._log_action("CREATE", "clients", client_id, f"Created client: {nom}")
         logger.info("Client créé : %s (id %s)", nom, client_id)
         return {"id": client_id, "nom": nom, "email": email, "telephone": telephone}
+
+    def attach_phone_to_client(self, client_id: int, phone: str | None) -> bool:
+        """Enregistre le téléphone d'un client qui n'en a pas encore.
+
+        Appelée quand l'équipe commerciale valide une commande WhatsApp : la validation vaut
+        vérification du lien entre le numéro de l'expéditeur et le client. Un téléphone déjà
+        enregistré n'est jamais remplacé.
+
+        Args:
+            client_id: identifiant du client.
+            phone: numéro de l'expéditeur (« whatsapp: » et espaces retirés).
+
+        Returns:
+            ``True`` si le téléphone a été enregistré.
+        """
+        number = (phone or "").replace("whatsapp:", "").strip()
+        if not number or client_id is None:
+            return False
+        connection = self.connection
+        cursor = connection.execute(
+            "UPDATE clients SET telephone = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND (telephone IS NULL OR TRIM(telephone) = '')",
+            (number, int(client_id)),
+        )
+        connection.commit()
+        if cursor.rowcount != 1:
+            return False
+        self._log_action("UPDATE", "clients", int(client_id), "Phone attached after order validation")
+        logger.info("Téléphone rattaché au client %s après validation", client_id)
+        return True
 
     def get_all_clients(self) -> list[dict[str, Any]]:
         """Renvoie tous les clients avec leur nombre de commandes et la date de la dernière."""
@@ -462,30 +770,54 @@ class DatabaseManager:
         cursor.execute("SELECT id FROM commandes WHERE email_id = ?", (email_id,))
         return cursor.fetchone() is not None
 
+    def find_order_by_message_sid(self, message_sid: str | None) -> int | None:
+        """Identifiant de la commande créée à partir du message ``message_sid``, ou ``None``."""
+        sid = _clean_message_sid(message_sid)
+        connection = self.connection
+        if sid is None or connection is None:
+            return None
+        row = connection.execute("SELECT id FROM commandes WHERE message_sid = ?", (sid,)).fetchone()
+        return int(row[0]) if row else None
+
+    def is_message_processed(self, message_sid: str | None) -> bool:
+        """Vrai si une commande a déjà été créée à partir du message ``message_sid`` (WhatsApp ou email)."""
+        return self.find_order_by_message_sid(message_sid) is not None
+
+    def _existing_order_id(self, cursor: sqlite3.Cursor, order_data: Mapping[str, Any]) -> int | None:
+        """Commande déjà enregistrée pour ce message : même ``message_sid``, ``numero_commande`` ou ``email_id``."""
+        already_processed = "Message %s déjà traité (commande id %s)"
+        checks = (
+            ("message_sid", _clean_message_sid(order_data.get("message_sid")), already_processed),
+            ("numero_commande", order_data.get("numero_commande"), "Commande %s déjà enregistrée (id %s)"),
+            ("email_id", order_data.get("email_id"), already_processed),
+        )
+        for column, value, message in checks:
+            if not value:
+                continue
+            # Nom de colonne issu de la constante ci-dessus ; la valeur passe par un paramètre « ? ».
+            cursor.execute(f"SELECT id FROM commandes WHERE {column} = ?", (value,))  # nosec B608
+            existing = cursor.fetchone()
+            if existing:
+                logger.info(message, value, existing[0])
+                return int(existing[0])
+        return None
+
     def create_order(self, order_data: dict[str, Any]) -> int:
         """Enregistre une commande extraite et renvoie son identifiant.
 
-        Une commande déjà connue (même ``numero_commande`` ou même ``email_id``) n'est pas
-        dupliquée : l'identifiant existant est renvoyé. Le client est retrouvé ou créé, le
-        produit rattaché d'après ``type_produit`` et le reste à livrer calculé.
+        Une commande déjà connue (même ``message_sid``, même ``numero_commande`` ou même
+        ``email_id``) n'est pas dupliquée : l'identifiant existant est renvoyé. Le client est
+        retrouvé ou créé, le produit rattaché d'après ``type_produit`` et le reste à livrer
+        calculé. Les champs de traçabilité (:data:`ORDER_AUDIT_FIELDS`) sont enregistrés : listes
+        ``anomalies`` et ``champs_manquants`` en JSON, ``message_brut`` limité à
+        :data:`MESSAGE_BRUT_MAX_CHARS` caractères.
         """
-        cursor = self.connection.cursor()
+        connection = self.connection
+        cursor = connection.cursor()
 
-        numero = order_data.get("numero_commande")
-        if numero:
-            cursor.execute("SELECT id FROM commandes WHERE numero_commande = ?", (numero,))
-            existing = cursor.fetchone()
-            if existing:
-                logger.info("Commande %s déjà enregistrée (id %s)", numero, existing[0])
-                return existing[0]
-
-        email_id = order_data.get("email_id")
-        if email_id:
-            cursor.execute("SELECT id FROM commandes WHERE email_id = ?", (email_id,))
-            existing = cursor.fetchone()
-            if existing:
-                logger.info("Message déjà traité (commande id %s)", existing[0])
-                return existing[0]
+        existing = self._existing_order_id(cursor, order_data)
+        if existing is not None:
+            return existing
 
         client = self._client_for_order(order_data)
 
@@ -497,6 +829,9 @@ class DatabaseManager:
         quantite_livree = order_data.get("quantite_livree") or 0
         # Code client au format SAGE X3 : « CL » suivi de l'identifiant sur 5 chiffres.
         code_client = order_data.get("code_client") or f"CL{str(client['id']).zfill(5)}"
+        message_brut = order_data.get("message_brut")
+        if message_brut is not None:
+            message_brut = str(message_brut)[:MESSAGE_BRUT_MAX_CHARS]
 
         values = (
             order_data.get("numero_commande"),
@@ -531,18 +866,33 @@ class DatabaseManager:
             order_data.get("email_subject"),
             order_data.get("email_from"),
             order_data.get("whatsapp_from"),
+            _clean_message_sid(order_data.get("message_sid")),
+            message_brut,
+            order_data.get("langue"),
+            order_data.get("modele_llm"),
+            order_data.get("routage_modele"),
+            encode_text_list(order_data.get("anomalies")),
+            encode_text_list(order_data.get("champs_manquants")),
         )
         # Colonnes issues de la constante _ORDER_COLUMNS ; les valeurs passent par des paramètres « ? ».
         placeholders = ", ".join("?" for _ in _ORDER_COLUMNS)
-        cursor.execute(
-            f"INSERT INTO commandes ({', '.join(_ORDER_COLUMNS)}) VALUES ({placeholders})",  # nosec B608
-            values,
-        )
-        self.connection.commit()
+        try:
+            cursor.execute(
+                f"INSERT INTO commandes ({', '.join(_ORDER_COLUMNS)}) VALUES ({placeholders})",  # nosec B608
+                values,
+            )
+        except sqlite3.IntegrityError:
+            # Même message enregistré entre-temps par un autre fil (index d'unicité de message_sid).
+            connection.rollback()
+            existing = self._existing_order_id(cursor, order_data)
+            if existing is None:
+                raise
+            return existing
+        connection.commit()
         order_id = cursor.lastrowid
 
         try:
-            self.connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
         except sqlite3.Error:
             logger.debug("Point de contrôle WAL impossible", exc_info=True)
 
@@ -568,7 +918,11 @@ class DatabaseManager:
         return self.get_or_create_client(client_name, client_email, client_phone)
 
     def get_order(self, order_id: int) -> dict[str, Any] | None:
-        """Renvoie une commande avec le nom, l'email et le téléphone du client et le nom du produit."""
+        """Renvoie une commande avec le nom, l'email et le téléphone du client et le nom du produit.
+
+        Les listes ``anomalies`` et ``champs_manquants`` sont aussi renvoyées décodées
+        (``anomalies_list``, ``champs_manquants_list``).
+        """
         cursor = self.connection.cursor()
         cursor.execute("""
             SELECT c.*, cl.nom as client_nom, cl.email as client_email, cl.telephone as client_telephone,
@@ -579,10 +933,14 @@ class DatabaseManager:
             WHERE c.id = ?
         """, (order_id,))
         order = cursor.fetchone()
-        return dict(order) if order else None
+        return _with_decoded_lists(dict(order)) if order else None
 
     def get_all_orders(self, status: str | None = None) -> list[dict[str, Any]]:
-        """Renvoie les commandes, des plus récentes aux plus anciennes, éventuellement filtrées par statut."""
+        """Renvoie les commandes, des plus récentes aux plus anciennes, éventuellement filtrées par statut.
+
+        Comme pour :meth:`get_order`, les listes décodées ``anomalies_list`` et
+        ``champs_manquants_list`` sont ajoutées.
+        """
         cursor = self.connection.cursor()
         query = """
             SELECT c.*, cl.nom as client_nom, p.type as produit_type
@@ -594,7 +952,7 @@ class DatabaseManager:
             cursor.execute(query + " WHERE c.statut = ? ORDER BY c.created_at DESC", (status,))
         else:
             cursor.execute(query + " ORDER BY c.created_at DESC")
-        return [dict(row) for row in cursor.fetchall()]
+        return [_with_decoded_lists(dict(row)) for row in cursor.fetchall()]
 
     def get_pending_orders(self) -> list[dict[str, Any]]:
         """Renvoie les commandes en attente de validation."""

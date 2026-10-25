@@ -1,14 +1,23 @@
-"""Pages HTML du tableau de bord : accueil, commandes, clients, statistiques, alertes, WhatsApp, SAGE X3."""
+"""Pages HTML du tableau de bord : accueil, commandes, clients, statistiques, alertes, WhatsApp, SAGE X3.
+
+Les pages de l'assistant WhatsApp (conversations, base de connaissances, sécurité) sont dans
+:mod:`tecpap.web.routes.assistant`.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
 from datetime import datetime, timedelta
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from tecpap.reporting.analytics import AIPredictor, AlertSystem, Analytics, ClientHistory
-from tecpap.web.services import get_services
+from tecpap.web.routes.assistant import orders_for_phone
+from tecpap.web.services import Services, get_services
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("pages", __name__)
 
@@ -45,21 +54,57 @@ def index():
 
 @bp.route("/orders")
 def orders_list():
-    """Liste des commandes, filtrable par statut (``?status=en_attente``)."""
+    """Liste des commandes, filtrable par statut (``?status=en_attente``) et par numéro WhatsApp.
+
+    ``?conversation=<id>`` ne garde que les commandes du numéro de cette conversation : envoyées
+    depuis ce numéro ou passées par un client dont c'est le téléphone. L'identifiant de la
+    conversation figure dans l'adresse à la place du numéro, qui n'apparaît donc pas dans les
+    journaux du serveur web.
+    """
     status_filter = request.args.get("status", None)
-    db = get_services().db
+    services = get_services()
+    db = services.db
     orders = db.get_all_orders(status=status_filter) if status_filter else db.get_all_orders()
-    return render_template("orders.html", orders=orders, current_filter=status_filter)
+    conversation = _filter_conversation(services, request.args.get("conversation", type=int))
+    if conversation is not None:
+        kept = {order["id"] for order in orders_for_phone(db.connection, conversation.phone)}
+        orders = [order for order in orders if order["id"] in kept]
+    return render_template("orders.html", orders=orders, current_filter=status_filter,
+                           current_conversation=conversation)
+
+
+def _filter_conversation(services: Services, conversation_id: int | None):
+    """Conversation du filtre de la liste des commandes, ou ``None`` (filtre absent ou conversation inconnue)."""
+    if conversation_id is None:
+        return None
+    return services.conversation_store().get(conversation_id)
+
+
+def _conversation_id_for(services: Services, order: dict) -> int | None:
+    """Identifiant de la conversation WhatsApp du numéro qui a envoyé la commande, s'il en existe une."""
+    sender = order.get("whatsapp_from")
+    if not sender:
+        return None
+    try:
+        conversation = services.conversation_store().find(sender)
+    except ValueError:
+        return None
+    except sqlite3.Error:
+        logger.warning("Conversation WhatsApp de la commande %s illisible", order.get("id"), exc_info=True)
+        return None
+    return conversation.id if conversation is not None else None
 
 
 @bp.route("/orders/<int:order_id>")
 def order_detail(order_id: int):
-    """Fiche d'une commande, pour la vérification et la validation."""
-    db = get_services().db
+    """Fiche d'une commande, pour la vérification et la validation (avec le contrôle de l'extraction)."""
+    services = get_services()
+    db = services.db
     order = db.get_order(order_id)
     if not order:
         return redirect(url_for("pages.orders_list"))
-    return render_template("order_detail.html", order=order, products=db.get_all_products())
+    return render_template("order_detail.html", order=order, products=db.get_all_products(),
+                           conversation_id=_conversation_id_for(services, order))
 
 
 @bp.route("/process")

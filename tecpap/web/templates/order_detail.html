@@ -37,6 +37,76 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Informations principales -->
         <div class="lg:col-span-2 space-y-6">
+            <!-- Contrôle de l'extraction automatique -->
+            <div class="card {% if order.anomalies_list or order.champs_manquants_list %}border-l-4 border-l-amber-500{% endif %}" id="extractionAudit">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-clipboard-check text-brand-500"></i>
+                        Contrôle de l'extraction automatique
+                    </h3>
+                </div>
+                <div class="p-5 space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-slate-50 p-3 rounded-lg">
+                            <label class="text-xs font-semibold text-slate-500 uppercase">Langue détectée</label>
+                            <p class="text-slate-800 font-medium mt-1" id="orderLanguage">{{ language_label(order.langue) }}</p>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-lg">
+                            <label class="text-xs font-semibold text-slate-500 uppercase">Modèle de langue</label>
+                            <p class="text-slate-800 font-medium mt-1 font-mono text-sm break-all" id="orderModel">{{ order.modele_llm or 'Aucun modèle enregistré' }}</p>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-lg">
+                            <label class="text-xs font-semibold text-slate-500 uppercase">Confiance</label>
+                            {% if order.confiance is not none %}
+                            {% set confidence = [[order.confiance|int, 0]|max, 100]|min %}
+                            <p class="font-bold mt-1 {% if confidence >= 80 %}text-emerald-700{% elif confidence >= 50 %}text-amber-600{% else %}text-red-600{% endif %}" id="orderConfidence">{{ confidence }} %</p>
+                            <div class="w-full h-1.5 bg-slate-200 rounded-full mt-2 overflow-hidden">
+                                <div class="h-full rounded-full {% if confidence >= 80 %}bg-emerald-500{% elif confidence >= 50 %}bg-amber-500{% else %}bg-red-500{% endif %}" style="width: {{ confidence }}%"></div>
+                            </div>
+                            {% else %}
+                            <p class="text-slate-500 mt-1" id="orderConfidence">Non calculée</p>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {% if order.routage_modele %}
+                    <div>
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Choix du modèle</label>
+                        <p class="text-sm text-slate-700 mt-1" id="orderRouting">{{ order.routage_modele }}</p>
+                    </div>
+                    {% endif %}
+
+                    <div>
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Anomalies</label>
+                        {% if order.anomalies_list %}
+                        <ul class="mt-2 space-y-2" id="orderAnomalies">
+                            {% for anomaly in order.anomalies_list %}
+                            <li class="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                <i class="fas fa-exclamation-triangle text-amber-500 mt-0.5"></i>
+                                <span>{{ anomaly }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p class="text-sm text-emerald-700 mt-1"><i class="fas fa-check mr-1"></i>Aucune anomalie détectée par les règles de contrôle</p>
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Champs obligatoires manquants</label>
+                        {% if order.champs_manquants_list %}
+                        <div class="flex flex-wrap gap-2 mt-2" id="orderMissingFields">
+                            {% for name in order.champs_manquants_list %}
+                            <span class="badge badge-rejected"><i class="fas fa-minus-circle mr-1"></i>{{ field_label(name) }}</span>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-sm text-emerald-700 mt-1"><i class="fas fa-check mr-1"></i>Aucun</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
             <!-- Détails de la commande -->
             <div class="card">
                 <div class="p-5 border-b border-slate-100">
@@ -162,6 +232,24 @@
                         <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Détails supplémentaires</label>
                         <p class="text-slate-700 mt-2 bg-slate-50 p-4 rounded-lg">{{ order.informations_supplementaires }}</p>
                     </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Message d'origine -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-align-left text-brand-500"></i>
+                        Message d'origine
+                    </h3>
+                    <p class="text-sm text-slate-500 mt-1">Texte analysé par l'extraction automatique, à comparer aux informations extraites.</p>
+                </div>
+                <div class="p-5">
+                    {% if order.message_brut %}
+                    <pre class="whitespace-pre-wrap break-words text-sm text-slate-700 bg-slate-50 border border-slate-200 p-4 rounded-lg max-h-96 overflow-y-auto font-mono" dir="auto" id="rawMessage">{{ order.message_brut }}</pre>
+                    {% else %}
+                    <p class="text-sm text-slate-400" id="rawMessage">Message d'origine non conservé pour cette commande.</p>
                     {% endif %}
                 </div>
             </div>
@@ -295,6 +383,12 @@
                             <i class="fas fa-phone w-5 text-slate-400"></i>
                             <span>{{ order.client_telephone }}</span>
                         </div>
+                        {% endif %}
+                        {% if conversation_id %}
+                        <a href="/conversations/{{ conversation_id }}" class="flex items-center gap-2 text-brand-600 hover:text-brand-700 font-medium" id="conversationLink">
+                            <i class="fab fa-whatsapp w-5 text-green-600"></i>
+                            <span>Voir la conversation WhatsApp</span>
+                        </a>
                         {% endif %}
                     </div>
                 </div>

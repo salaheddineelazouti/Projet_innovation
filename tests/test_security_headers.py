@@ -44,9 +44,11 @@ def pages(logged_in_client, secure_app, sample_order_data, sample_whatsapp_order
     order_id = db.create_order(sample_order_data)
     db.create_order(sample_whatsapp_order)
     client_id = db.get_order(order_id)["client_id"]
+    conversation_id = secure_app.extensions["tecpap"].conversation_store().get_or_create("+212612345678").id
     return [
         "/", "/orders", "/orders?status=en_attente", f"/orders/{order_id}", "/process", "/analytics", "/clients",
         f"/clients/{client_id}", "/alerts", "/whatsapp", "/sage", "/backups",
+        "/conversations", f"/conversations/{conversation_id}", "/knowledge", "/security",
     ]
 
 

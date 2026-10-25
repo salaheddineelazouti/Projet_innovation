@@ -41,6 +41,7 @@ __all__ = [
     "order_lines",
     "product_label",
     "product_menu",
+    "reason_line",
     "render",
     "status_label",
     "status_lines",
@@ -115,6 +116,14 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         "draft_expired": "Votre commande en cours n'a pas été confirmée dans les 24 heures : elle a été abandonnée.",
         "excerpt_answer": "D'après notre documentation : « {excerpt} »",
         "catalog_list": "Nos produits :\n{products}",
+        "order_validated": (
+            "Bonne nouvelle : votre commande {reference} est validée par notre équipe commerciale.\n{lines}\n"
+            "Merci pour votre confiance."
+        ),
+        "order_rejected": (
+            "Votre commande {reference} n'a pas pu être validée par notre équipe commerciale.{reason}\n"
+            "Écrivez « conseiller » pour en parler avec nous."
+        ),
     },
     "darija": {
         "greeting": "Salam! Ana l'assistant WhatsApp dyal TECPAP.\n{help}",
@@ -166,6 +175,14 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         "draft_expired": "La commande li kanti katdir ma tconfirmatch f 24 sa3a, donc tlghat.",
         "excerpt_answer": "Hada li kayn f la documentation dyalna: « {excerpt} »",
         "catalog_list": "Les produits dyalna:\n{products}",
+        "order_validated": (
+            "Khbar mzyan: la commande {reference} tvalidat 3end l'équipe commerciale.\n{lines}\n"
+            "Chokran 3la thi9a dyalek."
+        ),
+        "order_rejected": (
+            "La commande {reference} ma tvalidatch 3end l'équipe commerciale.{reason}\n"
+            "Kteb \"conseiller\" bach tehder m3ana."
+        ),
     },
     "ar": {
         "greeting": "مرحبا! أنا المساعد الآلي لشركة TECPAP على واتساب.\n{help}",
@@ -210,6 +227,8 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         "draft_expired": "لم يتم تأكيد طلبك الجاري خلال 24 ساعة، لذلك تم التخلي عنه.",
         "excerpt_answer": "حسب وثائقنا: «{excerpt}»",
         "catalog_list": "منتجاتنا:\n{products}",
+        "order_validated": "خبر سار: أكد فريقنا التجاري طلبك {reference}.\n{lines}\nشكرا على ثقتكم.",
+        "order_rejected": "تعذر على فريقنا التجاري تأكيد طلبك {reference}.{reason}\nاكتب «مستشار» للتواصل معنا.",
     },
 }
 
@@ -261,6 +280,10 @@ _UNIT_LABELS: dict[str, dict[str, str]] = {
 }
 
 _MISSING_VALUE = {"fr": "—", "darija": "—", "ar": "—"}
+
+# Libellé du motif d'un refus de commande (notification « order_rejected »).
+_REASON_LABELS = {"fr": "Motif : ", "darija": "Sabab: ", "ar": "السبب: "}
+MAX_REASON_CHARS = 300
 
 
 def normalize_reply_language(language: str | None) -> str:
@@ -374,6 +397,17 @@ def order_lines(order: Mapping[str, Any], language: str | None) -> str:
     if lang != "fr":
         lines = [line.replace(" : ", ": ", 1) for line in lines]
     return "\n".join(lines)
+
+
+def reason_line(reason: str | None, language: str | None) -> str:
+    """Motif d'un refus précédé d'un retour à la ligne (« Motif : … »), ou chaîne vide sans motif.
+
+    Sert de valeur ``reason`` au modèle ``order_rejected``.
+    """
+    text = " ".join(str(reason or "").split())[:MAX_REASON_CHARS]
+    if not text:
+        return ""
+    return f"\n{_REASON_LABELS[normalize_reply_language(language)]}{text}"
 
 
 def status_lines(orders: Iterable[Mapping[str, Any]], language: str | None) -> str:

@@ -1,12 +1,15 @@
-# Évaluation hors ligne de l'analyse des messages clients
+# Évaluation hors ligne de l'analyse des messages clients : jeu de développement
 
-Mesure, sans réseau ni modèle de langue, des composants déterministes qui analysent les messages clients, sur le jeu annoté décrit dans `evaluation/README.md`.
+Mesure, sans réseau ni modèle de langue, des composants déterministes qui analysent les messages clients, sur le corpus annoté décrit dans `evaluation/README.md`.
+
+Le corpus annoté est réparti en deux partitions (« split dev/test ») : le jeu de développement (`dev`) et le jeu de test tenu à l'écart (`test`). Ce rapport porte sur le jeu de développement (`dev`). Ses erreurs servent à écrire et à ajuster les règles, les listes de mots-clés et les seuils : ses scores surestiment donc la qualité réelle des composants.
 
 | Information | Valeur |
 | --- | --- |
 | Date de l'exécution | 2026-10-25 |
+| Partition | `dev` |
 | Jeu de données | `evaluation/dataset/messages.jsonl` |
-| Empreinte SHA-256 du fichier | `09c7adc05b0fac57c73b3d467d7b808e28d4f128b49ba529eb8a8c63c6aedf5e` |
+| Empreinte SHA-256 du fichier | `96fa89491ab4acded5276a5a68919a4ad53d0fc1d75c66758a4e8df2655f6e60` |
 | Éléments du jeu | 89 |
 | Version du paquet `tecpap` | 3.0.0 |
 
@@ -32,7 +35,7 @@ Codes de langue : `fr` français, `darija_latin` darija en lettres latines, `dar
 | Mesure | Définition |
 | --- | --- |
 | **Exactitude** | Part des éléments dont la valeur obtenue est égale à l'étiquette attendue. |
-| **Intervalle de confiance à 95 %** | Plage de valeurs de la proportion réelle compatibles avec l'échantillon (méthode de Wilson). Plus l'effectif est petit, plus la plage est large. |
+| **Intervalle de confiance à 95 %** | Intervalle de score de Wilson : plage de valeurs de la proportion réelle compatibles avec l'échantillon. Pour k réussites sur n éléments, avec p = k / n et z = 1,96 (quantile à 97,5 % de la loi normale), il est centré sur (p + z² / (2n)) / (1 + z² / n) et sa demi-largeur vaut z √(p (1 − p) / n + z² / (4n²)) / (1 + z² / n). Il reste compris entre 0 % et 100 % et garde une largeur non nulle quand p vaut 0 % ou 100 %. Plus l'effectif est petit, plus la plage est large. |
 | **Matrice de confusion** | Tableau croisé : une ligne par étiquette attendue, une colonne par valeur obtenue. Les bonnes réponses sont sur la diagonale. |
 | **Classe positive** | Catégorie que le détecteur doit signaler (commande, tentative d'injection…). |
 | **VP (vrai positif)** | Cas positif signalé. |
@@ -55,7 +58,7 @@ Codes de langue : `fr` français, `darija_latin` darija en lettres latines, `dar
 | Détection de la langue | Exactitude de la langue de réponse | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
 | Extraction par règles | Exactitude de `type_produit` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
 | Extraction par règles | Exactitude de `quantite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Extraction par règles | Exactitude de `unite` | 39/41 | 95,1 % | [83,9 % ; 98,7 %] |
+| Extraction par règles | Exactitude de `unite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
 | Extraction par règles | Exactitude de `entreprise_cliente` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
 | Extraction par règles | Exactitude des champs obligatoires | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
 | Détection des commandes | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
@@ -119,7 +122,7 @@ Composant : `tecpap.extraction.rules.rule_based_extract`, appliqué aux 41 comma
 | --- | --- |
 | `type_produit` | Égalité exacte du nom du produit du catalogue. |
 | `quantite` | Égalité numérique (10000 et 10000,0 sont égales). |
-| `unite` | Égalité exacte. L'étiquette vaut `US` dès qu'une quantité est donnée (`evaluation/README.md`, section 4.7). |
+| `unite` | Égalité exacte avec l'unité écrite par le client : `pièces` pour des pièces ou des unités, `kg`, `carton` ou `paquet`, `US` pour une quantité sans unité (`evaluation/README.md`, section 4.7). |
 | `entreprise_cliente` | Égalité sans tenir compte de la casse, des accents, des signes diacritiques ni des espaces répétées. |
 | Champs obligatoires | Les champs obligatoires d'une commande (`entreprise_cliente`, `type_produit`, `quantite`) sont tous justes. |
 
@@ -131,7 +134,7 @@ Une valeur absente est juste quand l'étiquette vaut `null`.
 | --- | ---: | ---: | ---: |
 | `type_produit` | 41 | 41 | 100,0 % |
 | `quantite` | 41 | 41 | 100,0 % |
-| `unite` | 39 | 41 | 95,1 % |
+| `unite` | 41 | 41 | 100,0 % |
 | `entreprise_cliente` | 41 | 41 | 100,0 % |
 | Champs obligatoires | 41 | 41 | 100,0 % |
 
@@ -139,7 +142,7 @@ Une valeur absente est juste quand l'étiquette vaut `null`.
 
 | Langue | Commandes | `type_produit` | `quantite` | `unite` | `entreprise_cliente` | Champs obligatoires |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 17 | 17/17 | 17/17 | 15/17 | 17/17 | 17/17 |
+| `fr` | 17 | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 |
 | `darija_latin` | 9 | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 | `darija_ar` | 5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
 | `ar` | 5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
@@ -157,10 +160,7 @@ Aucune erreur.
 
 #### `unite`
 
-| Élément | Langue | Attendu | Obtenu |
-| --- | --- | --- | --- |
-| `fr-001` | `fr` | US | pièces |
-| `fr-010` | `fr` | US | pièces |
+Aucune erreur.
 
 #### `entreprise_cliente`
 

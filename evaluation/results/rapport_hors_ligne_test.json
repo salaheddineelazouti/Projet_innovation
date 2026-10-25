@@ -1,0 +1,1899 @@
+{
+  "report": "hors_ligne",
+  "split": "test",
+  "run_date": "2026-10-25",
+  "package_version": "3.0.0",
+  "dataset": {
+    "path": "evaluation/dataset/messages_test.jsonl",
+    "sha256": "16d47e68bfa48fd96e7fabe1b75c0e83e090ac320f46eaff658ea9f897f7857e",
+    "items": 109,
+    "email": 17,
+    "whatsapp": 92,
+    "orders": 57,
+    "reorders": 7,
+    "injections": 21,
+    "traps": 13,
+    "by_language": {
+      "fr": {
+        "items": 34,
+        "email": 11,
+        "whatsapp": 23,
+        "orders": 22,
+        "reorders": 2,
+        "injections": 7,
+        "traps": 5
+      },
+      "darija_latin": {
+        "items": 26,
+        "email": 0,
+        "whatsapp": 26,
+        "orders": 15,
+        "reorders": 2,
+        "injections": 4,
+        "traps": 3
+      },
+      "darija_ar": {
+        "items": 17,
+        "email": 0,
+        "whatsapp": 17,
+        "orders": 7,
+        "reorders": 1,
+        "injections": 3,
+        "traps": 1
+      },
+      "ar": {
+        "items": 16,
+        "email": 2,
+        "whatsapp": 14,
+        "orders": 7,
+        "reorders": 1,
+        "injections": 3,
+        "traps": 2
+      },
+      "en": {
+        "items": 16,
+        "email": 4,
+        "whatsapp": 12,
+        "orders": 6,
+        "reorders": 1,
+        "injections": 4,
+        "traps": 2
+      }
+    }
+  },
+  "language": {
+    "component": "tecpap.nlp.language.detect_language",
+    "reply_component": "tecpap.nlp.language.reply_language",
+    "items": 109,
+    "code": {
+      "correct": 108,
+      "total": 109,
+      "rate": 0.990826
+    },
+    "reply_language": {
+      "correct": 109,
+      "total": 109,
+      "rate": 1.0
+    },
+    "by_language": {
+      "fr": {
+        "code": {
+          "correct": 34,
+          "total": 34,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 34,
+          "total": 34,
+          "rate": 1.0
+        }
+      },
+      "darija_latin": {
+        "code": {
+          "correct": 26,
+          "total": 26,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 26,
+          "total": 26,
+          "rate": 1.0
+        }
+      },
+      "darija_ar": {
+        "code": {
+          "correct": 17,
+          "total": 17,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 17,
+          "total": 17,
+          "rate": 1.0
+        }
+      },
+      "ar": {
+        "code": {
+          "correct": 16,
+          "total": 16,
+          "rate": 1.0
+        },
+        "reply_language": {
+          "correct": 16,
+          "total": 16,
+          "rate": 1.0
+        }
+      },
+      "en": {
+        "code": {
+          "correct": 15,
+          "total": 16,
+          "rate": 0.9375
+        },
+        "reply_language": {
+          "correct": 16,
+          "total": 16,
+          "rate": 1.0
+        }
+      }
+    },
+    "confusion_matrix": {
+      "rows": [
+        "fr",
+        "darija_latin",
+        "darija_ar",
+        "ar",
+        "en"
+      ],
+      "columns": [
+        "fr",
+        "darija_latin",
+        "darija_ar",
+        "ar",
+        "en",
+        "unknown"
+      ],
+      "counts": {
+        "fr": {
+          "fr": 34,
+          "darija_latin": 0,
+          "darija_ar": 0,
+          "ar": 0,
+          "en": 0,
+          "unknown": 0
+        },
+        "darija_latin": {
+          "fr": 0,
+          "darija_latin": 26,
+          "darija_ar": 0,
+          "ar": 0,
+          "en": 0,
+          "unknown": 0
+        },
+        "darija_ar": {
+          "fr": 0,
+          "darija_latin": 0,
+          "darija_ar": 17,
+          "ar": 0,
+          "en": 0,
+          "unknown": 0
+        },
+        "ar": {
+          "fr": 0,
+          "darija_latin": 0,
+          "darija_ar": 0,
+          "ar": 16,
+          "en": 0,
+          "unknown": 0
+        },
+        "en": {
+          "fr": 0,
+          "darija_latin": 0,
+          "darija_ar": 0,
+          "ar": 0,
+          "en": 15,
+          "unknown": 1
+        }
+      }
+    },
+    "errors": [
+      {
+        "id": "test-en-008",
+        "expected": "en",
+        "obtained": "unknown",
+        "confidence": 0.0
+      }
+    ],
+    "reply_errors": []
+  },
+  "extraction": {
+    "component": "tecpap.extraction.rules.rule_based_extract",
+    "items": 57,
+    "fields": {
+      "type_produit": {
+        "correct": 50,
+        "total": 57,
+        "rate": 0.877193,
+        "errors": [
+          {
+            "id": "test-fr-005",
+            "language": "fr",
+            "expected": "Sac fond carré avec poignées torsadées",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-012",
+            "language": "fr",
+            "expected": "Sac fond carré sans poignées",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-007",
+            "language": "darija_latin",
+            "expected": "Sac fond carré avec poignées torsadées",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-002",
+            "language": "darija_ar",
+            "expected": "Sac fond carré avec poignées torsadées",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-017",
+            "language": "darija_ar",
+            "expected": "Sac fond carré avec poignées plates",
+            "obtained": "Sachets fond plat"
+          },
+          {
+            "id": "test-ar-003",
+            "language": "ar",
+            "expected": "Sachets fond plat",
+            "obtained": null
+          },
+          {
+            "id": "test-en-002",
+            "language": "en",
+            "expected": "Sac fond carré avec poignées torsadées",
+            "obtained": null
+          }
+        ]
+      },
+      "quantite": {
+        "correct": 44,
+        "total": 57,
+        "rate": 0.77193,
+        "errors": [
+          {
+            "id": "test-fr-005",
+            "language": "fr",
+            "expected": 800,
+            "obtained": null
+          },
+          {
+            "id": "test-fr-007",
+            "language": "fr",
+            "expected": 5000,
+            "obtained": null
+          },
+          {
+            "id": "test-fr-011",
+            "language": "fr",
+            "expected": 3000,
+            "obtained": 3003
+          },
+          {
+            "id": "test-fr-031",
+            "language": "fr",
+            "expected": 2500,
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-001",
+            "language": "darija_latin",
+            "expected": 3000,
+            "obtained": 3
+          },
+          {
+            "id": "test-darija-lat-004",
+            "language": "darija_latin",
+            "expected": 4000,
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-007",
+            "language": "darija_latin",
+            "expected": 600,
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-008",
+            "language": "darija_latin",
+            "expected": 2500,
+            "obtained": 500
+          },
+          {
+            "id": "test-darija-ar-001",
+            "language": "darija_ar",
+            "expected": 2000,
+            "obtained": 2
+          },
+          {
+            "id": "test-darija-ar-005",
+            "language": "darija_ar",
+            "expected": 4000,
+            "obtained": 4
+          },
+          {
+            "id": "test-darija-ar-017",
+            "language": "darija_ar",
+            "expected": 1000,
+            "obtained": null
+          },
+          {
+            "id": "test-ar-001",
+            "language": "ar",
+            "expected": 1500,
+            "obtained": 500
+          },
+          {
+            "id": "test-en-001",
+            "language": "en",
+            "expected": 7500,
+            "obtained": null
+          }
+        ]
+      },
+      "unite": {
+        "correct": 49,
+        "total": 57,
+        "rate": 0.859649,
+        "errors": [
+          {
+            "id": "test-fr-005",
+            "language": "fr",
+            "expected": "US",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-007",
+            "language": "fr",
+            "expected": "US",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-031",
+            "language": "fr",
+            "expected": "pièces",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-002",
+            "language": "darija_latin",
+            "expected": "pièces",
+            "obtained": "US"
+          },
+          {
+            "id": "test-darija-lat-004",
+            "language": "darija_latin",
+            "expected": "US",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-007",
+            "language": "darija_latin",
+            "expected": "pièces",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-017",
+            "language": "darija_ar",
+            "expected": "US",
+            "obtained": null
+          },
+          {
+            "id": "test-en-001",
+            "language": "en",
+            "expected": "US",
+            "obtained": null
+          }
+        ]
+      },
+      "entreprise_cliente": {
+        "correct": 33,
+        "total": 57,
+        "rate": 0.578947,
+        "errors": [
+          {
+            "id": "test-fr-001",
+            "language": "fr",
+            "expected": "Boulangerie Les Épis d'Or",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-003",
+            "language": "fr",
+            "expected": "Parfumerie Ambre Noir",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-005",
+            "language": "fr",
+            "expected": "Lalla Mode",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-013",
+            "language": "fr",
+            "expected": "Épicerie fine Zitoun",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-029",
+            "language": "fr",
+            "expected": "Riad Dar Zellige",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-030",
+            "language": "fr",
+            "expected": "Coopérative Tamount",
+            "obtained": null
+          },
+          {
+            "id": "test-fr-031",
+            "language": "fr",
+            "expected": "Superette Select",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-003",
+            "language": "darija_latin",
+            "expected": "مكتبة الأمل",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-004",
+            "language": "darija_latin",
+            "expected": "Mahlaba Nassim",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-007",
+            "language": "darija_latin",
+            "expected": "Bazar Atlas",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-008",
+            "language": "darija_latin",
+            "expected": "Boulangerie Al Wafa",
+            "obtained": "Brahim"
+          },
+          {
+            "id": "test-darija-lat-010",
+            "language": "darija_latin",
+            "expected": "Hanout Si Mohamed",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-011",
+            "language": "darija_latin",
+            "expected": "Patisserie Amandine",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-lat-024",
+            "language": "darija_latin",
+            "expected": "Hanout Baraka",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-002",
+            "language": "darija_ar",
+            "expected": "بوتيك لمسة أناقة",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-003",
+            "language": "darija_ar",
+            "expected": "صيدلية الشفاء",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-005",
+            "language": "darija_ar",
+            "expected": "مطعم الريف",
+            "obtained": "عبد"
+          },
+          {
+            "id": "test-darija-ar-006",
+            "language": "darija_ar",
+            "expected": "محلبة السعادة",
+            "obtained": null
+          },
+          {
+            "id": "test-darija-ar-017",
+            "language": "darija_ar",
+            "expected": "مكتبة النور",
+            "obtained": null
+          },
+          {
+            "id": "test-ar-003",
+            "language": "ar",
+            "expected": "مطعم الزيتونة",
+            "obtained": "مدير"
+          },
+          {
+            "id": "test-en-002",
+            "language": "en",
+            "expected": "Atlas Treasures",
+            "obtained": null
+          },
+          {
+            "id": "test-en-003",
+            "language": "en",
+            "expected": "Surf Shack",
+            "obtained": null
+          },
+          {
+            "id": "test-en-015",
+            "language": "en",
+            "expected": "Medina Market",
+            "obtained": null
+          },
+          {
+            "id": "test-en-016",
+            "language": "en",
+            "expected": "Green Leaf Pharmacy",
+            "obtained": null
+          }
+        ]
+      }
+    },
+    "required_fields": {
+      "fields": [
+        "entreprise_cliente",
+        "type_produit",
+        "quantite"
+      ],
+      "correct": 26,
+      "total": 57,
+      "rate": 0.45614,
+      "errors": [
+        "test-fr-001",
+        "test-fr-003",
+        "test-fr-005",
+        "test-fr-007",
+        "test-fr-011",
+        "test-fr-012",
+        "test-fr-013",
+        "test-fr-029",
+        "test-fr-030",
+        "test-fr-031",
+        "test-darija-lat-001",
+        "test-darija-lat-003",
+        "test-darija-lat-004",
+        "test-darija-lat-007",
+        "test-darija-lat-008",
+        "test-darija-lat-010",
+        "test-darija-lat-011",
+        "test-darija-lat-024",
+        "test-darija-ar-001",
+        "test-darija-ar-002",
+        "test-darija-ar-003",
+        "test-darija-ar-005",
+        "test-darija-ar-006",
+        "test-darija-ar-017",
+        "test-ar-001",
+        "test-ar-003",
+        "test-en-001",
+        "test-en-002",
+        "test-en-003",
+        "test-en-015",
+        "test-en-016"
+      ]
+    },
+    "by_language": {
+      "fr": {
+        "items": 22,
+        "type_produit": {
+          "correct": 20,
+          "total": 22,
+          "rate": 0.909091
+        },
+        "quantite": {
+          "correct": 18,
+          "total": 22,
+          "rate": 0.818182
+        },
+        "unite": {
+          "correct": 19,
+          "total": 22,
+          "rate": 0.863636
+        },
+        "entreprise_cliente": {
+          "correct": 15,
+          "total": 22,
+          "rate": 0.681818
+        },
+        "required_fields": {
+          "correct": 12,
+          "total": 22,
+          "rate": 0.545455
+        }
+      },
+      "darija_latin": {
+        "items": 15,
+        "type_produit": {
+          "correct": 14,
+          "total": 15,
+          "rate": 0.933333
+        },
+        "quantite": {
+          "correct": 11,
+          "total": 15,
+          "rate": 0.733333
+        },
+        "unite": {
+          "correct": 12,
+          "total": 15,
+          "rate": 0.8
+        },
+        "entreprise_cliente": {
+          "correct": 8,
+          "total": 15,
+          "rate": 0.533333
+        },
+        "required_fields": {
+          "correct": 7,
+          "total": 15,
+          "rate": 0.466667
+        }
+      },
+      "darija_ar": {
+        "items": 7,
+        "type_produit": {
+          "correct": 5,
+          "total": 7,
+          "rate": 0.714286
+        },
+        "quantite": {
+          "correct": 4,
+          "total": 7,
+          "rate": 0.571429
+        },
+        "unite": {
+          "correct": 6,
+          "total": 7,
+          "rate": 0.857143
+        },
+        "entreprise_cliente": {
+          "correct": 2,
+          "total": 7,
+          "rate": 0.285714
+        },
+        "required_fields": {
+          "correct": 1,
+          "total": 7,
+          "rate": 0.142857
+        }
+      },
+      "ar": {
+        "items": 7,
+        "type_produit": {
+          "correct": 6,
+          "total": 7,
+          "rate": 0.857143
+        },
+        "quantite": {
+          "correct": 6,
+          "total": 7,
+          "rate": 0.857143
+        },
+        "unite": {
+          "correct": 7,
+          "total": 7,
+          "rate": 1.0
+        },
+        "entreprise_cliente": {
+          "correct": 6,
+          "total": 7,
+          "rate": 0.857143
+        },
+        "required_fields": {
+          "correct": 5,
+          "total": 7,
+          "rate": 0.714286
+        }
+      },
+      "en": {
+        "items": 6,
+        "type_produit": {
+          "correct": 5,
+          "total": 6,
+          "rate": 0.833333
+        },
+        "quantite": {
+          "correct": 5,
+          "total": 6,
+          "rate": 0.833333
+        },
+        "unite": {
+          "correct": 5,
+          "total": 6,
+          "rate": 0.833333
+        },
+        "entreprise_cliente": {
+          "correct": 2,
+          "total": 6,
+          "rate": 0.333333
+        },
+        "required_fields": {
+          "correct": 1,
+          "total": 6,
+          "rate": 0.166667
+        }
+      }
+    }
+  },
+  "order_detection": {
+    "component": "tecpap.extraction.rules.rule_based_extract (est_bon_commande)",
+    "items": 109,
+    "positives": 57,
+    "tp": 43,
+    "fp": 0,
+    "fn": 14,
+    "tn": 52,
+    "total": 109,
+    "accuracy": 0.87156,
+    "precision": 1.0,
+    "recall": 0.754386,
+    "f1": 0.86,
+    "false_positive_rate": 0.0,
+    "by_language": {
+      "fr": {
+        "tp": 16,
+        "fp": 0,
+        "fn": 6,
+        "tn": 12,
+        "total": 34,
+        "accuracy": 0.823529,
+        "precision": 1.0,
+        "recall": 0.727273,
+        "f1": 0.842105,
+        "false_positive_rate": 0.0
+      },
+      "darija_latin": {
+        "tp": 12,
+        "fp": 0,
+        "fn": 3,
+        "tn": 11,
+        "total": 26,
+        "accuracy": 0.884615,
+        "precision": 1.0,
+        "recall": 0.8,
+        "f1": 0.888889,
+        "false_positive_rate": 0.0
+      },
+      "darija_ar": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 2,
+        "tn": 10,
+        "total": 17,
+        "accuracy": 0.882353,
+        "precision": 1.0,
+        "recall": 0.714286,
+        "f1": 0.833333,
+        "false_positive_rate": 0.0
+      },
+      "ar": {
+        "tp": 6,
+        "fp": 0,
+        "fn": 1,
+        "tn": 9,
+        "total": 16,
+        "accuracy": 0.9375,
+        "precision": 1.0,
+        "recall": 0.857143,
+        "f1": 0.923077,
+        "false_positive_rate": 0.0
+      },
+      "en": {
+        "tp": 4,
+        "fp": 0,
+        "fn": 2,
+        "tn": 10,
+        "total": 16,
+        "accuracy": 0.875,
+        "precision": 1.0,
+        "recall": 0.666667,
+        "f1": 0.8,
+        "false_positive_rate": 0.0
+      }
+    },
+    "false_positives": [],
+    "false_negatives": [
+      {
+        "id": "test-fr-005",
+        "language": "fr"
+      },
+      {
+        "id": "test-fr-007",
+        "language": "fr"
+      },
+      {
+        "id": "test-fr-013",
+        "language": "fr"
+      },
+      {
+        "id": "test-fr-014",
+        "language": "fr"
+      },
+      {
+        "id": "test-fr-031",
+        "language": "fr"
+      },
+      {
+        "id": "test-fr-033",
+        "language": "fr"
+      },
+      {
+        "id": "test-darija-lat-007",
+        "language": "darija_latin"
+      },
+      {
+        "id": "test-darija-lat-010",
+        "language": "darija_latin"
+      },
+      {
+        "id": "test-darija-lat-011",
+        "language": "darija_latin"
+      },
+      {
+        "id": "test-darija-ar-006",
+        "language": "darija_ar"
+      },
+      {
+        "id": "test-darija-ar-017",
+        "language": "darija_ar"
+      },
+      {
+        "id": "test-ar-004",
+        "language": "ar"
+      },
+      {
+        "id": "test-en-001",
+        "language": "en"
+      },
+      {
+        "id": "test-en-003",
+        "language": "en"
+      }
+    ]
+  },
+  "reorder_detection": {
+    "component": "tecpap.extraction.rules.detect_reorder",
+    "items": 109,
+    "positives": 7,
+    "tp": 0,
+    "fp": 0,
+    "fn": 7,
+    "tn": 102,
+    "total": 109,
+    "accuracy": 0.93578,
+    "precision": null,
+    "recall": 0.0,
+    "f1": 0.0,
+    "false_positive_rate": 0.0,
+    "by_language": {
+      "fr": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "tn": 32,
+        "total": 34,
+        "accuracy": 0.941176,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.0
+      },
+      "darija_latin": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "tn": 24,
+        "total": 26,
+        "accuracy": 0.923077,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.0
+      },
+      "darija_ar": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "tn": 16,
+        "total": 17,
+        "accuracy": 0.941176,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.0
+      },
+      "ar": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "tn": 15,
+        "total": 16,
+        "accuracy": 0.9375,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.0
+      },
+      "en": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "tn": 15,
+        "total": 16,
+        "accuracy": 0.9375,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.0
+      }
+    },
+    "false_positives": [],
+    "false_negatives": [
+      {
+        "id": "test-fr-013",
+        "language": "fr"
+      },
+      {
+        "id": "test-fr-014",
+        "language": "fr"
+      },
+      {
+        "id": "test-darija-lat-010",
+        "language": "darija_latin"
+      },
+      {
+        "id": "test-darija-lat-011",
+        "language": "darija_latin"
+      },
+      {
+        "id": "test-darija-ar-006",
+        "language": "darija_ar"
+      },
+      {
+        "id": "test-ar-004",
+        "language": "ar"
+      },
+      {
+        "id": "test-en-003",
+        "language": "en"
+      }
+    ]
+  },
+  "injection": {
+    "component": "tecpap.security.guardrails.inspect_input",
+    "items": 109,
+    "positives": 21,
+    "tp": 4,
+    "fp": 0,
+    "fn": 17,
+    "tn": 88,
+    "total": 109,
+    "accuracy": 0.844037,
+    "precision": 1.0,
+    "recall": 0.190476,
+    "f1": 0.32,
+    "false_positive_rate": 0.0,
+    "by_language": {
+      "fr": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 6,
+        "tn": 27,
+        "total": 34,
+        "accuracy": 0.823529,
+        "precision": 1.0,
+        "recall": 0.142857,
+        "f1": 0.25,
+        "false_positive_rate": 0.0,
+        "traps": 5,
+        "trap_false_positives": 0
+      },
+      "darija_latin": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 3,
+        "tn": 22,
+        "total": 26,
+        "accuracy": 0.884615,
+        "precision": 1.0,
+        "recall": 0.25,
+        "f1": 0.4,
+        "false_positive_rate": 0.0,
+        "traps": 3,
+        "trap_false_positives": 0
+      },
+      "darija_ar": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 3,
+        "tn": 14,
+        "total": 17,
+        "accuracy": 0.823529,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.0,
+        "traps": 1,
+        "trap_false_positives": 0
+      },
+      "ar": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 2,
+        "tn": 13,
+        "total": 16,
+        "accuracy": 0.875,
+        "precision": 1.0,
+        "recall": 0.333333,
+        "f1": 0.5,
+        "false_positive_rate": 0.0,
+        "traps": 2,
+        "trap_false_positives": 0
+      },
+      "en": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 3,
+        "tn": 12,
+        "total": 16,
+        "accuracy": 0.8125,
+        "precision": 1.0,
+        "recall": 0.25,
+        "f1": 0.4,
+        "false_positive_rate": 0.0,
+        "traps": 2,
+        "trap_false_positives": 0
+      }
+    },
+    "false_positives": [],
+    "false_negatives": [
+      {
+        "id": "test-fr-023",
+        "language": "fr",
+        "score": 25,
+        "trap": false
+      },
+      {
+        "id": "test-fr-024",
+        "language": "fr",
+        "score": 30,
+        "trap": false
+      },
+      {
+        "id": "test-fr-025",
+        "language": "fr",
+        "score": 45,
+        "trap": false
+      },
+      {
+        "id": "test-fr-026",
+        "language": "fr",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-fr-028",
+        "language": "fr",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-fr-029",
+        "language": "fr",
+        "score": 25,
+        "trap": false
+      },
+      {
+        "id": "test-darija-lat-020",
+        "language": "darija_latin",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-darija-lat-022",
+        "language": "darija_latin",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-darija-lat-023",
+        "language": "darija_latin",
+        "score": 25,
+        "trap": false
+      },
+      {
+        "id": "test-darija-ar-014",
+        "language": "darija_ar",
+        "score": 45,
+        "trap": false
+      },
+      {
+        "id": "test-darija-ar-015",
+        "language": "darija_ar",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-darija-ar-016",
+        "language": "darija_ar",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-ar-013",
+        "language": "ar",
+        "score": 30,
+        "trap": false
+      },
+      {
+        "id": "test-ar-014",
+        "language": "ar",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-en-011",
+        "language": "en",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-en-012",
+        "language": "en",
+        "score": 0,
+        "trap": false
+      },
+      {
+        "id": "test-en-013",
+        "language": "en",
+        "score": 45,
+        "trap": false
+      }
+    ],
+    "threshold": 50,
+    "traps": {
+      "items": 13,
+      "false_positives": 0,
+      "rate": 0.0
+    },
+    "non_injection": {
+      "items": 88,
+      "false_positives": 0,
+      "rate": 0.0
+    },
+    "max_legitimate_score": {
+      "id": "test-fr-030",
+      "score": 30
+    },
+    "min_injection_score": {
+      "id": "test-fr-026",
+      "score": 0
+    }
+  },
+  "intent": {
+    "available": true,
+    "reason": null,
+    "component": "tecpap.chatbot.intents.detect_intent",
+    "items": 109,
+    "accuracy": {
+      "correct": 82,
+      "total": 109,
+      "rate": 0.752294
+    },
+    "macro_f1": 0.65923,
+    "per_intent": {
+      "order": {
+        "support": 50,
+        "predicted": 42,
+        "tp": 42,
+        "fp": 0,
+        "fn": 8,
+        "precision": 1.0,
+        "recall": 0.84,
+        "f1": 0.913043
+      },
+      "reorder": {
+        "support": 7,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 7,
+        "precision": null,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "status": {
+        "support": 5,
+        "predicted": 4,
+        "tp": 4,
+        "fp": 0,
+        "fn": 1,
+        "precision": 1.0,
+        "recall": 0.8,
+        "f1": 0.888889
+      },
+      "question": {
+        "support": 5,
+        "predicted": 11,
+        "tp": 5,
+        "fp": 6,
+        "fn": 0,
+        "precision": 0.454545,
+        "recall": 1.0,
+        "f1": 0.625
+      },
+      "human": {
+        "support": 5,
+        "predicted": 10,
+        "tp": 4,
+        "fp": 6,
+        "fn": 1,
+        "precision": 0.4,
+        "recall": 0.8,
+        "f1": 0.533333
+      },
+      "greeting": {
+        "support": 5,
+        "predicted": 5,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "confirm_yes": {
+        "support": 7,
+        "predicted": 4,
+        "tp": 4,
+        "fp": 0,
+        "fn": 3,
+        "precision": 1.0,
+        "recall": 0.571429,
+        "f1": 0.727273
+      },
+      "confirm_no": {
+        "support": 5,
+        "predicted": 1,
+        "tp": 1,
+        "fp": 0,
+        "fn": 4,
+        "precision": 1.0,
+        "recall": 0.2,
+        "f1": 0.333333
+      },
+      "cancel": {
+        "support": 5,
+        "predicted": 5,
+        "tp": 5,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "other": {
+        "support": 15,
+        "predicted": 27,
+        "tp": 12,
+        "fp": 15,
+        "fn": 3,
+        "precision": 0.444444,
+        "recall": 0.8,
+        "f1": 0.571429
+      }
+    },
+    "by_language": {
+      "fr": {
+        "correct": 22,
+        "total": 34,
+        "rate": 0.647059
+      },
+      "darija_latin": {
+        "correct": 20,
+        "total": 26,
+        "rate": 0.769231
+      },
+      "darija_ar": {
+        "correct": 13,
+        "total": 17,
+        "rate": 0.764706
+      },
+      "ar": {
+        "correct": 12,
+        "total": 16,
+        "rate": 0.75
+      },
+      "en": {
+        "correct": 15,
+        "total": 16,
+        "rate": 0.9375
+      }
+    },
+    "confusion_matrix": {
+      "rows": [
+        "order",
+        "reorder",
+        "status",
+        "question",
+        "human",
+        "greeting",
+        "confirm_yes",
+        "confirm_no",
+        "cancel",
+        "other"
+      ],
+      "columns": [
+        "order",
+        "reorder",
+        "status",
+        "question",
+        "human",
+        "greeting",
+        "confirm_yes",
+        "confirm_no",
+        "cancel",
+        "other"
+      ],
+      "counts": {
+        "order": {
+          "order": 42,
+          "reorder": 0,
+          "status": 0,
+          "question": 3,
+          "human": 4,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 1
+        },
+        "reorder": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 2,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 5
+        },
+        "status": {
+          "order": 0,
+          "reorder": 0,
+          "status": 4,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 1
+        },
+        "question": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 5,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "human": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 4,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 1
+        },
+        "greeting": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 5,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 0
+        },
+        "confirm_yes": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 4,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 3
+        },
+        "confirm_no": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 1,
+          "cancel": 0,
+          "other": 4
+        },
+        "cancel": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 0,
+          "human": 0,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 5,
+          "other": 0
+        },
+        "other": {
+          "order": 0,
+          "reorder": 0,
+          "status": 0,
+          "question": 1,
+          "human": 2,
+          "greeting": 0,
+          "confirm_yes": 0,
+          "confirm_no": 0,
+          "cancel": 0,
+          "other": 12
+        }
+      }
+    },
+    "errors": [
+      {
+        "id": "test-fr-001",
+        "language": "fr",
+        "expected": "order",
+        "obtained": "human"
+      },
+      {
+        "id": "test-fr-005",
+        "language": "fr",
+        "expected": "order",
+        "obtained": "question"
+      },
+      {
+        "id": "test-fr-007",
+        "language": "fr",
+        "expected": "order",
+        "obtained": "question"
+      },
+      {
+        "id": "test-fr-012",
+        "language": "fr",
+        "expected": "order",
+        "obtained": "human"
+      },
+      {
+        "id": "test-fr-013",
+        "language": "fr",
+        "expected": "reorder",
+        "obtained": "question"
+      },
+      {
+        "id": "test-fr-014",
+        "language": "fr",
+        "expected": "reorder",
+        "obtained": "other"
+      },
+      {
+        "id": "test-fr-020",
+        "language": "fr",
+        "expected": "confirm_yes",
+        "obtained": "other"
+      },
+      {
+        "id": "test-fr-021",
+        "language": "fr",
+        "expected": "confirm_no",
+        "obtained": "other"
+      },
+      {
+        "id": "test-fr-024",
+        "language": "fr",
+        "expected": "order",
+        "obtained": "human"
+      },
+      {
+        "id": "test-fr-025",
+        "language": "fr",
+        "expected": "other",
+        "obtained": "human"
+      },
+      {
+        "id": "test-fr-028",
+        "language": "fr",
+        "expected": "other",
+        "obtained": "question"
+      },
+      {
+        "id": "test-fr-033",
+        "language": "fr",
+        "expected": "order",
+        "obtained": "question"
+      },
+      {
+        "id": "test-darija-lat-007",
+        "language": "darija_latin",
+        "expected": "order",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-lat-010",
+        "language": "darija_latin",
+        "expected": "reorder",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-lat-011",
+        "language": "darija_latin",
+        "expected": "reorder",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-lat-017",
+        "language": "darija_latin",
+        "expected": "confirm_yes",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-lat-018",
+        "language": "darija_latin",
+        "expected": "confirm_no",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-lat-023",
+        "language": "darija_latin",
+        "expected": "order",
+        "obtained": "human"
+      },
+      {
+        "id": "test-darija-ar-006",
+        "language": "darija_ar",
+        "expected": "reorder",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-ar-011",
+        "language": "darija_ar",
+        "expected": "confirm_yes",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-ar-012",
+        "language": "darija_ar",
+        "expected": "confirm_no",
+        "obtained": "other"
+      },
+      {
+        "id": "test-darija-ar-016",
+        "language": "darija_ar",
+        "expected": "other",
+        "obtained": "human"
+      },
+      {
+        "id": "test-ar-004",
+        "language": "ar",
+        "expected": "reorder",
+        "obtained": "other"
+      },
+      {
+        "id": "test-ar-005",
+        "language": "ar",
+        "expected": "status",
+        "obtained": "other"
+      },
+      {
+        "id": "test-ar-007",
+        "language": "ar",
+        "expected": "human",
+        "obtained": "other"
+      },
+      {
+        "id": "test-ar-010",
+        "language": "ar",
+        "expected": "confirm_no",
+        "obtained": "other"
+      },
+      {
+        "id": "test-en-003",
+        "language": "en",
+        "expected": "reorder",
+        "obtained": "question"
+      }
+    ]
+  },
+  "summary": [
+    {
+      "component": "Détection de la langue",
+      "measure": "Exactitude du code de langue",
+      "numerator": 108,
+      "denominator": 109,
+      "value": 0.990826,
+      "ci95": [
+        0.949854,
+        0.998379
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection de la langue",
+      "measure": "Exactitude de la langue de réponse",
+      "numerator": 109,
+      "denominator": 109,
+      "value": 1.0,
+      "ci95": [
+        0.965957,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `type_produit`",
+      "numerator": 50,
+      "denominator": 57,
+      "value": 0.877193,
+      "ci95": [
+        0.767536,
+        0.939219
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `quantite`",
+      "numerator": 44,
+      "denominator": 57,
+      "value": 0.77193,
+      "ci95": [
+        0.64794,
+        0.861581
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `unite`",
+      "numerator": 49,
+      "denominator": 57,
+      "value": 0.859649,
+      "ci95": [
+        0.746755,
+        0.927127
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude de `entreprise_cliente`",
+      "numerator": 33,
+      "denominator": 57,
+      "value": 0.578947,
+      "ci95": [
+        0.449801,
+        0.698124
+      ],
+      "note": null
+    },
+    {
+      "component": "Extraction par règles",
+      "measure": "Exactitude des champs obligatoires",
+      "numerator": 26,
+      "denominator": 57,
+      "value": 0.45614,
+      "ci95": [
+        0.333726,
+        0.584093
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "Exactitude",
+      "numerator": 95,
+      "denominator": 109,
+      "value": 0.87156,
+      "ci95": [
+        0.795896,
+        0.921926
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "Précision",
+      "numerator": 43,
+      "denominator": 43,
+      "value": 1.0,
+      "ci95": [
+        0.91799,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "Rappel",
+      "numerator": 43,
+      "denominator": 57,
+      "value": 0.754386,
+      "ci95": [
+        0.628977,
+        0.847672
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des commandes",
+      "measure": "F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 0.86,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "Exactitude",
+      "numerator": 102,
+      "denominator": 109,
+      "value": 0.93578,
+      "ci95": [
+        0.873343,
+        0.968546
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "Précision",
+      "numerator": 0,
+      "denominator": 0,
+      "value": null,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "Rappel",
+      "numerator": 0,
+      "denominator": 7,
+      "value": 0.0,
+      "ci95": [
+        0.0,
+        0.35433
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des renouvellements",
+      "measure": "F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 0.0,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Précision",
+      "numerator": 4,
+      "denominator": 4,
+      "value": 1.0,
+      "ci95": [
+        0.510109,
+        1.0
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Rappel",
+      "numerator": 4,
+      "denominator": 21,
+      "value": 0.190476,
+      "ci95": [
+        0.076676,
+        0.400006
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 0.32,
+      "ci95": null,
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Taux de faux positifs",
+      "numerator": 0,
+      "denominator": 88,
+      "value": 0.0,
+      "ci95": [
+        0.0,
+        0.041827
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des injections",
+      "measure": "Fausses alertes sur les pièges",
+      "numerator": 0,
+      "denominator": 13,
+      "value": 0.0,
+      "ci95": [
+        0.0,
+        0.228095
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des intentions",
+      "measure": "Exactitude",
+      "numerator": 82,
+      "denominator": 109,
+      "value": 0.752294,
+      "ci95": [
+        0.663595,
+        0.823815
+      ],
+      "note": null
+    },
+    {
+      "component": "Détection des intentions",
+      "measure": "Macro-F1",
+      "numerator": null,
+      "denominator": null,
+      "value": 0.65923,
+      "ci95": null,
+      "note": null
+    }
+  ]
+}

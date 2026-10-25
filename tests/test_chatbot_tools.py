@@ -145,7 +145,10 @@ class TestScope:
         email_order = make_order(db, client="Snack Atlas", numero_commande="EM-1", email_from="achat@exemple.ma")
         whatsapp_order = make_order(db, client="Snack Atlas", whatsapp_from=ALICE)
         assert alice.my_order_status("EM-1") is None
+        # Validation par l'équipe commerciale, comme l'API de validation : statut, puis téléphone rattaché.
         db.update_order_status(whatsapp_order, "validee")
+        assert alice.my_order_status("EM-1") is None
+        assert db.attach_phone_to_client(db.get_order(whatsapp_order)["client_id"], ALICE) is True
         assert alice.my_order_status("EM-1")["reference"] == "EM-1"
         assert alice.my_order_status(f"CMD-{email_order}")["reference"] == "EM-1"
         assert _references(alice.my_recent_orders(10)) == {"EM-1", f"CMD-{whatsapp_order}"}
@@ -156,7 +159,7 @@ class TestScope:
         assert alice.my_recent_orders(10) == []
 
     def test_ordering_in_the_name_of_another_company_does_not_reveal_its_orders(self, db, bob):
-        """Une commande au nom d'une entreprise sans téléphone enregistré lui attache le numéro (base de données) :
+        """Une commande au nom d'une entreprise existante ne lui rattache pas le numéro de l'expéditeur :
         les commandes email de cette entreprise restent cachées tant que l'équipe commerciale n'a rien validé."""
         victim = make_order(db, client="Chocolaterie Amandine", numero_commande="VICTIM-1", status="validee",
                             email_from="achats@exemple.ma")
@@ -164,7 +167,7 @@ class TestScope:
                                    "quantite": 10})
         telephone = db.connection.execute(
             "SELECT telephone FROM clients WHERE nom = 'Chocolaterie Amandine'").fetchone()[0]
-        assert telephone == "+212600000002"
+        assert telephone is None
         assert bob.my_order_status("VICTIM-1") is None
         assert bob.my_order_status(f"CMD-{victim}") is None
         assert _references(bob.my_recent_orders(10)) == {f"CMD-{attack}"}

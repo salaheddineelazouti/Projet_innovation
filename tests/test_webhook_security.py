@@ -1,4 +1,4 @@
-"""Tests de la vérification de signature Twilio sur le webhook WhatsApp."""
+"""Tests de la vérification de signature Twilio sur le webhook WhatsApp et de l'événement de sécurité d'un refus."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from twilio.request_validator import RequestValidator
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from tecpap.config import Settings
+from tecpap.security.events import KIND_INVALID_SIGNATURE, recent_security_events
+from tecpap.security.redaction import mask_phone
 from tecpap.web import create_app
 from tecpap.web.routes.webhooks import PROCESSING_ERROR_REPLY
 
@@ -24,7 +26,6 @@ MESSAGE = {
     "NumMedia": "0",
     "MessageSid": "SM0123456789abcdef0123456789abcdef",
 }
-NOT_AN_ORDER = {"est_bon_commande": False}
 
 
 def sign(url: str, params: dict[str, str], token: str = AUTH_TOKEN) -> str:
@@ -51,10 +52,9 @@ def make_app(tmp_path):
 
 @pytest.fixture
 def extractor():
-    """Extracteur de commandes simulé (aucun appel au modèle de langue)."""
-    with patch("tecpap.web.routes.webhooks.DataExtractor") as extractor_class:
-        extractor_class.return_value.extract_from_email.return_value = NOT_AN_ORDER
-        yield extractor_class.return_value
+    """Traitement des messages simulé : le test vérifie seulement s'il a lieu (aucun appel au modèle de langue)."""
+    with patch("tecpap.web.routes.webhooks.handle_incoming_message", return_value="Message reçu.") as handler:
+        yield handler
 
 
 class TestSignature:
@@ -65,14 +65,14 @@ class TestSignature:
         response = client.post(WEBHOOK, data=MESSAGE, headers={"X-Twilio-Signature": sign(LOCAL_URL, MESSAGE)})
         assert response.status_code == 200
         assert response.content_type.startswith("application/xml")
-        extractor.extract_from_email.assert_called_once()
+        extractor.assert_called_once()
 
     def test_missing_signature(self, make_app, extractor, caplog):
         client = make_app().test_client()
         with caplog.at_level(logging.WARNING, logger="tecpap.web.routes.webhooks"):
             response = client.post(WEBHOOK, data=MESSAGE)
         assert response.status_code == 403
-        extractor.extract_from_email.assert_not_called()
+        extractor.assert_not_called()
         assert "signature Twilio absente" in caplog.text
 
     def test_invalid_signature(self, make_app, extractor, caplog):
@@ -80,7 +80,7 @@ class TestSignature:
         with caplog.at_level(logging.WARNING, logger="tecpap.web.routes.webhooks"):
             response = client.post(WEBHOOK, data=MESSAGE, headers={"X-Twilio-Signature": "c2lnbmF0dXJlLWZhdXNzZQ=="})
         assert response.status_code == 403
-        extractor.extract_from_email.assert_not_called()
+        extractor.assert_not_called()
         assert "signature Twilio invalide" in caplog.text
 
     def test_signature_with_another_token(self, make_app, extractor):
@@ -93,22 +93,50 @@ class TestSignature:
         signature = sign(LOCAL_URL, MESSAGE)
         tampered = dict(MESSAGE, Body="bghit 200000 sachet")
         assert client.post(WEBHOOK, data=tampered, headers={"X-Twilio-Signature": signature}).status_code == 403
-        extractor.extract_from_email.assert_not_called()
+        extractor.assert_not_called()
 
-    def test_no_order_created_without_signature(self, make_app):
+    @pytest.mark.parametrize("chatbot_enabled", [True, False])
+    def test_nothing_is_recorded_without_signature(self, make_app, chatbot_enabled):
+        app = make_app(chatbot_enabled=chatbot_enabled)
+        assert app.test_client().post(WEBHOOK, data=MESSAGE).status_code == 403
+        services = app.extensions["tecpap"]
+        assert services.db.get_all_orders() == []
+        assert services.db.connection.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
+
+    @pytest.mark.parametrize(("headers", "state"), [({}, "absente"),
+                                                    ({"X-Twilio-Signature": "c2lnbmF0dXJlLWZhdXNzZQ=="}, "invalide")])
+    def test_refusal_is_a_security_event(self, make_app, extractor, headers, state):
         app = make_app()
-        order = {"est_bon_commande": True, "type_produit": "Sachets fond plat", "quantite": 2000}
-        with patch("tecpap.web.routes.webhooks.DataExtractor") as extractor_class:
-            extractor_class.return_value.extract_from_email.return_value = order
-            app.test_client().post(WEBHOOK, data=MESSAGE)
-        assert app.extensions["tecpap"].db.get_all_orders() == []
+        assert app.test_client().post(WEBHOOK, data=MESSAGE, headers=headers).status_code == 403
+        (event,) = recent_security_events(app.extensions["tecpap"].db.connection)
+        assert (event["kind"], event["channel"]) == (KIND_INVALID_SIGNATURE, "whatsapp")
+        assert event["sender"] == mask_phone("+212612345678")
+        assert event["details"].startswith(f"Signature Twilio {state} (adresse ")
+
+    def test_signed_message_and_missing_token_leave_no_signature_event(self, make_app, extractor):
+        signed = make_app()
+        signed.test_client().post(WEBHOOK, data=MESSAGE, headers={"X-Twilio-Signature": sign(LOCAL_URL, MESSAGE)})
+        unconfigured = make_app(twilio_auth_token=None)
+        assert unconfigured.test_client().post(WEBHOOK, data=MESSAGE).status_code == 503
+        for app in (signed, unconfigured):
+            connection = app.extensions["tecpap"].db.connection
+            assert recent_security_events(connection, kind=KIND_INVALID_SIGNATURE) == []
+
+    def test_event_failure_keeps_the_refusal(self, make_app, extractor, monkeypatch, caplog):
+        def broken(*args, **kwargs):
+            raise RuntimeError("base indisponible")
+
+        monkeypatch.setattr("tecpap.web.routes.webhooks.log_security_event", broken)
+        with caplog.at_level(logging.WARNING, logger="tecpap.web.routes.webhooks"):
+            assert make_app().test_client().post(WEBHOOK, data=MESSAGE).status_code == 403
+        assert "Événement de sécurité non enregistré" in caplog.text
 
     def test_missing_auth_token(self, make_app, extractor, caplog):
         client = make_app(twilio_auth_token=None).test_client()
         with caplog.at_level(logging.ERROR, logger="tecpap.web.routes.webhooks"):
             response = client.post(WEBHOOK, data=MESSAGE, headers={"X-Twilio-Signature": sign(LOCAL_URL, MESSAGE)})
         assert response.status_code == 503
-        extractor.extract_from_email.assert_not_called()
+        extractor.assert_not_called()
         assert "TWILIO_AUTH_TOKEN" in caplog.text
 
     def test_missing_auth_token_logged_at_startup(self, make_app, caplog):

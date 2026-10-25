@@ -69,14 +69,14 @@ class TestOrderProcessor:
     def test_order_with_pdf_attachment_is_saved(self, make_processor, test_settings, tmp_path):
         pdf_path = _pdf(tmp_path / "bon.pdf", "Bon de commande 4000 sachets fond plat")
         gmail = _gmail([_email(attachments=["bon.pdf"])], downloaded=[pdf_path])
-        llm = FakeLLMClient(chat_json=[NOT_A_REORDER, dict(ORDER)])
+        llm = FakeLLMClient(chat_json=[dict(ORDER), NOT_A_REORDER])
         processor, sender = make_processor(gmail, llm)
 
         orders = processor.process_new_emails(max_emails=5)
 
         assert len(orders) == 1
         assert orders[0]["email_id"] == "mail-1"
-        prompt = llm.calls_to("chat_json")[1]["user"]
+        prompt = llm.calls_to("chat_json")[0]["user"]
         block = prompt.split(f"<{CONTENT_TAG}>", 1)[1].split(f"</{CONTENT_TAG}>", 1)[0]
         assert "4000 sachets" in block
         saved = _saved_orders(test_settings)
@@ -91,21 +91,21 @@ class TestOrderProcessor:
         db.init_database()
         db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 10, "email_id": "mail-1"})
         db.disconnect()
-        llm = FakeLLMClient(chat_json=[NOT_A_REORDER, dict(ORDER)])
+        llm = FakeLLMClient(chat_json=[dict(ORDER), NOT_A_REORDER])
         processor, _sender = make_processor(_gmail([_email()]), llm)
 
         assert processor.process_new_emails() == []
         assert llm.calls == []
 
     def test_message_that_is_not_an_order(self, make_processor, test_settings):
-        llm = FakeLLMClient(chat_json=[NOT_A_REORDER, {"est_bon_commande": False}])
+        llm = FakeLLMClient(chat_json=[{"est_bon_commande": False}, NOT_A_REORDER])
         processor, sender = make_processor(_gmail([_email()]), llm)
 
         assert processor.process_new_emails() == []
         assert _saved_orders(test_settings) == []
         sender.send_order_received_email.assert_not_called()
 
-    def test_without_api_key_nothing_is_saved(self, make_processor, test_settings):
+    def test_without_api_key_an_email_without_order_is_not_saved(self, make_processor, test_settings):
         llm = FakeLLMClient(available=False)
         processor, _sender = make_processor(_gmail([_email()]), llm)
 
