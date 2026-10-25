@@ -41,7 +41,8 @@ Score de pertinence (:attr:`SearchHit.score`)
     mesures prise seule, et le seuil garde le même sens que les vecteurs de l'index viennent du
     modèle OpenAI ou du calcul local. Le seuil par défaut a été choisi sur ce jeu de questions
     (voir :mod:`tecpap.rag.calibration`). Les questions en anglais, langue absente de la base, obtiennent des
-    scores faibles et sont transmises à l'équipe commerciale plus souvent que les autres. Une
+    scores faibles et reçoivent plus souvent que les autres la réponse « je n'ai pas cette information »
+    (l'assistant invite alors le client à écrire « conseiller » ; rien n'est transmis automatiquement). Une
     question de prix peut obtenir un score élevé grâce à la section du produit concerné : le
     refus de donner un prix relève de l'instruction de réponse, pas de la recherche.
 

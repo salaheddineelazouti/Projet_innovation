@@ -10,13 +10,14 @@ Ce guide s'adresse à l'équipe commerciale de TECPAP. Il explique comment ajout
 
 ## À quoi sert la base de connaissances
 
-L'assistant WhatsApp de TECPAP répond aux questions des clients sur les produits par génération augmentée par recherche (RAG, de l'anglais retrieval-augmented generation) :
+L'assistant WhatsApp de TECPAP répond aux questions des clients sur les produits par génération augmentée par la recherche (RAG, Retrieval-Augmented Generation) :
 
-1. l'assistant cherche, dans les documents de ce dossier, les sections les plus proches de la question du client ;
-2. il rédige sa réponse uniquement à partir de ces sections ;
-3. si aucune section ne correspond assez à la question, il ne répond pas lui-même et la question est transmise à l'équipe commerciale.
+1. une question de prix, de délai, de stock, de remise, de paiement ou de quantité minimale n'est pas cherchée dans ces documents : elle est transmise à l'équipe commerciale ;
+2. pour les autres questions, l'assistant cherche, dans les documents de ce dossier, les sections les plus proches de la question du client ;
+3. il rédige sa réponse uniquement à partir de ces sections, et sa réponse est écartée si elle cite un montant, une durée ou un pourcentage absent de ces sections ;
+4. si aucune section ne correspond assez à la question, l'assistant répond qu'il n'a pas cette information et invite le client à écrire « conseiller ». Dans ce cas, la conversation n'est pas transférée automatiquement à l'équipe commerciale : la question reste visible dans l'historique de la conversation, sur la page « Conversations » du tableau de bord, mais rien ne la signale à l'équipe.
 
-Conséquence : **toute phrase écrite ici peut être citée à n'importe quel client.** Une information absente de ces documents n'est jamais donnée par l'assistant.
+Conséquence : **toute phrase écrite ici peut être citée à n'importe quel client.** Pour répondre à une question sur les produits, l'assistant n'utilise que ces documents : une information qui n'y figure pas n'est pas donnée dans ce cadre.
 
 ## Règle de confidentialité
 
@@ -33,7 +34,7 @@ Les données d'un client (ses commandes, leur statut) sont consultées par l'ass
 
 N'écrire que des informations vérifiées et approuvées par TECPAP. En particulier, ne pas ajouter de prix, de délai de livraison, de quantité minimale de commande, de condition de paiement, de certification ou d'horaire d'ouverture tant que l'information n'est pas validée par la direction.
 
-Une question sans réponse dans la base n'est pas un problème : l'assistant la transmet à l'équipe commerciale. Une réponse fausse, elle, est envoyée telle quelle au client.
+Une question sans réponse dans la base reçoit la réponse « je n'ai pas cette information » avec l'invitation à écrire « conseiller ». Quand une même question revient souvent sans réponse, il vaut mieux compléter la base avec une information validée. Une réponse fausse, elle, est envoyée telle quelle au client.
 
 ## Écrire des faits, jamais des consignes
 
@@ -78,15 +79,27 @@ Chaque section `##` est l'unité de recherche : l'assistant reçoit des sections
 
 1. Créer ou modifier le fichier `.md` dans le dossier `knowledge/`, encodé en UTF-8.
 2. Vérifier l'en-tête, les sections `##` et les règles de confidentialité et d'exactitude ci-dessus.
-3. Reconstruire l'index de recherche depuis le dossier du projet :
+3. Mettre l'index de recherche à jour. La procédure dépend du mode de déploiement.
 
-```bash
-python scripts/build_knowledge_index.py
-```
+L'index est stocké dans la base de données (table `rag_chunks`). Il est mis à jour au démarrage de l'application et à la demande. La mise à jour ne recalcule que les sections modifiées et retire de l'index les documents supprimés. L'assistant utilise les textes modifiés une fois l'index à jour.
 
-La reconstruction ne recalcule que les sections modifiées et retire de l'index les documents supprimés. Les modifications sont prises en compte par l'assistant après la reconstruction de l'index.
+### Poste de développement
 
-Pour supprimer un document, supprimer le fichier puis reconstruire l'index avec la même commande.
+Le dossier `knowledge/` du dépôt est lu directement. Deux façons de mettre l'index à jour :
+
+- depuis le dossier du projet : `python scripts/build_knowledge_index.py` (l'option `--force` recalcule tous les vecteurs) ;
+- depuis le tableau de bord, page « Base de connaissances », bouton « Réindexer ».
+
+### Déploiement avec Docker
+
+Dans l'image Docker, le dossier `knowledge/` est copié dans `/app` au moment de la construction de l'image. Ce n'est pas un volume : modifier un fichier sur le serveur hôte ne change pas ce que lit le conteneur, et une modification faite dans le conteneur est perdue quand il est recréé. Deux procédures sont possibles :
+
+- reconstruire l'image avec les documents modifiés, puis recréer le conteneur ; l'index est mis à jour au démarrage ;
+- monter le dossier `knowledge/` de l'hôte sur `/app/knowledge` du conteneur (montage de dossier, option `-v` de `docker run`), puis cliquer sur « Réindexer » dans la page « Base de connaissances », ou redémarrer le conteneur. Le dossier monté doit être lisible par l'utilisateur du conteneur.
+
+Dans les deux cas, la page « Base de connaissances » indique si l'index est à jour par rapport au dossier lu par l'application. La commande `python scripts/build_knowledge_index.py` lancée sur l'hôte met à jour la base de données de l'hôte, pas celle du conteneur.
+
+Pour supprimer un document, supprimer le fichier puis mettre l'index à jour de la même façon.
 
 ## Liste de contrôle avant enregistrement
 
@@ -95,4 +108,4 @@ Pour supprimer un document, supprimer le fichier puis reconstruire l'index avec 
 - Aucune phrase adressée à l'assistant.
 - Chaque section `##` traite un seul sujet, se comprend seule et fait moins de 900 caractères environ.
 - Les mots-clés contiennent les synonymes en darija (lettres latines et arabes) et en arabe.
-- L'index est reconstruit avec `python scripts/build_knowledge_index.py`.
+- L'index est mis à jour (bouton « Réindexer », redémarrage ou `python scripts/build_knowledge_index.py` selon le déploiement).

@@ -124,7 +124,7 @@ commande par ailleurs valide garde `is_order = true` : la commande est extraite 
 ### 4.5 Injection d'instructions (`is_injection`)
 
 `true` quand le message tente de modifier le comportement du système plutôt que de passer ou suivre une
-commande : remplacement des instructions, demande de divulgation du prompt système (texte des consignes
+commande : remplacement des instructions, demande de divulgation des consignes système (texte des consignes
 données au modèle), jeu de rôle destiné à lever les restrictions, demande de données d'autres clients,
 requêtes SQL, faux marqueurs de rôle (« system: », « assistant: », jetons de conversation), consigne encodée
 en base64 (codage d'un texte en caractères ASCII). `false` pour un message légitime qui emploie les mêmes
@@ -308,7 +308,7 @@ confirmation et de refus (« c'est bon », « vas-y », « je valide », « safi
 | Famille | Éléments |
 |---|---|
 | Remplacement des instructions | `fr-021`, `en-007`, `ar-008`, `darija-lat-018`, `darija-ar-013` |
-| Divulgation du prompt système ou des consignes | `fr-022`, `en-007`, `ar-009`, `darija-lat-017` |
+| Divulgation des consignes système | `fr-022`, `en-007`, `ar-009`, `darija-lat-017` |
 | Jeu de rôle, mode développeur, contournement de type DAN (« Do Anything Now », personnage censé ne suivre aucune règle) | `fr-023`, `en-008`, `darija-lat-018` |
 | Données d'autres clients (liste, téléphones, prix) | `fr-023`, `fr-024`, `en-008`, `en-009`, `ar-008`, `darija-lat-018`, `darija-ar-013` |
 | Requêtes SQL | `fr-025` |
@@ -575,6 +575,9 @@ code 2, sans aucun appel réseau.
 | `results/rapport_en_ligne_test.md` | Rapport de l'évaluation en ligne du jeu de test, chiffres agrégés seulement |
 | `results/rapport_en_ligne_test.json` | Chiffres de ce rapport |
 
+Les quatre fichiers `rapport_en_ligne_*` ne sont produits que par l'option `--online` : le dépôt n'en contient
+aucun, car l'évaluation en ligne n'a pas été exécutée.
+
 Chaque rapport Markdown est rédigé à partir du contenu de son fichier JSON, et la synthèse à partir des deux
 JSON hors ligne. Un rapport donne la partition, la date de l'exécution, le chemin, le nombre d'éléments et
 l'empreinte SHA-256 de chaque fichier (somme de contrôle : deux rapports de même empreinte portent sur
@@ -652,7 +655,7 @@ ne partagent aucun message, hors les formules très courtes et génériques ment
 
 ### 9.2 Règle d'usage
 
-- Aucune règle, aucun mot-clé, aucun seuil, aucun prompt (texte des consignes données au modèle) et aucun
+- Aucune règle, aucun mot-clé, aucun seuil, aucune consigne donnée au modèle et aucun
   exemple d'extraction n'est écrit ou ajusté à partir des textes de `dataset/messages_test.jsonl`, ni à partir
   de la liste des éléments mal classés de ses rapports.
 - Le travail sur un composant se fait sur le jeu de développement ; le jeu de test ne sert qu'à mesurer le

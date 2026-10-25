@@ -67,23 +67,23 @@ Autres noms du kraft écru :
 - en darija : kraft 9ahwi, kaghet 9ahwi ;
 - en arabe : ورق كرافت طبيعي، كرافت بني، كرافت غير مبيض.
 
-## Grammage du papier kraft : définition et valeurs standards
+## Grammage du papier kraft : définition et contrôle des valeurs
 
 Le grammage est la masse d'un mètre carré de papier, exprimée en grammes par mètre carré (g/m²).
 
-Grammages standards des papiers kraft TECPAP : 40, 50, 60, 70, 80, 90, 100, 120 et 140 g/m².
+Dans le code article, le grammage suit le type de papier : dans KB100L28, « 100 » signifie 100 g/m².
 
-Dans le code article, le grammage suit le type de papier : dans KB100L28, « 100 » signifie 100 g/m². Une commande qui demande un grammage hors de cette liste est signalée à l'équipe commerciale au moment de la validation.
+Le système compare le grammage demandé à une liste de valeurs courantes : 40, 50, 60, 70, 80, 90, 100, 120 et 140 g/m². Cette liste est un contrôle automatique, pas une offre commerciale : un grammage hors de la liste est signalé à l'équipe commerciale lors de la validation.
 
 Autres formulations : « ch7al d gram 3ndkom ? », « شحال ديال الغراماج؟ », « ما هي أوزان الورق المتوفرة؟ ».
 
-## Laize du papier kraft : définition et valeurs standards
+## Laize du papier kraft : définition et contrôle des valeurs
 
 La laize est la largeur de la bobine de papier utilisée pour fabriquer le sac, exprimée en centimètres (cm).
 
-Laizes standards des papiers kraft TECPAP : 15, 18, 20, 22, 25, 28, 30, 32, 35, 40, 45 et 50 cm.
+Dans le code article, la laize suit la lettre L : dans KB100L28, « L28 » signifie une laize de 28 cm.
 
-Dans le code article, la laize suit la lettre L : dans KB100L28, « L28 » signifie une laize de 28 cm. Une commande qui demande une laize hors de cette liste est signalée à l'équipe commerciale au moment de la validation.
+Le système compare la laize demandée à une liste de valeurs courantes : 15, 18, 20, 22, 25, 28, 30, 32, 35, 40, 45 et 50 cm. Cette liste est un contrôle automatique, pas une offre commerciale : une laize hors de la liste est signalée à l'équipe commerciale lors de la validation.
 
 Autres formulations : « l3ard dyal lkaghet », « عرض الورق », « عرض البكرة ».
 
@@ -97,7 +97,7 @@ Le code article TECPAP identifie le papier utilisé pour un sac. Il suit le form
 - GRAMMAGE : masse du papier en g/m² ;
 - L suivi de la LAIZE : largeur de la bobine de papier en cm.
 
-Les codes internes peuvent comporter un suffixe propre à TECPAP ; il ne change rien pour le client.
+Les codes internes de TECPAP peuvent comporter en plus un suffixe facultatif de trois lettres.
 
 Indiquer le code article dans une commande est facultatif : à défaut, le code est déduit du type de papier, du grammage et de la laize indiqués, puis vérifié par l'équipe commerciale.
 

@@ -79,9 +79,9 @@ Autres formulations : « chno lfar9 bin kraft byed w kraft 9ahwi ? », « شنو
 
 ## Quels grammages et quelles laizes de papier propose TECPAP ?
 
-Le grammage est la masse d'un mètre carré de papier, en g/m². Grammages standards TECPAP : 40, 50, 60, 70, 80, 90, 100, 120 et 140 g/m².
+Le grammage est la masse d'un mètre carré de papier, en g/m². Le système compare le grammage demandé à une liste de valeurs courantes : 40, 50, 60, 70, 80, 90, 100, 120 et 140 g/m². Cette liste est un contrôle automatique, pas une offre commerciale : un grammage hors de la liste est signalé à l'équipe commerciale lors de la validation.
 
-La laize est la largeur de la bobine de papier utilisée pour fabriquer le sac, en cm. Laizes standards TECPAP : 15, 18, 20, 22, 25, 28, 30, 32, 35, 40, 45 et 50 cm.
+La laize est la largeur de la bobine de papier utilisée pour fabriquer le sac, en cm. Le système compare la laize demandée à une liste de valeurs courantes : 15, 18, 20, 22, 25, 28, 30, 32, 35, 40, 45 et 50 cm. Cette liste est un contrôle automatique, pas une offre commerciale : une laize hors de la liste est signalée à l'équipe commerciale lors de la validation.
 
 Autres formulations : « ch7al d gram 3ndkom ? », « شحال ديال الغراماج عندكم؟ », « ما هي أوزان الورق؟ ».
 
@@ -111,13 +111,13 @@ Non. Une commande reçue est d'abord en attente de validation. Une personne de l
 
 Autres formulations : « wach commande dyali t9blat ? », « واش الطلبية ديالي تقبلات؟ ».
 
-## Que faire si ma commande TECPAP n'est pas validée ?
+## Que faire si ma commande TECPAP est refusée (non validée) ?
 
 Le message reçu (email ou WhatsApp) indique le motif de la décision. Vous pouvez vérifier les informations de votre commande, contacter l'équipe commerciale de TECPAP pour plus de précisions, ou envoyer une autre demande si nécessaire.
 
 ## Comment connaître le statut de ma commande TECPAP ?
 
-Sur WhatsApp, demandez à l'assistant TECPAP le statut de vos commandes : il indique le statut des commandes envoyées depuis votre numéro (en attente de validation, validée ou non validée). Pour une commande précise, donnez sa référence. Par confidentialité, l'assistant ne donne aucune information sur les commandes d'un autre numéro ni sur les autres clients.
+Sur WhatsApp, demandez à l'assistant TECPAP le statut de vos commandes : il indique le statut des commandes envoyées depuis votre numéro (en attente de validation, validée ou refusée). Pour une commande précise, donnez sa référence. Par confidentialité, l'assistant ne donne aucune information sur les commandes d'un autre numéro ni sur les autres clients.
 
 Autres formulations : « fin wslat commande dyali ? », « فين وصلات الطلبية ديالي؟ ».
 

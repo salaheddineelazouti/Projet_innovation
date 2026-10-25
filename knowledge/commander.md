@@ -21,6 +21,8 @@ mots_cles:
   - statut
   - suivi de commande
   - commande non validée
+  - commande refusée
+  - refusée
   - conseiller
   - équipe commerciale
   - kifach ncommandi
@@ -133,24 +135,24 @@ Chaque commande TECPAP, reçue par email ou par WhatsApp, est vérifiée et vali
 Statuts possibles d'une commande TECPAP :
 - en attente de validation ;
 - validée ;
-- non validée.
+- refusée (la commande n'a pas été validée par l'équipe commerciale).
 
 Quand la commande est validée, le client reçoit une confirmation par email (si son adresse email est connue) et par WhatsApp (si la commande a été passée sur WhatsApp). La confirmation rappelle le client, le produit, la quantité et la référence de la commande.
 
-## Commande TECPAP non validée
+## Commande TECPAP refusée (non validée)
 
-Quand l'équipe commerciale ne peut pas valider une commande en l'état, le client en est informé par email (si son adresse email est connue) et par WhatsApp (si la commande a été passée sur WhatsApp). Le message indique le motif de la décision.
+Quand l'équipe commerciale ne peut pas valider une commande en l'état, la commande prend le statut « refusée » et le client en est informé par email (si son adresse email est connue) et par WhatsApp (si la commande a été passée sur WhatsApp). Le message indique le motif de la décision.
 
 Le client peut alors :
 - vérifier les informations de sa commande ;
 - contacter l'équipe commerciale de TECPAP pour plus de précisions ;
 - envoyer une autre demande si nécessaire.
 
-Autres formulations : « commande dyali ma t9blatch », « الطلبية ديالي ما تقبلاتش », « لماذا رفض طلبي؟ ».
+Autres formulations : « commande dyali ma t9blatch », « commande refusée », « الطلبية ديالي ما تقبلاتش », « لماذا رفض طلبي؟ ».
 
 ## Suivre le statut d'une commande TECPAP sur WhatsApp
 
-Sur WhatsApp, l'assistant TECPAP indique le statut des commandes envoyées depuis le même numéro de téléphone : en attente de validation, validée ou non validée. Pour une commande précise, il suffit de donner sa référence.
+Sur WhatsApp, l'assistant TECPAP indique le statut des commandes envoyées depuis le même numéro de téléphone : en attente de validation, validée ou refusée. Pour une commande précise, il suffit de donner sa référence.
 
 Par confidentialité, l'assistant TECPAP ne donne aucune information sur les commandes envoyées depuis un autre numéro ni sur les autres clients.
 
@@ -160,7 +162,9 @@ Autres formulations : « fin wslat commande dyali ? », « فين وصلات ا�
 
 Sur WhatsApp, il suffit de demander à parler à l'équipe commerciale, par exemple « je veux parler à un conseiller » ou « bghit nhder m3a chi wa7ed ». L'assistant TECPAP transmet alors la conversation à l'équipe commerciale, qui reprend l'échange.
 
-Les questions auxquelles l'assistant ne peut pas répondre, par exemple les questions de prix, sont transmises à l'équipe commerciale.
+Les questions de prix sont transmises à l'équipe commerciale.
+
+Quand l'assistant n'a pas l'information demandée, il le dit et invite le client à écrire « conseiller » : la conversation n'est transmise que si le client le demande.
 
 Autres formulations : « bghit nhder m3a commercial », « بغيت نهضر مع شي واحد », « أريد التحدث مع موظف ».
 
