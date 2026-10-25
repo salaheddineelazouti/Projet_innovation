@@ -7,18 +7,62 @@ name = "tecpap-orders"
 version = "3.0.0"
 description = "Saisie automatique des commandes TECPAP reçues par email et WhatsApp, validées par l'équipe commerciale avant export vers SAGE X3."
 readme = "README.md"
-requires-python = ">=3.10"
+# Python 3.10 n'est plus maintenu depuis octobre 2026 ; l'image Docker utilise Python 3.11.
+requires-python = ">=3.11"
 authors = [{ name = "Salah Eddine EL AZOUTI" }]
-dynamic = ["dependencies"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Framework :: Flask",
     "Natural Language :: French",
     "Private :: Do Not Upload",
 ]
+# Versions acceptées. Les versions exactes, testées et installées dans l'image Docker, sont
+# figées dans requirements.txt (exécution) et requirements-dev.txt (développement), produits à
+# partir de cette liste par la commande écrite en tête de chaque fichier (requirements.txt d'abord,
+# puis requirements-dev.txt, qui reprend ses versions). Pour changer une version, relancer ces
+# commandes puis la suite de tests. La borne supérieure exclut la version majeure suivante, qui
+# peut rompre la compatibilité ; la borne inférieure de Flask et de python-dotenv exclut les
+# versions visées par une vulnérabilité publiée (PYSEC-2026-2151, PYSEC-2026-2270).
+dependencies = [
+    # Configuration
+    "python-dotenv>=1.2.2,<2",
+    # Application web
+    "flask>=3.1.3,<4",
+    "gunicorn>=23.0,<27; platform_system != 'Windows'",
+    # Modèles de langue (extraction, transcription Whisper, vision)
+    "openai>=1.12,<4",
+    "pydantic>=2.5,<3",
+    # Canaux : WhatsApp (Twilio) et téléchargement des médias
+    "twilio>=8.10,<10",
+    "requests>=2.32.4,<3",
+    # Base de connaissances : en-têtes YAML des documents Markdown
+    "PyYAML>=6.0,<7",
+    # Lecture des pièces jointes
+    "pypdf>=6.1,<7",
+    "Pillow>=11.3,<14",
+    # Statistiques et exports (Excel, CSV, PDF)
+    "numpy>=1.26,<3",
+    "pandas>=2.1,<3",
+    "openpyxl>=3.1,<4",
+    "reportlab>=4.0,<5",
+    "matplotlib>=3.8,<4",
+    # Base des fuseaux horaires IANA pour zoneinfo : Windows n'en fournit pas.
+    "tzdata>=2024.1",
+]
 
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.txt"] }
+[project.optional-dependencies]
+# Tests, couverture de code, analyse statique et contrôles de sécurité. Versions exactes pour les
+# outils d'analyse : chaque version peut ajouter des règles, les résultats restent reproductibles.
+dev = [
+    "pytest>=8.0,<10",
+    "pytest-cov>=4.0,<8",
+    "ruff==0.17.2",
+    "bandit==1.9.4",
+    "pip-audit==2.10.1",
+]
 
 [tool.setuptools.packages.find]
 include = ["tecpap*"]
@@ -30,7 +74,7 @@ include = ["tecpap*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 extend-exclude = [".venv", "venv", "build", "dist"]
 
 [tool.ruff.lint]
@@ -40,6 +84,7 @@ select = ["E", "F", "W", "I", "B", "UP"]
 ignore = [
     "B008",  # appel de fonction dans une valeur par défaut d'argument (usage courant avec Flask)
     "B904",  # « raise … from » non imposé dans les gestionnaires d'erreurs des routes
+    "UP017",  # timezone.utc reste accepté : l'alias datetime.UTC (Python 3.11) n'apporte rien de plus
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -58,11 +103,13 @@ known-first-party = ["tecpap"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-ra"
-markers = [
-    "integration: tests qui font intervenir plusieurs composants (application web, base, extraction simulée)",
-    "slow: tests plus longs que la moyenne (génération de PDF, de classeurs Excel)",
-]
+# --strict-markers : un marqueur qui n'est pas déclaré (faute de frappe) est une erreur. Aucun marqueur
+# propre au projet n'est déclaré : le test le plus long dure quelques secondes, la durée de la suite
+# vient de son nombre de tests, et aucune sélection par marqueur ne l'écourterait.
+addopts = "-ra --strict-markers"
+# Un test qui dépasse 120 secondes (verrou jamais libéré, par exemple) provoque l'affichage de la
+# pile d'appels de tous les fils d'exécution, pour trouver la cause du blocage.
+faulthandler_timeout = 120
 filterwarnings = [
     # requests signale des versions d'urllib3 ou de chardet plus récentes que celles qu'il connaît.
     "ignore::requests.exceptions.RequestsDependencyWarning",

@@ -14,18 +14,10 @@ L'autorisation est appliquée dans le code, jamais confiée au modèle de langue
   n'est enregistrée que par :meth:`AssistantTools.submit_order`, appelée par l'automate de
   conversation après l'accord explicite du client, toujours au statut « en_attente ».
 
-Commandes visibles par un expéditeur :
-
-1. les commandes envoyées depuis son numéro (colonne ``whatsapp_from``) ;
-2. les commandes d'un client dont le téléphone est ce numéro, à condition que le lien entre le
-   numéro et le client ait été confirmé par l'équipe commerciale : au moins une commande
-   WhatsApp de ce numéro pour ce client a été validée. Le téléphone d'un expéditeur n'est
-   rattaché à un client existant qu'à la validation d'une de ses commandes
-   (:meth:`tecpap.db.database.DatabaseManager.attach_phone_to_client`, appelée par l'API de
-   validation) ; la condition protège en plus les téléphones enregistrés autrement (saisie,
-   bases plus anciennes). Sans ces deux règles, un expéditeur pourrait passer commande au nom
-   d'une entreprise, puis consulter les commandes de cette entreprise reçues par email.
-
+Commandes visibles par un expéditeur : seulement celles envoyées depuis son numéro (colonne
+``whatsapp_from``). Le téléphone enregistré pour un client ne donne accès à aucune commande : un
+expéditeur qui écrit au nom d'une entreprise ne voit jamais les commandes de cette entreprise
+reçues par email ou envoyées depuis un autre numéro, même après la validation de sa commande.
 Les numéros sont comparés sous une forme normalisée des deux côtés : préfixe « whatsapp: »,
 espaces, tirets, points, parenthèses et préfixe interurbain « (0) » retirés dans la colonne, et
 variantes du numéro de l'expéditeur (« +212… », « 212… », « 00212… », « 06… ») en paramètres.
@@ -41,21 +33,26 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any
 
 from tecpap.catalog import PRODUCTS, REQUIRED_ORDER_FIELDS
 from tecpap.db.database import is_generic_client_name
 from tecpap.extraction.rules import ORDER_FIELD_KINDS, fold, normalize_phone, normalize_product_type
+from tecpap.formatting import parse_timestamp, resolve_timezone
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_RECENT_ORDERS",
     "ORDER_METADATA_FIELDS",
+    "PRODUCT_DEPENDENT_FIELDS",
     "TOOL_NAMES",
     "VISIBLE_STATUSES",
     "AssistantTools",
     "ToolResult",
+    "merge_order_fields",
+    "order_date",
     "order_reference",
     "phone_variants",
 ]
@@ -88,8 +85,33 @@ fixé par :meth:`AssistantTools.submit_order`.
 _SUBMITTABLE_FIELDS = frozenset(name for name in ORDER_FIELD_KINDS if name != "est_bon_commande") \
     | frozenset(ORDER_METADATA_FIELDS)
 _LIST_METADATA_FIELDS = frozenset({"anomalies", "champs_manquants"})
-_REORDER_FIELDS = ("nature_produit", "quantite", "unite", "type_papier", "grammage", "laize", "format_sac",
-                   "type_sac", "impression_client", "code_article")
+
+PRODUCT_DEPENDENT_FIELDS: tuple[str, ...] = (
+    "code_article", "nature_produit", "type_papier", "grammage", "laize", "format_sac", "type_sac",
+    "impression_client",
+)
+"""Champs qui décrivent un produit précis : ils ne valent plus quand le type de produit change.
+
+Le code article SAGE X3 et la désignation exportés, le papier, le grammage, la laize, le format,
+le type de sac et l'impression d'une commande renouvelée appartiennent à l'ancien produit ; ils
+sont retirés quand le client choisit un autre type de produit (:func:`merge_order_fields`).
+"""
+
+_REORDER_FIELDS = ("quantite", "unite", *PRODUCT_DEPENDENT_FIELDS)
+
+
+def merge_order_fields(order: dict[str, Any], updates: Mapping[str, Any]) -> dict[str, Any]:
+    """Fusionne ``updates`` dans la commande ``order`` (modifiée sur place et renvoyée).
+
+    Quand ``updates`` change le type de produit, les champs de :data:`PRODUCT_DEPENDENT_FIELDS`
+    de l'ancien produit sont retirés avant la fusion ; ceux que ``updates`` fournit sont gardés.
+    """
+    new_type = updates.get("type_produit")
+    if new_type and order.get("type_produit") and new_type != order["type_produit"]:
+        for name in PRODUCT_DEPENDENT_FIELDS:
+            order.pop(name, None)
+    order.update(updates)
+    return order
 _REFERENCE_ID_RE = re.compile(r"(?:CMD-?)?(\d{1,12})")
 _REFERENCE_CHARS_RE = re.compile(r"[^\w/\-]")
 _CLIENT_LIMIT = 50
@@ -140,6 +162,24 @@ def order_reference(numero_commande: Any, order_id: Any) -> str:
     if isinstance(numero_commande, str) and numero_commande.strip():
         return numero_commande.strip()
     return f"CMD-{order_id}"
+
+
+def order_date(date_commande: Any, created_at: Any) -> str | None:
+    """Date d'une commande montrée au client (« AAAA-MM-JJ »).
+
+    La date de commande indiquée par le client est reprise telle quelle ; à défaut, la date
+    d'enregistrement, horodatée en UTC dans la base, est convertie dans le fuseau horaire de
+    l'entreprise (:data:`tecpap.formatting.DEFAULT_TIMEZONE`) : une commande reçue à 00 h 30 à
+    Casablanca porte la date de ce jour, pas celle de la veille.
+    """
+    if isinstance(date_commande, str) and date_commande.strip():
+        return date_commande.strip()[:10]
+    moment = parse_timestamp(created_at)
+    if isinstance(moment, datetime):
+        return moment.astimezone(resolve_timezone()).date().isoformat()
+    if isinstance(moment, date):
+        return moment.isoformat()
+    return created_at[:10] if isinstance(created_at, str) and created_at.strip() else None
 
 
 def _number(value: Any) -> int | float | None:
@@ -200,16 +240,10 @@ class AssistantTools:
     # ------------------------------------------------------------------ portée des requêtes
 
     def _scope(self, alias: str = "c") -> tuple[str, list[str]]:
-        """Clause SQL qui limite les commandes ``alias`` à l'expéditeur, et ses paramètres."""
+        """Clause SQL qui limite les commandes ``alias`` à celles envoyées par l'expéditeur, et ses paramètres."""
         marks = ", ".join("?" for _ in self._variants)
-        clause = (
-            f"({_normalized_phone_sql(f'{alias}.whatsapp_from')} IN ({marks}) "
-            f"OR {alias}.client_id IN ("
-            f"SELECT cl.id FROM clients cl WHERE {_normalized_phone_sql('cl.telephone')} IN ({marks}) "
-            f"AND EXISTS (SELECT 1 FROM commandes v WHERE v.client_id = cl.id AND v.statut = 'validee' "
-            f"AND {_normalized_phone_sql('v.whatsapp_from')} IN ({marks}))))"
-        )
-        return clause, [*self._variants, *self._variants, *self._variants]
+        clause = f"({_normalized_phone_sql(f'{alias}.whatsapp_from')} IN ({marks}))"
+        return clause, list(self._variants)
 
     def _orders(self, condition: str = "", parameters: Sequence[Any] = (), *, order_by: str = "c.created_at DESC",
                 limit: int = MAX_RECENT_ORDERS) -> list[dict[str, Any]]:
@@ -234,10 +268,9 @@ class AssistantTools:
         product = row.get("produit_type") or row.get("nature_produit")
         if isinstance(product, str):
             product = " ".join(product.split())[:MAX_PRODUCT_CHARS] or None
-        date = row.get("date_commande") or row.get("created_at")
         return {
             "reference": order_reference(row.get("numero_commande"), row.get("id")),
-            "date": date[:10] if isinstance(date, str) else None,
+            "date": order_date(row.get("date_commande"), row.get("created_at")),
             "product": product,
             "quantity": _number(row.get("quantite")),
             "unit": row.get("unite") or "US",
@@ -365,8 +398,9 @@ class AssistantTools:
 
         Seuls les champs de commande et les informations de :data:`ORDER_METADATA_FIELDS` sont
         repris ; le canal, le numéro de l'expéditeur et le statut sont fixés ici. Un numéro de
-        commande déjà attribué à une commande d'un autre expéditeur est retiré (et noté dans les
-        informations supplémentaires) : la commande est créée, jamais rattachée à celle d'un autre.
+        commande déjà attribué à une autre commande, de cet expéditeur ou d'un autre, est retiré
+        et signalé par :meth:`tecpap.db.database.DatabaseManager.save_order` : la commande est
+        créée, jamais rattachée à une commande existante.
 
         Args:
             draft: commande normalisée (``entreprise_cliente``, ``type_produit``, ``quantite``…).
@@ -393,18 +427,6 @@ class AssistantTools:
                     return existing[0]
                 if existing is None:
                     order[column] = value
-
-        numero = order.get("numero_commande")
-        if numero:
-            existing = self._existing_order("numero_commande", numero)
-            if existing is not None and existing[1]:
-                logger.info("Commande %s déjà enregistrée pour cet expéditeur (id %s)", numero, existing[0])
-                return existing[0]
-            if existing is not None:
-                del order["numero_commande"]
-                note = f"Référence indiquée par le client : {numero} (déjà attribuée à une autre commande)."
-                previous = order.get("informations_supplementaires")
-                order["informations_supplementaires"] = f"{previous}\n{note}" if previous else note
 
         order.update({"source": "whatsapp", "whatsapp_from": self._sender})
         order_id = self.db_manager.create_order(order)

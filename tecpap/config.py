@@ -8,20 +8,59 @@ l'environnement du poste (voir :meth:`Settings.for_tests`).
 
 La liste des variables, leurs valeurs par défaut et leur rôle sont documentés dans
 ``.env.example``.
+
+Lecture des valeurs :
+
+- une paire d'apostrophes ou de guillemets qui entoure toute la valeur est retirée : python-dotenv
+  la retire déjà, mais ``docker run --env-file`` transmet la valeur telle quelle ;
+- une valeur d'exemple de ``.env.example`` restée en place (clé d'API, jeton, mot de passe,
+  adresse publique) est ignorée avec un avertissement, comme une variable absente : le service
+  correspondant reste désactivé au lieu d'échouer à chaque appel (:func:`is_placeholder`) ;
+- en production, ``SECRET_KEY`` doit compter au moins :data:`MIN_SECRET_KEY_LENGTH` caractères
+  et ne pas être la valeur d'exemple : les cookies de session sont signés avec cette clé, et une
+  clé connue permettrait de fabriquer une session ouverte ; le mode débogage y est refusé.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
 ENVIRONMENTS = ("development", "production", "test")
+
+MIN_SECRET_KEY_LENGTH = 32
+"""Longueur minimale de ``SECRET_KEY`` en production (``secrets.token_hex(32)`` en donne 64)."""
+
+DEFAULT_TIMEZONE = "Africa/Casablanca"
+"""Fuseau horaire des dates affichées à l'équipe commerciale (variable ``APP_TIMEZONE``)."""
+
+PLACEHOLDER_VALUES = frozenset({
+    "valeur-longue-et-aleatoire",
+    "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "xxxx xxxx xxxx xxxx",
+    "https://exemple.ngrok-free.app",
+    "commandes@example.com",
+})
+"""Valeurs d'exemple des versions publiées de ``.env.example`` (en plus de celles qui contiennent « remplacer »)."""
+
+_PLACEHOLDER_X_RE = re.compile(r"(?i)^(?:ac|sk-)?[x\s]{8,}$")
+
+PLACEHOLDER_CHECKED_VARIABLES = (
+    "OPENAI_API_KEY", "GMAIL_EMAIL", "GMAIL_APP_PASSWORD", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+    "PUBLIC_BASE_URL", "ADMIN_PASSWORD_HASH",
+)
+"""Variables dont une valeur d'exemple est ignorée par :func:`load_settings` (``SECRET_KEY`` est traitée à part)."""
 
 RAG_EMBEDDERS = ("local", "openai")
 """Calculs de plongements vectoriels de la base de connaissances (variable ``RAG_EMBEDDER``).
@@ -57,6 +96,30 @@ def parse_bool(value: str, name: str = "valeur") -> bool:
     raise ConfigurationError(
         f"{name} : valeur booléenne invalide {value!r} (valeurs acceptées : 1/0, true/false, yes/no, oui/non)"
     )
+
+
+def is_placeholder(value: str | None) -> bool:
+    """Vrai pour une valeur d'exemple de ``.env.example`` laissée en place.
+
+    Sont reconnues : les valeurs qui contiennent « remplacer » (« remplacer-par-votre-jeton »…),
+    celles faites de « x » (« ACxxxx… », « xxxx xxxx xxxx xxxx ») et celles de
+    :data:`PLACEHOLDER_VALUES`.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return False
+    text = value.strip()
+    return "remplacer" in text.lower() or text in PLACEHOLDER_VALUES or bool(_PLACEHOLDER_X_RE.fullmatch(text))
+
+
+def strip_quotes(value: str) -> str:
+    """Retire une paire d'apostrophes ou de guillemets qui entoure toute la valeur.
+
+    ``docker run --env-file`` transmet ``ADMIN_PASSWORD_HASH='scrypt:…'`` avec les apostrophes,
+    alors que python-dotenv les retire : la valeur lue est la même dans les deux cas.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
 
 
 def _parse_str(value: str, name: str) -> str:
@@ -99,6 +162,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 5000
     debug: bool = False
+    timezone: str = DEFAULT_TIMEZONE
 
     database_path: str = "orders.db"
     backup_dir: str = "backups"
@@ -158,13 +222,18 @@ class Settings:
             raise ConfigurationError(
                 f"APP_ENV : valeur {self.env!r} inconnue (valeurs acceptées : {', '.join(ENVIRONMENTS)})"
             )
-        if not self.secret_key:
-            if self.env == "production":
-                raise ConfigurationError(
-                    "SECRET_KEY est obligatoire en production : définissez une valeur longue et aléatoire, "
-                    "par exemple avec python -c \"import secrets; print(secrets.token_hex(32))\""
-                )
-            object.__setattr__(self, "secret_key", _PROCESS_SECRET_KEY)
+        self._check_secret_key()
+        if self.debug and self.env == "production":
+            raise ConfigurationError(
+                "FLASK_DEBUG=true est refusé en production : le mode débogage affiche le détail des erreurs "
+                "et, sous gunicorn, empêche le démarrage du planificateur de sauvegardes"
+            )
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ConfigurationError(
+                f"APP_TIMEZONE : fuseau horaire {self.timezone!r} inconnu (exemple : {DEFAULT_TIMEZONE})"
+            ) from exc
         if self.session_cookie_secure is None:
             object.__setattr__(self, "session_cookie_secure", self.env == "production")
         if not 1 <= self.port <= 65535:
@@ -180,10 +249,42 @@ class Settings:
                 f"RAG_EMBEDDER : valeur {self.rag_embedder!r} inconnue (valeurs acceptées : {', '.join(RAG_EMBEDDERS)})"
             )
 
+    def _check_secret_key(self) -> None:
+        """Contrôle de ``SECRET_KEY``.
+
+        En production, une clé absente, trop courte ou d'exemple est refusée ; ailleurs, elle est
+        remplacée par une clé tirée au hasard pour la durée du processus.
+        """
+        hint = "générez-la avec python -c \"import secrets; print(secrets.token_hex(32))\""
+        placeholder = is_placeholder(self.secret_key)
+        if self.env == "production":
+            if not self.secret_key:
+                raise ConfigurationError(f"SECRET_KEY est obligatoire en production : {hint}")
+            if placeholder:
+                raise ConfigurationError(
+                    f"SECRET_KEY contient la valeur d'exemple de .env.example, connue de tous : {hint}"
+                )
+            if len(self.secret_key) < MIN_SECRET_KEY_LENGTH:
+                raise ConfigurationError(
+                    f"SECRET_KEY est trop courte ({len(self.secret_key)} caractères, minimum "
+                    f"{MIN_SECRET_KEY_LENGTH}) : {hint}"
+                )
+            return
+        if placeholder:
+            logger.warning("SECRET_KEY contient la valeur d'exemple de .env.example : une clé aléatoire est utilisée "
+                           "à la place (les sessions sont perdues au redémarrage)")
+        if not self.secret_key or placeholder:
+            object.__setattr__(self, "secret_key", _PROCESS_SECRET_KEY)
+
     @property
     def is_production(self) -> bool:
         """Vrai quand l'application tourne en production (APP_ENV=production)."""
         return self.env == "production"
+
+    @property
+    def tzinfo(self) -> ZoneInfo:
+        """Fuseau horaire des dates affichées (``APP_TIMEZONE``)."""
+        return ZoneInfo(self.timezone)
 
     @property
     def is_testing(self) -> bool:
@@ -202,7 +303,7 @@ class Settings:
         base = Path(base_dir)
         values: dict[str, Any] = {
             "env": "test",
-            "secret_key": "cle-secrete-reservee-aux-tests",
+            "secret_key": "cle-secrete-reservee-aux-tests-automatises",
             "debug": False,
             "database_path": str(base / "orders.db"),
             "backup_dir": str(base / "backups"),
@@ -236,6 +337,7 @@ _ENV_SPEC: tuple[tuple[str, str, Callable[[str, str], Any]], ...] = (
     ("FLASK_HOST", "host", _parse_str),
     ("FLASK_PORT", "port", _parse_int),
     ("FLASK_DEBUG", "debug", parse_bool),
+    ("APP_TIMEZONE", "timezone", _parse_str),
     ("DATABASE_PATH", "database_path", _parse_str),
     ("BACKUP_DIR", "backup_dir", _parse_str),
     ("EXPORT_DIR", "export_dir", _parse_str),
@@ -313,8 +415,10 @@ def load_settings(env: Mapping[str, str] | None = None, **overrides: Any) -> Set
         **overrides: valeurs d'attributs de :class:`Settings` qui remplacent celles de
             l'environnement (utile pour les scripts et les tests).
 
-    Une variable absente ou vide garde sa valeur par défaut. Une valeur invalide lève
-    :class:`ConfigurationError`, de même qu'une production sans ``SECRET_KEY``.
+    Une variable absente ou vide garde sa valeur par défaut ; les apostrophes ou guillemets qui
+    entourent une valeur sont retirés (:func:`strip_quotes`) et une valeur d'exemple de
+    ``.env.example`` est ignorée (:data:`PLACEHOLDER_CHECKED_VARIABLES`). Une valeur invalide lève
+    :class:`ConfigurationError`, de même qu'une production sans ``SECRET_KEY`` sûre.
     """
     if env is None:
         load_dotenv()
@@ -326,8 +430,14 @@ def load_settings(env: Mapping[str, str] | None = None, **overrides: Any) -> Set
     values: dict[str, Any] = {}
     for var, attribute, parser in _ENV_SPEC:
         raw = env.get(var)
-        if raw is None or not raw.strip():
+        if raw is None:
             continue
-        values[attribute] = parser(raw.strip(), var)
+        value = strip_quotes(raw.strip()).strip()
+        if not value:
+            continue
+        if var in PLACEHOLDER_CHECKED_VARIABLES and is_placeholder(value):
+            logger.warning("%s contient la valeur d'exemple de .env.example : variable ignorée", var)
+            continue
+        values[attribute] = parser(value, var)
     values.update(overrides)
     return Settings(**values)

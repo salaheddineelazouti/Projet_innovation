@@ -26,6 +26,7 @@ EXPECTED_ROUTES = {
     ("/whatsapp", "GET"), ("/sage", "GET"), ("/backups", "GET"), ("/healthz", "GET"),
     ("/api/process-emails", "POST"), ("/api/orders/<int:order_id>/validate", "POST"),
     ("/api/orders/<int:order_id>/reject", "POST"), ("/api/orders/<int:order_id>/update", "POST"),
+    ("/api/orders/<int:order_id>/notify", "POST"),
     ("/api/stats", "GET"), ("/api/orders", "GET"), ("/api/article-code/generate", "POST"),
     ("/api/article-code/suggest", "POST"), ("/api/orders/<int:order_id>/generate-code", "POST"),
     ("/api/orders/generate-all-codes", "POST"), ("/api/orders/sage-stats", "GET"),
@@ -33,8 +34,8 @@ EXPECTED_ROUTES = {
     ("/api/client/<int:client_id>/history", "GET"), ("/api/notifications/check", "GET"),
     ("/api/whatsapp/status", "GET"), ("/webhook/whatsapp", "POST"),
     ("/api/backup/create", "POST"), ("/api/backup/list", "GET"), ("/api/backup/download/<filename>", "GET"),
-    ("/api/backup/download-latest", "GET"), ("/api/backup/restore/<filename>", "POST"),
-    ("/api/backup/delete/<filename>", "DELETE"), ("/api/backup/export-json", "GET"),
+    ("/api/backup/download-latest", "POST"), ("/api/backup/restore/<filename>", "POST"),
+    ("/api/backup/delete/<filename>", "DELETE"), ("/api/backup/export-json", "POST"),
     ("/api/backup/scheduler/status", "GET"), ("/api/backup/scheduler/configure", "POST"),
     ("/export/excel", "GET"), ("/export/excel/sage", "GET"), ("/export/csv", "GET"), ("/export/pdf", "GET"),
     ("/login", "GET"), ("/login", "POST"), ("/logout", "POST"),
@@ -102,17 +103,19 @@ class TestFactory:
 
     def test_scheduler_started_outside_tests(self, tmp_path):
         settings = Settings.for_tests(tmp_path, env="development", backup_scheduler_enabled=True)
-        with patch.object(BackupScheduler, "start") as start:
+        with patch.object(BackupScheduler, "start") as start, patch.object(Services, "start_maintenance") as maintenance:
             app = create_app(settings)
         start.assert_called_once()
-        app.extensions["tecpap"].db.disconnect()
+        maintenance.assert_called_once()
+        app.extensions["tecpap"].close()
 
     def test_scheduler_disabled_by_settings(self, tmp_path):
         settings = Settings.for_tests(tmp_path, env="development", backup_scheduler_enabled=False)
-        with patch.object(BackupScheduler, "start") as start:
+        with patch.object(BackupScheduler, "start") as start, patch.object(Services, "start_maintenance") as maintenance:
             app = create_app(settings)
         start.assert_not_called()
-        app.extensions["tecpap"].db.disconnect()
+        maintenance.assert_called_once()
+        app.extensions["tecpap"].close()
 
     def test_no_database_in_repository_root(self, flask_client):
         flask_client.get("/")
@@ -151,9 +154,12 @@ class TestExports:
         assert filename in response.headers["Content-Disposition"]
         assert response.data.startswith(magic)
 
-    def test_exports_are_written_in_export_dir(self, flask_client, test_settings, with_orders):
-        flask_client.get("/export/csv")
-        assert (Path(test_settings.export_dir) / "commandes.csv").exists()
+    def test_exports_use_export_dir_and_leave_no_file(self, flask_client, test_settings, with_orders):
+        for url in ("/export/csv", "/export/excel", "/export/excel/sage", "/export/pdf"):
+            assert flask_client.get(url).status_code == 200
+        export_dir = Path(test_settings.export_dir)
+        assert export_dir.is_dir()
+        assert list(export_dir.iterdir()) == []
 
     def test_csv_status_filter(self, flask_client, services, with_orders):
         order_id = services.db.get_all_orders()[0]["id"]
@@ -209,10 +215,12 @@ class TestBackupRoutes:
         assert response.status_code == 400
         assert response.get_json()["error"] == message
 
-    def test_export_json(self, flask_client):
-        response = flask_client.get("/api/backup/export-json")
+    def test_export_json(self, flask_client, test_settings):
+        response = flask_client.post("/api/backup/export-json")
         assert response.status_code == 200
         assert b'"tables"' in response.data
+        assert "export_" in response.headers["Content-Disposition"]
+        assert not list(Path(test_settings.backup_dir).glob("export_*.json"))
 
 
 class TestWhatsAppPage:

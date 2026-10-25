@@ -108,7 +108,8 @@ class TestConversation:
         assert greeting
         assert ask_quantity == render("ask_quantity", "darija")
         assert summary.startswith("Hak l'récap")
-        assert CLIENT_NAME in summary and "2 000" in summary and "Sachets fond plat" in summary
+        # Le séparateur des milliers peut être une espace insécable : les espaces sont comparées sans distinction.
+        assert CLIENT_NAME in summary and "2 000" in " ".join(summary.split()) and "Sachets fond plat" in summary
         assert submitted == render("submitted", "darija", reference=f"CMD-{scenario.order['id']}")
         assert f"CMD-{scenario.order['id']}" in status
         assert blocked == render("blocked", "darija")

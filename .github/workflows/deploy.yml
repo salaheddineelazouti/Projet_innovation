@@ -1,10 +1,17 @@
-# Publication d'une version : à chaque étiquette v* (par exemple v3.0.0), les tests sont relancés
-# puis l'image Docker est construite et publiée comme artefact du workflow.
+# Publication d'une version : à chaque étiquette v* (par exemple v3.0.0), les tests et le contrôle
+# des vulnérabilités sont relancés, puis l'image Docker est construite, démarrée et sondée, et
+# enfin publiée comme artefact du workflow. Un lancement manuel depuis une branche produit de la
+# même façon une image, dont l'étiquette reprend le nom de la branche sans les caractères que
+# Docker refuse (feature/rag-chatbot donne feature-rag-chatbot).
 #
 # Aucune cible de déploiement n'est configurée (pas de registre d'images ni de serveur) :
 # l'image est téléchargée depuis l'onglet Actions puis chargée sur le serveur avec
 # « docker load -i tecpap-orders.tar.gz ». Pour automatiser le déploiement, ajouter une étape
 # de publication vers un registre (avec ses identifiants dans les secrets du dépôt).
+#
+# Les dépendances sont celles, à version exacte, de requirements.txt et de requirements-dev.txt.
+# Les actions GitHub sont désignées par l'empreinte de leur commit, avec leur version en
+# commentaire.
 
 name: Publication
 
@@ -14,22 +21,26 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     name: Tests avant publication
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Récupérer le code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Installer Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+          cache-dependency-path: requirements-dev.txt
 
       - name: Installer les dépendances
         run: |
@@ -39,23 +50,41 @@ jobs:
       - name: Lancer les tests
         run: pytest
 
+      # Même contrôle que dans le workflow CI : les versions auditées sont celles de l'image.
+      - name: Vulnérabilités connues des dépendances (pip-audit)
+        run: pip-audit -r requirements.txt --no-deps --disable-pip
+
   image:
     name: Image Docker
     runs-on: ubuntu-latest
     needs: tests
+    timeout-minutes: 20
     steps:
       - name: Récupérer le code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Une étiquette d'image Docker et un nom d'artefact n'admettent ni « / » ni la plupart des
+      # signes de ponctuation : seuls les lettres, les chiffres, « _ », « . » et « - » sont gardés.
+      - name: Déterminer l'étiquette de l'image
+        id: tag
+        run: |
+          tag="$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9_.-' '-' | sed 's/^[-.]*//' | cut -c1-128)"
+          echo "value=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Construire l'image
-        run: docker build --tag tecpap-orders:${{ github.ref_name }} .
+        run: docker build --tag tecpap-orders:${{ steps.tag.outputs.value }} .
+
+      - name: Démarrer l'image et sonder /healthz
+        run: bash .github/scripts/smoke_image.sh tecpap-orders:${{ steps.tag.outputs.value }}
 
       - name: Exporter l'image
-        run: docker save tecpap-orders:${{ github.ref_name }} | gzip > tecpap-orders.tar.gz
+        run: docker save tecpap-orders:${{ steps.tag.outputs.value }} | gzip > tecpap-orders.tar.gz
 
       - name: Publier l'image comme artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tecpap-orders-${{ github.ref_name }}
+          name: tecpap-orders-${{ steps.tag.outputs.value }}
           path: tecpap-orders.tar.gz
           retention-days: 30

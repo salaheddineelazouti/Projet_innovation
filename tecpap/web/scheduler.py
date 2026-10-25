@@ -1,7 +1,10 @@
 """Planificateur des sauvegardes automatiques de la base, exécuté dans un fil d'arrière-plan.
 
 Les sauvegardes ont lieu aux heures multiples de l'intervalle (0 h, 6 h, 12 h et 18 h pour un
-intervalle de 6 heures), avec au moins une heure entre deux sauvegardes ; seules les
+intervalle de 6 heures ; toutes les heures pile pour un intervalle d'une heure), à l'heure du
+serveur. Une heure ronde qui tombe moins de :data:`MIN_GAP_SECONDS` secondes après le calcul
+(démarrage juste avant l'heure) est sautée au profit de la suivante. L'heure annoncée par
+:meth:`BackupScheduler.get_status` est celle de la prochaine sauvegarde réelle. Seules les
 ``keep_backups`` plus récentes sont conservées.
 
 Un seul planificateur tourne par base et par processus : sous le rechargeur de Werkzeug
@@ -23,7 +26,8 @@ from tecpap.db.backup import create_backup, delete_old_backups
 logger = logging.getLogger(__name__)
 
 STARTUP_DELAY_SECONDS = 5
-MIN_WAIT_SECONDS = 3600
+MIN_GAP_SECONDS = 300
+"""Écart minimal entre le calcul de la prochaine sauvegarde et l'heure retenue, en secondes."""
 RETRY_DELAY_SECONDS = 300
 
 # Planificateurs actifs dans ce processus, par (base, dossier de sauvegarde).
@@ -52,6 +56,14 @@ def next_backup_time(now: datetime, interval_hours: int) -> datetime:
     if next_hour >= 24:
         return start_of_hour.replace(hour=0) + timedelta(days=1)
     return start_of_hour.replace(hour=next_hour)
+
+
+def scheduled_backup_time(now: datetime, interval_hours: int, min_gap_seconds: float = MIN_GAP_SECONDS) -> datetime:
+    """Première heure ronde multiple de ``interval_hours`` située au moins ``min_gap_seconds`` après ``now``."""
+    target = next_backup_time(now, interval_hours)
+    while (target - now).total_seconds() < min_gap_seconds:
+        target = next_backup_time(target, interval_hours)
+    return target
 
 
 def _whole_number(value: Any, message: str) -> int:
@@ -135,16 +147,23 @@ class BackupScheduler:
         Raises:
             SchedulerConfigError: valeur non entière ou hors limites (sous-classe de ``ValueError``).
         """
+        interval = keep = None
         if interval_hours is not None:
             interval = _whole_number(interval_hours, "L'intervalle doit être un nombre entier d'heures")
             if not 1 <= interval <= 24:
                 raise SchedulerConfigError("L'intervalle doit être compris entre 1 et 24 heures")
-            self.interval_hours = interval
         if keep_backups is not None:
             keep = _whole_number(keep_backups, "Le nombre de sauvegardes conservées doit être un nombre entier")
             if keep < 1:
                 raise SchedulerConfigError("Le nombre de sauvegardes conservées doit être au moins 1")
+        if keep is not None:
             self.keep_backups = keep
+        if interval is not None and interval != self.interval_hours:
+            self.interval_hours = interval
+            if self.running:
+                # Réveille le fil : la prochaine sauvegarde est recalculée avec le nouvel intervalle.
+                self.next_backup = scheduled_backup_time(datetime.now(), interval)
+                self._stop_event.set()
 
     def run_backup(self) -> str | None:
         """Crée une sauvegarde compressée puis supprime les plus anciennes."""
@@ -154,26 +173,36 @@ class BackupScheduler:
             delete_old_backups(keep_count=self.keep_backups, backup_dir=self.backup_dir)
         return backup_path
 
+    def _sleep(self, seconds: float) -> bool:
+        """Attend ``seconds`` secondes ; vrai si l'attente a été interrompue (arrêt ou nouvel intervalle)."""
+        if not self._stop_event.wait(seconds):
+            return False
+        if self.running:
+            self._stop_event.clear()
+        return True
+
     def _run_scheduler(self) -> None:
-        if self._stop_event.wait(STARTUP_DELAY_SECONDS):
-            return
+        self._sleep(STARTUP_DELAY_SECONDS)
         while self.running:
             try:
-                self.next_backup = next_backup_time(datetime.now(), self.interval_hours)
-                wait_seconds = max((self.next_backup - datetime.now()).total_seconds(), MIN_WAIT_SECONDS)
-                logger.info("Prochaine sauvegarde dans %d h %02d min",
+                now = datetime.now()
+                self.next_backup = scheduled_backup_time(now, self.interval_hours)
+                wait_seconds = (self.next_backup - now).total_seconds()
+                logger.info("Prochaine sauvegarde à %s (dans %d h %02d min)", self.next_backup.strftime("%H:%M"),
                             int(wait_seconds // 3600), int((wait_seconds % 3600) // 60))
-                if self._stop_event.wait(wait_seconds):
-                    break
+                if self._sleep(wait_seconds):
+                    continue
                 logger.info("Sauvegarde automatique programmée")
                 self.run_backup()
             except Exception:
                 logger.exception("Erreur du planificateur de sauvegarde")
-                if self._stop_event.wait(RETRY_DELAY_SECONDS):
-                    break
+                self._sleep(RETRY_DELAY_SECONDS)
 
     def get_status(self) -> dict[str, Any]:
-        """État du planificateur, affiché sur la page des sauvegardes."""
+        """État du planificateur (page des sauvegardes et API ``/api/backup/scheduler/status``).
+
+        ``next_backup`` est l'heure à laquelle le fil lancera la prochaine sauvegarde.
+        """
         return {
             "running": self.running,
             "interval_hours": self.interval_hours,

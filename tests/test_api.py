@@ -382,10 +382,10 @@ class TestProcessEmailsAPI:
     """Traitement des emails depuis le tableau de bord."""
 
     def test_process_emails_endpoint_exists(self, client):
-        """Sans identifiants Gmail, aucun email n'est lu et aucune commande n'est créée."""
+        """Sans identifiants Gmail, aucun email n'est lu : l'échec est signalé, pas un succès sans commande."""
         response = client.post("/api/process-emails")
-        assert response.status_code == 200
-        assert response.get_json()["orders_count"] == 0
+        assert response.status_code == 502
+        assert response.get_json()["success"] is False
 
 
 class TestStaticRoutes:

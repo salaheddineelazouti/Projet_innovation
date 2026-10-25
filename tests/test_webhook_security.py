@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import logging
 from unittest.mock import patch
+from xml.etree import ElementTree
 
 import pytest
 from twilio.request_validator import RequestValidator
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from tecpap.chatbot.messages import render
 from tecpap.config import Settings
 from tecpap.security.events import KIND_INVALID_SIGNATURE, recent_security_events
 from tecpap.security.redaction import mask_phone
 from tecpap.web import create_app
-from tecpap.web.routes.webhooks import PROCESSING_ERROR_REPLY
 
 AUTH_TOKEN = "jeton-twilio-de-test"
 WEBHOOK = "/webhook/whatsapp"
@@ -210,7 +211,8 @@ class TestErrors:
         assert response.status_code == 200
         assert response.content_type.startswith("application/xml")
         assert "<Message>" in body
-        assert PROCESSING_ERROR_REPLY in body
+        # Message générique dans la langue du client (« bghit 2000 sachet » : darija en lettres latines).
+        assert ElementTree.fromstring(body).findtext("Message") == render("error", "darija")
         assert secret not in body
         assert "RuntimeError" not in body
         assert "Erreur du webhook WhatsApp" in caplog.text

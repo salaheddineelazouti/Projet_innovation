@@ -20,6 +20,20 @@ from tecpap.db.database import (
     encode_text_list,
 )
 
+THREAD_TIMEOUT = 30
+"""Durée maximale (secondes) d'attente d'un fil d'exécution de test."""
+
+
+def join_thread(thread: threading.Thread) -> None:
+    """Attend la fin d'un fil ; un fil encore actif après :data:`THREAD_TIMEOUT` fait échouer le test.
+
+    Un verrou ou une connexion bloqué se voit alors dans le rapport du test, au lieu de suspendre
+    toute l'exécution.
+    """
+    thread.join(timeout=THREAD_TIMEOUT)
+    assert not thread.is_alive(), "le fil ne s'est pas terminé : verrou ou connexion bloqué"
+
+
 AUDITED_ORDER = {
     "entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat", "quantite": 3000,
     "source": "whatsapp", "whatsapp_from": "whatsapp:+212612345678", "message_sid": "SM-AUDIT-1",
@@ -53,7 +67,7 @@ class TestThreadConnections:
     def test_concurrent_orders_and_statistics(self, temp_db):
         errors: list[BaseException] = []
         stats: list[dict] = []
-        barrier = threading.Barrier(6)
+        barrier = threading.Barrier(6, timeout=THREAD_TIMEOUT)
 
         def work(worker: int) -> None:
             try:
@@ -70,7 +84,7 @@ class TestThreadConnections:
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join()
+            join_thread(thread)
 
         assert errors == []
         assert temp_db.get_stats()["total_orders"] == 90
@@ -90,7 +104,7 @@ class TestThreadConnections:
         for _ in range(5):
             thread = threading.Thread(target=touch)
             thread.start()
-            thread.join()
+            join_thread(thread)
         # Chaque ouverture ferme d'abord les connexions des fils terminés : restent celle du fil
         # principal et celle du dernier fil.
         assert temp_db.open_connection_count() == 2
@@ -112,7 +126,7 @@ class TestThreadConnections:
         temp_db.disconnect()
         assert temp_db.connection is None
         release.set()
-        thread.join()
+        join_thread(thread)
         assert results == [0]
         assert temp_db.connect() is True
 
@@ -120,7 +134,7 @@ class TestThreadConnections:
         other = []
         thread = threading.Thread(target=lambda: other.append(temp_db.connection))
         thread.start()
-        thread.join()
+        join_thread(thread)
         main = temp_db.connection
 
         assert temp_db.close_all() == 2
@@ -141,7 +155,7 @@ class TestThreadConnections:
         result = []
         thread = threading.Thread(target=lambda: result.append(db.connection))
         thread.start()
-        thread.join()
+        join_thread(thread)
         assert result[0] is not None
         db.close_all()
 
@@ -152,7 +166,7 @@ class TestThreadConnections:
         counts = []
         thread = threading.Thread(target=lambda: counts.append(db.get_stats()["total_orders"]))
         thread.start()
-        thread.join()
+        join_thread(thread)
         assert counts == [1]
         db.disconnect()
         assert db.connection is None

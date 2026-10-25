@@ -157,6 +157,9 @@ class TestParsing:
         assert load_settings().port == 8123
 
 
+PRODUCTION_KEY = "0123456789abcdef0123456789abcdef"  # 32 caractères : longueur minimale acceptée
+
+
 class TestProduction:
     """Règles propres à la production."""
 
@@ -165,19 +168,19 @@ class TestProduction:
             load_settings({"APP_ENV": "production"})
 
     def test_production_with_secret_key(self):
-        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": "une-cle-longue"})
+        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": PRODUCTION_KEY})
         assert settings.is_production
-        assert settings.secret_key == "une-cle-longue"
+        assert settings.secret_key == PRODUCTION_KEY
 
     def test_secret_key_override(self):
-        assert load_settings({"APP_ENV": "production"}, secret_key="cle").is_production
+        assert load_settings({"APP_ENV": "production"}, secret_key=PRODUCTION_KEY).is_production
 
     def test_secure_cookie_by_default_in_production(self):
-        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": "une-cle-longue"})
+        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": PRODUCTION_KEY})
         assert settings.session_cookie_secure is True
 
     def test_secure_cookie_can_be_disabled_in_production(self):
-        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": "une-cle-longue", "SESSION_COOKIE_SECURE": "0"})
+        settings = load_settings({"APP_ENV": "production", "SECRET_KEY": PRODUCTION_KEY, "SESSION_COOKIE_SECURE": "0"})
         assert settings.session_cookie_secure is False
 
 
@@ -232,8 +235,9 @@ class TestDocumentation:
     """Cohérence avec les fichiers du dépôt."""
 
     def test_env_example_lists_every_variable(self):
+        """Chaque variable figure dans .env.example, active ou commentée (« # NOM=valeur »)."""
         content = (ROOT / ".env.example").read_text(encoding="utf-8")
-        declared = set(re.findall(r"^([A-Z][A-Z0-9_]+)=", content, flags=re.MULTILINE))
+        declared = set(re.findall(r"^(?:# )?([A-Z][A-Z0-9_]+)=", content, flags=re.MULTILINE))
         assert declared == set(ENV_VARIABLES)
 
     def test_pyproject_version_matches_package(self):

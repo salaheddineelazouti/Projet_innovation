@@ -9,18 +9,23 @@ Traitement par type de média (voir :mod:`tecpap.processing.multimodal`) :
 
 Les médias ne sont téléchargés que depuis les serveurs de Twilio : l'adresse du média vient de
 la requête reçue et le téléchargement transmet les identifiants Twilio, il ne doit donc jamais
-viser un autre hôte.
+viser un autre hôte. Un média téléchargé est supprimé dès que son texte a été lu : seul ce texte
+est conservé (avec le message), pas les notes vocales, photos ni documents des clients.
+
+Les numéros des clients n'apparaissent jamais en entier dans le journal
+(:func:`tecpap.security.redaction.mask_sender`).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from twilio.http.http_client import TwilioHttpClient
 from twilio.rest import Client as TwilioClient
 
 from tecpap.config import Settings, load_settings
@@ -36,6 +41,7 @@ from tecpap.processing.multimodal import (
     base_mime,
     extension_for_mime,
 )
+from tecpap.security.redaction import mask_sender
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,7 @@ MESSAGE_TYPES = {
 FILE_PREFIXES = {"image": "image", "audio": "audio", "document": "doc"}
 
 DOWNLOAD_TIMEOUT_SECONDS = 30
+VERIFY_TIMEOUT_SECONDS = 5
 
 
 def is_allowed_media_url(url: str | None) -> bool:
@@ -82,7 +89,21 @@ def declared_message_type(media_type: str) -> str:
 
 
 def _timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    """Horodatage UTC des noms de fichiers des médias."""
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+
+
+def remove_media_file(filepath: str) -> bool:
+    """Supprime un média téléchargé ; renvoie ``True`` si le fichier a été supprimé."""
+    try:
+        os.remove(filepath)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        logger.warning("Suppression du média %s impossible", os.path.basename(filepath), exc_info=True)
+        return False
+    logger.debug("Média supprimé après lecture : %s", os.path.basename(filepath))
+    return True
 
 
 class WhatsAppReceiver:
@@ -121,6 +142,19 @@ class WhatsAppReceiver:
             logger.exception("Création du client Twilio impossible")
             return False
 
+    def verify_credentials(self) -> bool:
+        """Vrai si Twilio accepte les identifiants (lecture du compte, avec un délai de quelques secondes)."""
+        if not self.account_sid or not self.auth_token:
+            return False
+        try:
+            client = TwilioClient(self.account_sid, self.auth_token,
+                                  http_client=TwilioHttpClient(timeout=VERIFY_TIMEOUT_SECONDS))
+            client.api.accounts(self.account_sid).fetch()
+            return True
+        except Exception:
+            logger.warning("Identifiants Twilio refusés ou service injoignable", exc_info=True)
+            return False
+
     def send_reply(self, to_number: str, message: str) -> str:
         """Envoie un message WhatsApp et renvoie son identifiant Twilio (SID).
 
@@ -142,9 +176,9 @@ class WhatsAppReceiver:
                 to=to_whatsapp,
             )
         except Exception:
-            logger.exception("Échec de l'envoi WhatsApp à %s", to_whatsapp)
+            logger.exception("Échec de l'envoi WhatsApp à %s", mask_sender(to_whatsapp))
             raise
-        logger.info("Message WhatsApp envoyé à %s", to_whatsapp)
+        logger.info("Message WhatsApp envoyé à %s (SID %s)", mask_sender(to_whatsapp), msg.sid)
         return msg.sid
 
     # ------------------------------------------------------------------ messages reçus
@@ -168,7 +202,7 @@ class WhatsAppReceiver:
             "from": message_data.get("From", "").replace("whatsapp:", ""),
             "to": message_data.get("To", "").replace("whatsapp:", ""),
             "message_sid": message_data.get("MessageSid") or message_data.get("SmsMessageSid") or None,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "content": None,
             "media_url": None,
             "media_type": None,
@@ -201,7 +235,7 @@ class WhatsAppReceiver:
         return result
 
     def process_media(self, media_url: str | None, media_type: str) -> MediaText:
-        """Télécharge un média Twilio et le convertit en texte.
+        """Télécharge un média Twilio, le convertit en texte, puis supprime le fichier téléchargé.
 
         Le téléchargement est évité quand le média ne pourrait pas être lu : type non pris en
         charge, ou image et audio sans clé d'API pour les modèles de vision et de transcription.
@@ -218,7 +252,10 @@ class WhatsAppReceiver:
         filepath = self.download_media(media_url, filename)
         if not filepath:
             return MediaText(KIND_UNKNOWN, None, "téléchargement du média impossible")
-        return self.media.process_file(filepath, declared_mime=media_type)
+        try:
+            return self.media.process_file(filepath, declared_mime=media_type)
+        finally:
+            remove_media_file(filepath)
 
     @staticmethod
     def _apply_media_text(result: dict[str, Any], media_text: MediaText) -> None:

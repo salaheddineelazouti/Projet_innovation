@@ -5,46 +5,46 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- KPIs -->
+    <!-- Indicateurs -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <!-- Total Orders -->
+        <!-- Nombre total de commandes -->
         <div class="card p-5 hover:shadow-md transition-shadow">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-slate-500 text-xs font-medium uppercase tracking-wide">Total Commandes</p>
                     <p class="text-2xl font-bold text-slate-800 mt-1">{{ stats.total_orders }}</p>
-                    <p class="text-xs text-slate-400 mt-1"><i class="fas fa-calendar mr-1"></i>Toutes périodes</p>
+                    <p class="text-xs text-slate-400 mt-1"><i class="fas fa-calendar mr-1" aria-hidden="true"></i>Toutes périodes</p>
                 </div>
                 <div class="w-11 h-11 bg-brand-50 rounded-lg flex items-center justify-center">
-                    <i class="fas fa-shopping-cart text-brand-600"></i>
+                    <i class="fas fa-shopping-cart text-brand-600" aria-hidden="true"></i>
                 </div>
             </div>
         </div>
 
-        <!-- Pending -->
+        <!-- En attente -->
         <div class="card p-5 hover:shadow-md transition-shadow border-l-4 border-l-amber-500">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-slate-500 text-xs font-medium uppercase tracking-wide">En attente</p>
                     <p class="text-2xl font-bold text-amber-600 mt-1">{{ stats.pending_orders }}</p>
-                    <p class="text-xs text-amber-600 mt-1"><i class="fas fa-exclamation-circle mr-1"></i>À valider</p>
+                    <p class="text-xs text-amber-600 mt-1"><i class="fas fa-exclamation-circle mr-1" aria-hidden="true"></i>À valider</p>
                 </div>
                 <div class="w-11 h-11 bg-amber-50 rounded-lg flex items-center justify-center">
-                    <i class="fas fa-clock text-amber-600"></i>
+                    <i class="fas fa-clock text-amber-600" aria-hidden="true"></i>
                 </div>
             </div>
         </div>
 
-        <!-- Validated -->
+        <!-- Validées -->
         <div class="card p-5 hover:shadow-md transition-shadow border-l-4 border-l-emerald-500">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-slate-500 text-xs font-medium uppercase tracking-wide">Validées</p>
                     <p class="text-2xl font-bold text-emerald-600 mt-1">{{ stats.validated_orders }}</p>
-                    <p class="text-xs text-emerald-600 mt-1"><i class="fas fa-check-circle mr-1"></i>Confirmées</p>
+                    <p class="text-xs text-emerald-600 mt-1"><i class="fas fa-check-circle mr-1" aria-hidden="true"></i>Confirmées</p>
                 </div>
                 <div class="w-11 h-11 bg-emerald-50 rounded-lg flex items-center justify-center">
-                    <i class="fas fa-check text-emerald-600"></i>
+                    <i class="fas fa-check text-emerald-600" aria-hidden="true"></i>
                 </div>
             </div>
         </div>
@@ -55,26 +55,26 @@
                 <div>
                     <p class="text-slate-500 text-xs font-medium uppercase tracking-wide">Clients actifs</p>
                     <p class="text-2xl font-bold text-violet-600 mt-1">{{ stats.total_clients }}</p>
-                    <p class="text-xs text-slate-400 mt-1"><i class="fas fa-building mr-1"></i>Entreprises</p>
+                    <p class="text-xs text-slate-400 mt-1"><i class="fas fa-building mr-1" aria-hidden="true"></i>Entreprises</p>
                 </div>
                 <div class="w-11 h-11 bg-violet-50 rounded-lg flex items-center justify-center">
-                    <i class="fas fa-users text-violet-600"></i>
+                    <i class="fas fa-users text-violet-600" aria-hidden="true"></i>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Source Stats Row -->
+    <!-- Répartition par canal -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <!-- WhatsApp Stats -->
+        <!-- Commandes WhatsApp -->
         <div class="card p-5 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="font-bold text-slate-800 flex items-center gap-2">
-                    <i class="fab fa-whatsapp text-green-600"></i>
+                    <i class="fab fa-whatsapp text-green-600" aria-hidden="true"></i>
                     WhatsApp
                 </h3>
-                <a href="/whatsapp" class="text-green-600 hover:text-green-700 text-sm font-medium">
-                    Voir <i class="fas fa-arrow-right ml-1"></i>
+                <a href="{{ url_for('pages.whatsapp_page') }}" class="text-green-600 hover:text-green-700 text-sm font-medium">
+                    Voir <i class="fas fa-arrow-right ml-1" aria-hidden="true"></i>
                 </a>
             </div>
             <div class="grid grid-cols-3 gap-4">
@@ -93,15 +93,15 @@
             </div>
         </div>
 
-        <!-- Email Stats -->
+        <!-- Commandes reçues par email -->
         <div class="card p-5 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="font-bold text-slate-800 flex items-center gap-2">
-                    <i class="fas fa-envelope text-blue-600"></i>
+                    <i class="fas fa-envelope text-blue-600" aria-hidden="true"></i>
                     Emails
                 </h3>
-                <a href="/emails" class="text-blue-600 hover:text-blue-700 text-sm font-medium">
-                    Voir <i class="fas fa-arrow-right ml-1"></i>
+                <a href="{{ url_for('pages.orders_list', source='email') }}" class="text-blue-600 hover:text-blue-700 text-sm font-medium" id="emailOrdersLink">
+                    Voir <i class="fas fa-arrow-right ml-1" aria-hidden="true"></i>
                 </a>
             </div>
             <div class="grid grid-cols-3 gap-4">
@@ -121,17 +121,17 @@
         </div>
     </div>
 
-    <!-- Main Grid -->
+    <!-- Contenu principal -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Recent Orders -->
+        <!-- Commandes récentes -->
         <div class="lg:col-span-2 card overflow-hidden">
             <div class="p-5 border-b border-slate-100 flex items-center justify-between">
                 <div>
                     <h3 class="font-bold text-slate-800">Commandes récentes</h3>
                     <p class="text-sm text-slate-500">Les dernières commandes reçues</p>
                 </div>
-                <a href="/orders" class="text-brand-600 hover:text-brand-700 text-sm font-medium flex items-center gap-1">
-                    Voir tout <i class="fas fa-arrow-right"></i>
+                <a href="{{ url_for('pages.orders_list') }}" class="text-brand-600 hover:text-brand-700 text-sm font-medium flex items-center gap-1">
+                    Voir tout <i class="fas fa-arrow-right" aria-hidden="true"></i>
                 </a>
             </div>
             <div class="overflow-x-auto">
@@ -153,9 +153,9 @@
                             <td>
                                 <div class="flex items-center gap-3">
                                     <div class="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center">
-                                        <i class="fas fa-file-alt text-slate-500 text-sm"></i>
+                                        <i class="fas fa-file-alt text-slate-500 text-sm" aria-hidden="true"></i>
                                     </div>
-                                    <span class="font-semibold text-slate-800">{{ order.numero_commande or '#' ~ order.id }}</span>
+                                    <span class="font-semibold text-slate-800">{{ order|order_reference }}</span>
                                 </div>
                             </td>
                             <td>
@@ -168,34 +168,34 @@
                             </td>
                             <td class="text-slate-600">{{ order.produit_type or 'N/A' }}</td>
                             <td>
-                                <span class="font-semibold text-slate-800">{{ "{:,.0f}".format(order.quantite or 0) }}</span>
+                                <span class="font-semibold text-slate-800">{{ order.quantite|format_quantity }}</span>
                                 <span class="text-slate-400 text-sm">{{ order.unite or '' }}</span>
                             </td>
                             <td>
                                 {% if order.source == 'whatsapp' %}
                                 <span class="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
-                                    <i class="fab fa-whatsapp"></i> WhatsApp
+                                    <i class="fab fa-whatsapp" aria-hidden="true"></i> WhatsApp
                                 </span>
                                 {% else %}
                                 <span class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
-                                    <i class="fas fa-envelope"></i> Email
+                                    <i class="fas fa-envelope" aria-hidden="true"></i> Email
                                 </span>
                                 {% endif %}
                             </td>
                             <td>
                                 {% if order.statut == 'en_attente' %}
-                                <span class="badge badge-pending"><i class="fas fa-clock mr-1.5 text-xs"></i>En attente</span>
+                                <span class="badge badge-pending"><i class="fas fa-clock mr-1.5 text-xs" aria-hidden="true"></i>En attente</span>
                                 {% elif order.statut == 'validee' %}
-                                <span class="badge badge-validated"><i class="fas fa-check mr-1.5 text-xs"></i>Validée</span>
+                                <span class="badge badge-validated"><i class="fas fa-check mr-1.5 text-xs" aria-hidden="true"></i>Validée</span>
                                 {% elif order.statut == 'rejetee' %}
-                                <span class="badge badge-rejected"><i class="fas fa-times mr-1.5 text-xs"></i>Rejetée</span>
+                                <span class="badge badge-rejected"><i class="fas fa-times mr-1.5 text-xs" aria-hidden="true"></i>Rejetée</span>
                                 {% else %}
                                 <span class="badge bg-slate-100 text-slate-600">{{ order.statut }}</span>
                                 {% endif %}
                             </td>
                             <td>
-                                <a href="/orders/{{ order.id }}" class="text-brand-600 hover:text-brand-700 font-medium text-sm flex items-center gap-1">
-                                    <i class="fas fa-eye"></i> Voir
+                                <a href="{{ url_for('pages.order_detail', order_id=order.id) }}" class="text-brand-600 hover:text-brand-700 font-medium text-sm flex items-center gap-1">
+                                    <i class="fas fa-eye" aria-hidden="true"></i> Voir
                                 </a>
                             </td>
                         </tr>
@@ -203,7 +203,7 @@
                         <tr>
                             <td colspan="7" class="text-center py-12">
                                 <div class="text-slate-400">
-                                    <i class="fas fa-inbox text-4xl mb-3"></i>
+                                    <i class="fas fa-inbox text-4xl mb-3" aria-hidden="true"></i>
                                     <p class="font-medium">Aucune commande</p>
                                     <p class="text-sm mt-1">Commencez par traiter vos emails ou envoyez un message WhatsApp</p>
                                 </div>
@@ -215,12 +215,12 @@
             </div>
         </div>
 
-        <!-- Sidebar -->
+        <!-- Colonne latérale -->
         <div class="space-y-6">
-            <!-- Orders Trend Chart -->
+            <!-- Tendance des commandes -->
             <div class="card p-5">
                 <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <i class="fas fa-chart-line text-brand-500"></i>
+                    <i class="fas fa-chart-line text-brand-500" aria-hidden="true"></i>
                     Tendance (7 jours)
                 </h3>
                 <div style="position: relative; height: 200px; width: 100%;">
@@ -228,11 +228,11 @@
                 </div>
             </div>
 
-            <!-- Top Clients -->
+            <!-- Meilleurs clients -->
             <div class="card p-5">
                 <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <i class="fas fa-trophy text-amber-500"></i>
-                    Top Clients
+                    <i class="fas fa-trophy text-amber-500" aria-hidden="true"></i>
+                    Meilleurs clients
                 </h3>
                 <div class="space-y-3">
                     {% for client in top_clients %}
@@ -247,7 +247,7 @@
                                 <p class="text-xs text-slate-500">{{ client.total_orders or 0 }} commande{% if (client.total_orders or 0) > 1 %}s{% endif %}</p>
                             </div>
                         </div>
-                        <span class="text-sm font-semibold text-brand-600">{{ "{:,.0f}".format(client.total_quantity or 0) }}</span>
+                        <span class="text-sm font-semibold text-brand-600" title="Quantité totale commandée">{{ (client.total_quantity or 0)|format_quantity }}</span>
                     </div>
                     {% endif %}
                     {% else %}
@@ -256,10 +256,10 @@
                 </div>
             </div>
 
-            <!-- Top Products -->
+            <!-- Produits les plus commandés -->
             <div class="card p-5">
                 <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <i class="fas fa-box text-emerald-500"></i>
+                    <i class="fas fa-box text-emerald-500" aria-hidden="true"></i>
                     Produits populaires
                 </h3>
                 <div class="space-y-3">
@@ -281,15 +281,15 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+// Chart.js est chargé par base.html.
 document.addEventListener('DOMContentLoaded', function() {
-    // Trend chart
+    // Courbe du nombre de commandes reçues chaque jour
     const ctx = document.getElementById('trendChart');
     if (ctx) {
-        const labels = {{ trend_labels|safe }};
-        const data = {{ trend_data|safe }};
-        
+        const labels = {{ trend_labels|tojson }};
+        const data = {{ trend_data|tojson }};
+
         new Chart(ctx, {
             type: 'line',
             data: {

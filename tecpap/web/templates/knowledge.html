@@ -57,7 +57,7 @@
             </div>
             <div class="p-5 space-y-5">
                 <form method="get" action="{{ url_for('assistant.knowledge') }}" class="flex flex-col md:flex-row gap-3" id="searchForm">
-                    <input type="search" name="q" value="{{ query }}" maxlength="1000" class="input-pro" dir="auto" placeholder="Question d'un client, par exemple : vous avez des sacs avec poignées torsadées ?">
+                    <input type="search" name="q" aria-label="Question d'un client" value="{{ query }}" maxlength="1000" class="input-pro" dir="auto" placeholder="Question d'un client, par exemple : vous avez des sacs avec poignées torsadées ?">
                     <button type="submit" class="btn-primary justify-center"><i class="fas fa-search"></i>Rechercher</button>
                 </form>
 

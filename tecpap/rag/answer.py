@@ -4,9 +4,11 @@
 
 1. Question commerciale. Une question sur les prix, les délais, le stock, les remises, le
    paiement ou la quantité minimale de commande (:func:`is_commercial_question`, mots-clés en
-   français, anglais, darija et arabe) reçoit le message « l'équipe commerciale vous répond »,
-   sans recherche ni appel au modèle de langue : ces informations ne figurent pas dans la base
-   et un modèle risquerait de les inventer.
+   français, anglais, darija et arabe), ou un message qui cite lui-même un montant ou une durée
+   (« vos sachets sont à 0,20 dh, je confirme ? », « livrés en 2 jours, c'est ça ? »), reçoit le
+   message « l'équipe commerciale vous répond », sans recherche ni appel au modèle de langue :
+   ces informations ne figurent pas dans la base, un modèle risquerait de les inventer ou de
+   confirmer le chiffre avancé par le client.
 2. Recherche hybride (:meth:`tecpap.rag.retriever.KnowledgeBase.search`). Quand le meilleur
    score de pertinence des extraits trouvés (:func:`tecpap.rag.retriever.best_score`) est
    inférieur au seuil ``Settings.rag_min_score``, la réponse est « je n'ai pas cette
@@ -22,8 +24,9 @@
    (:func:`tecpap.security.guardrails.wrap_untrusted`).
 4. Contrôle de la réponse : filtre de sortie (:class:`tecpap.security.guardrails.OutputFilter` :
    canari, reprise de l'instruction système, secrets, coordonnées non autorisées), puis
-   vérification que chaque montant, durée ou pourcentage cité figure dans les extraits ; un
-   chiffre absent des extraits fait remplacer la réponse par le message de l'équipe commerciale.
+   vérification que chaque montant, durée ou pourcentage cité figure dans les extraits (jamais
+   dans la seule question du client) ; un chiffre absent des extraits fait remplacer la réponse
+   par le message de l'équipe commerciale.
 
 Sans modèle de langue disponible (pas de clé d'API, appel en échec ou réponse vide), la réponse
 cite brièvement le texte de l'extrait le plus pertinent (:func:`quote_excerpt`).
@@ -164,11 +167,25 @@ _COMMERCIAL_PATTERN = _pattern((
 ))
 
 
+# Montant avec devise ou durée cités dans un message : « 0,20 dh », « 15 dhs », « 2 jours », « 48h ».
+_COMMERCIAL_FIGURE_RE = re.compile(
+    r"(?<![\w.,])\d+(?:[.,]\d+)?\s*(?:dhs?|mad|dirhams?|درهم|دراهم|€|eur(?:os?)?|\$|usd|"
+    r"jours?|j|semaines?|mois|heures?|h|days?|weeks?|months?|hours?|يوم|أيام|ايام|أسبوع|أسابيع|اسابيع|ساعة|ساعات|"
+    r"شهر|أشهر|اشهر|iyam|nhar|simana|simanat)(?!\w)"
+    r"|(?:€|\$)\s*\d"
+)
+
+
 def is_commercial_question(text: str | None) -> bool:
-    """Vrai pour une question de prix, de délai, de stock, de remise, de paiement ou de quantité minimale."""
+    """Vrai pour une question de prix, de délai, de stock, de remise, de paiement ou de quantité minimale.
+
+    Un message qui cite un montant avec sa devise ou une durée est aussi commercial : l'assistant ne
+    confirme jamais un prix ou un délai avancé par le client.
+    """
     if not isinstance(text, str) or not text.strip():
         return False
-    return _COMMERCIAL_PATTERN.search(fold(text[:MAX_QUESTION_CHARS])) is not None
+    folded = fold(text[:MAX_QUESTION_CHARS])
+    return _COMMERCIAL_PATTERN.search(folded) is not None or _COMMERCIAL_FIGURE_RE.search(folded) is not None
 
 
 # ---------------------------------------------------------------- chiffres inventés
@@ -187,7 +204,11 @@ def _numbers(text: str) -> set[str]:
 
 
 def invented_figures(answer: str, sources: Iterable[str]) -> list[str]:
-    """Montants, durées et pourcentages de ``answer`` dont le nombre n'apparaît dans aucun texte de ``sources``."""
+    """Montants, durées et pourcentages de ``answer`` dont le nombre n'apparaît dans aucun texte de ``sources``.
+
+    ``sources`` ne contient que les extraits de la base de connaissances : un chiffre repris de la
+    question du client n'est pas pour autant une information de TECPAP.
+    """
     known: set[str] = set()
     for text in sources:
         known |= _numbers(text)
@@ -366,7 +387,7 @@ class KnowledgeAnswerer:
         if not check.allowed:
             return Answer(render("no_answer", lang), reason=REASON_BLOCKED, score=score,
                           blocked_reasons=tuple(check.reasons), model=choice.model)
-        invented = invented_figures(check.text, [hit.chunk.text for hit in hits] + [question])
+        invented = invented_figures(check.text, [hit.chunk.text for hit in hits])
         if invented:
             logger.warning("Réponse écartée : chiffres absents des extraits (%s)", ", ".join(invented[:5]))
             return Answer(render("sales_will_answer", lang), reason=REASON_COMMERCIAL, score=score, model=choice.model)

@@ -15,7 +15,13 @@ Connexion
 
     Après ``LOGIN_MAX_ATTEMPTS`` échecs depuis une même adresse IP en ``LOGIN_LOCKOUT_MINUTES``
     minutes, les tentatives de cette adresse sont refusées pendant ``LOGIN_LOCKOUT_MINUTES``
-    minutes (:class:`LoginRateLimiter`).
+    minutes (:class:`LoginRateLimiter`). Un second compteur porte sur l'identifiant saisi, toutes
+    adresses confondues (:class:`LoginDelayLimiter`) : au-delà de
+    :data:`ACCOUNT_FREE_ATTEMPTS_FACTOR` fois ``LOGIN_MAX_ATTEMPTS`` échecs sur la même période,
+    chaque nouvel essai doit attendre un délai qui double à chaque échec, sans dépasser
+    :data:`ACCOUNT_MAX_DELAY_SECONDS` secondes. Changer d'adresse IP ne permet donc pas d'essayer
+    des mots de passe sans limite, et personne ne peut bloquer durablement l'administrateur :
+    l'attente reste d'une minute au plus.
 
 Protection CSRF
     La falsification de requête intersite (CSRF, Cross-Site Request Forgery) consiste à faire
@@ -62,6 +68,14 @@ PUBLIC_BLUEPRINTS = frozenset({"webhooks"})
 CSRF_EXEMPT_BLUEPRINTS = frozenset({"webhooks"})
 
 LIMITER_EXTENSION_KEY = "tecpap_login_limiter"
+ACCOUNT_LIMITER_EXTENSION_KEY = "tecpap_account_login_limiter"
+
+ACCOUNT_FREE_ATTEMPTS_FACTOR = 4
+"""Échecs tolérés pour un identifiant avant ralentissement, en multiple de ``LOGIN_MAX_ATTEMPTS``."""
+
+ACCOUNT_MAX_DELAY_SECONDS = 60.0
+"""Attente maximale imposée entre deux essais sur un même identifiant."""
+
 _FORM_MIMETYPES = frozenset({"application/x-www-form-urlencoded", "multipart/form-data"})
 _MAX_NEXT_URL_LENGTH = 2048
 
@@ -140,9 +154,85 @@ class LoginRateLimiter:
         }
 
 
+class LoginDelayLimiter:
+    """Ralentit les essais de connexion sur une même clé (identifiant saisi), quelle que soit l'adresse.
+
+    Les ``free_attempts`` premiers échecs survenus en moins de ``window_seconds`` secondes ne
+    changent rien ; chaque échec suivant impose, avant l'essai d'après, une attente qui double
+    (2, 4, 8… secondes) sans dépasser ``max_delay`` secondes. Contrairement à un blocage, l'attente
+    reste courte : un tiers qui échoue volontairement ne peut pas empêcher l'administrateur de se
+    connecter, seulement le faire patienter. Une connexion réussie remet le compteur à zéro. Les
+    compteurs sont gardés en mémoire ; les méthodes peuvent être appelées depuis plusieurs fils.
+
+    Args:
+        free_attempts: nombre d'échecs tolérés sans attente.
+        window_seconds: période sur laquelle les échecs sont comptés.
+        max_delay: attente maximale entre deux essais, en secondes.
+        clock: horloge en secondes (``time.monotonic`` par défaut, remplaçable dans les tests).
+    """
+
+    PURGE_THRESHOLD = 1000
+
+    def __init__(self, free_attempts: int, window_seconds: float, max_delay: float = ACCOUNT_MAX_DELAY_SECONDS,
+                 clock: Callable[[], float] = time.monotonic):
+        if free_attempts < 0 or window_seconds <= 0 or max_delay <= 0:
+            raise ValueError("Paramètres du ralentissement des connexions invalides")
+        self.free_attempts = free_attempts
+        self.window_seconds = float(window_seconds)
+        self.max_delay = float(max_delay)
+        self._clock = clock
+        self._failures: dict[str, list[float]] = {}
+        self._next_allowed: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def retry_after(self, key: str) -> float:
+        """Secondes d'attente restantes avant le prochain essai sur ``key`` (0 quand l'essai est permis)."""
+        with self._lock:
+            until = self._next_allowed.get(key)
+            return max(0.0, until - self._clock()) if until is not None else 0.0
+
+    def register_failure(self, key: str) -> float:
+        """Compte un échec ; renvoie l'attente imposée avant l'essai suivant (0 dans la limite tolérée)."""
+        with self._lock:
+            now = self._clock()
+            self._purge(now)
+            recent = [moment for moment in self._failures.get(key, []) if now - moment < self.window_seconds]
+            recent.append(now)
+            self._failures[key] = recent
+            excess = len(recent) - self.free_attempts
+            if excess <= 0:
+                return 0.0
+            delay = min(self.max_delay, float(2 ** min(excess, 16)))
+            self._next_allowed[key] = now + delay
+            return delay
+
+    def reset(self, key: str) -> None:
+        """Oublie les échecs de ``key`` (après une connexion réussie)."""
+        with self._lock:
+            self._failures.pop(key, None)
+            self._next_allowed.pop(key, None)
+
+    def _purge(self, now: float) -> None:
+        if len(self._failures) < self.PURGE_THRESHOLD:
+            return
+        self._failures = {key: moments for key, moments in self._failures.items()
+                          if any(now - moment < self.window_seconds for moment in moments)}
+        self._next_allowed = {key: until for key, until in self._next_allowed.items() if until > now}
+
+
 def get_login_limiter() -> LoginRateLimiter:
-    """Limiteur des échecs de connexion de l'application Flask courante."""
+    """Limiteur des échecs de connexion par adresse IP de l'application Flask courante."""
     return current_app.extensions[LIMITER_EXTENSION_KEY]
+
+
+def get_account_limiter() -> LoginDelayLimiter:
+    """Ralentissement des essais par identifiant de l'application Flask courante."""
+    return current_app.extensions[ACCOUNT_LIMITER_EXTENSION_KEY]
+
+
+def account_key(username: str) -> str:
+    """Clé du ralentissement par identifiant : identifiant saisi, sans espaces en bordure ni casse."""
+    return username.strip().casefold()
 
 
 def client_ip() -> str:
@@ -262,13 +352,21 @@ def _log_startup_warnings(settings: Settings) -> None:
             "tableau de bord n'est possible. Générez une empreinte avec « python scripts/hash_password.py » "
             "puis renseignez ADMIN_PASSWORD_HASH dans le fichier .env."
         )
-    elif settings.auth_enabled and settings.admin_password_hash.count("$") < 2:
+    elif settings.auth_enabled and (settings.admin_password_hash.count("$") < 2
+                                    or settings.admin_password_hash.startswith(("'", '"'))):
         logger.warning(
             "ADMIN_PASSWORD_HASH ne ressemble pas à une empreinte produite par scripts/hash_password.py : "
             "la connexion échouera."
         )
     if settings.is_testing:
         return
+    if settings.is_production and settings.auth_enabled and not settings.trust_proxy_headers:
+        logger.warning(
+            "Production sans TRUST_PROXY_HEADERS : derrière un proxy inverse, toutes les requêtes semblent venir de "
+            "l'adresse du proxy, et le blocage après LOGIN_MAX_ATTEMPTS échecs s'applique alors à tous les "
+            "utilisateurs à la fois. Derrière un proxy, activez TRUST_PROXY_HEADERS et ne publiez le port de "
+            "l'application que pour le proxy (par exemple -p 127.0.0.1:5000:5000)."
+        )
     if not settings.auth_enabled:
         logger.warning("Authentification désactivée (AUTH_ENABLED=false) : le tableau de bord est accessible "
                        "sans connexion.")
@@ -292,6 +390,10 @@ def init_auth(app: Flask, settings: Settings) -> None:
     app.extensions[LIMITER_EXTENSION_KEY] = LoginRateLimiter(
         max_attempts=settings.login_max_attempts,
         lockout_seconds=settings.login_lockout_minutes * 60,
+    )
+    app.extensions[ACCOUNT_LIMITER_EXTENSION_KEY] = LoginDelayLimiter(
+        free_attempts=settings.login_max_attempts * ACCOUNT_FREE_ATTEMPTS_FACTOR,
+        window_seconds=settings.login_lockout_minutes * 60,
     )
     _log_startup_warnings(settings)
 

@@ -142,6 +142,10 @@ class TestSharedLLMClient:
         received = {}
 
         class RecordingProcessor:
+            mailbox_unreachable = False
+            remaining_emails = 0
+            failed_emails = 0
+
             def __init__(self, **kwargs):
                 received.update(kwargs)
 
@@ -396,8 +400,9 @@ class TestSecureDashboard:
     def test_process_emails_from_process_page(self, dashboard):
         token = _csrf_from_page(self._page(dashboard, "/process"))
         response = dashboard["client"].post("/api/process-emails", headers={"X-CSRF-Token": token})
-        assert response.status_code == 200
-        assert response.get_json()["orders_count"] == 0  # aucun identifiant Gmail dans la configuration de test
+        # Aucun identifiant Gmail dans la configuration de test : la boîte est injoignable.
+        assert response.status_code == 502
+        assert response.get_json()["success"] is False
 
     def test_logout_form(self, dashboard):
         html = self._page(dashboard, "/")

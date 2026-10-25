@@ -47,6 +47,19 @@ class TestNumbers:
     def test_quantity(self, value, expected):
         assert parse_llm_order({"quantite": value}) == {"quantite": expected}
 
+    @pytest.mark.parametrize("value, expected", [
+        ("tlata d alaf", 3000.0), ("3 d alaf", 3000.0), ("alf w khamsmya", 1500.0), ("تلاتة د الاف", 3000.0),
+        ("deux mille cinq cents", 2500.0), ("eighteen hundred", 1800.0), ("2 mille 500", 2500.0),
+        ("environ 800", 800.0),
+    ])
+    def test_quantity_written_in_words_or_approximately(self, value, expected):
+        assert parse_llm_order({"quantite": value}) == {"quantite": expected}
+
+    def test_unit_is_kept_as_written_then_normalized_by_the_rules(self):
+        parsed = parse_llm_order({"Quantité": "12", "Unité": " cartons "})
+        assert parsed == {"quantite": 12.0, "unite": "cartons"}
+        assert rules.normalize_order(parsed).data["unite"] == "carton"
+
     @pytest.mark.parametrize("value", ["beaucoup", "", "15/11/2026", "2000 à 3000", True, [], {}, float("nan"),
                                        float("inf"), None])
     def test_invalid_quantity_is_dropped(self, value):

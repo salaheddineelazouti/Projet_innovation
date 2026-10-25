@@ -59,10 +59,21 @@ class TestProducts:
     @pytest.mark.parametrize("product_id, keyword", [
         (1, "flat bottom bag"), (1, "sachiat"), (2, "without handles"), (2, "sac sos"), (2, "بدون مقابض"),
         (3, "flat handles"), (3, "مقابض مسطحة"), (4, "twisted handles"), (4, "mfetlin"), (4, "مقابض مفتولة"),
+        # produits décrits par la forme ou l'usage
+        (1, "pochette"), (1, "bread bag"), (1, "كيس الخبز"), (2, "pas de poignée"), (2, "من غير مقبض"),
+        (3, "tape handles"), (3, "أيدي مسطحة"), (4, "rope handles"), (4, "ficelle"), (4, "l7bel"), (4, "حبل"),
     ])
     def test_synonyms(self, product_id, keyword):
         product = catalog.get_product(product_id)
         assert any(keyword in words for words in product["keywords"].values())
+
+    def test_no_keyword_designates_two_products(self):
+        owners: dict[str, set[str]] = {}
+        for product in catalog.PRODUCTS:
+            for words in product["keywords"].values():
+                for word in words:
+                    owners.setdefault(word.casefold(), set()).add(product["code"])
+        assert {word: codes for word, codes in owners.items() if len(codes) > 1} == {}
 
     def test_english_keywords_by_language(self):
         assert "twisted handles" in catalog.product_keywords("en")["Sac fond carré avec poignées torsadées"]
@@ -114,9 +125,20 @@ class TestReorderPatterns:
     @pytest.mark.parametrize("language, pattern", [
         ("fr", "comme d'habitude"), ("fr", "renouvellement"), ("darija", "kif dima"), ("darija", "b7al l3ada"),
         ("ar", "كالعادة"), ("en", "as usual"),
+        # comparaison avec une commande passée, « même commande », verbe de répétition
+        ("fr", "comme le mois dernier"), ("fr", "refaire la commande"), ("darija", "kif l3ada"),
+        ("darija", "b7al l'mra li fatet"), ("ar", "نفس الكوموند"), ("ar", "مثل المرة السابقة"),
+        ("en", "same order as last month"), ("en", "repeat the last order"),
     ])
     def test_expected_patterns(self, language, pattern):
         assert pattern in catalog.REORDER_PATTERNS[language]
+
+    def test_patterns_are_trimmed_texts_in_the_script_of_their_language(self):
+        for language, patterns in catalog.REORDER_PATTERNS.items():
+            assert len(patterns) == len(set(patterns)), language
+            for pattern in patterns:
+                assert pattern == pattern.strip() and pattern, (language, pattern)
+                assert bool(ARABIC_LETTER.search(pattern)) == (language == "ar"), (language, pattern)
 
     def test_flat_list_has_no_duplicates(self):
         assert len(catalog.ALL_REORDER_PATTERNS) == len(set(catalog.ALL_REORDER_PATTERNS))

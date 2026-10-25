@@ -6,6 +6,7 @@ import json
 import re
 import sqlite3
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -31,6 +32,29 @@ CANARY_RE = re.compile(r"CNR-[0-9A-F]{12}")
 CLOSURE_TEXT = "Le fond du sac fond carré sans poignées est fermé par collage, sans agrafe ni ficelle."
 
 
+THREAD_TIMEOUT = 30
+"""Durée maximale (secondes) d'attente d'un fil d'exécution de test."""
+
+
+def join_thread(thread: threading.Thread) -> None:
+    """Attend la fin d'un fil ; un fil encore actif après :data:`THREAD_TIMEOUT` fait échouer le test.
+
+    Un verrou ou une connexion bloqué se voit alors dans le rapport du test, au lieu de suspendre
+    toute l'exécution.
+    """
+    thread.join(timeout=THREAD_TIMEOUT)
+    assert not thread.is_alive(), "le fil ne s'est pas terminé : verrou ou connexion bloqué"
+
+
+def plain_spaces(reply: BotReply) -> BotReply:
+    """Réponse dont les espaces insécables (milliers, unité) sont remplacées par des espaces ordinaires.
+
+    Les réponses écrivent « 3 000 pièces » avec une espace fine insécable entre les milliers et une
+    espace insécable avant l'unité (voir tecpap.formatting) ; les tests comparent le texte lisible.
+    """
+    return replace(reply, text=reply.text.replace("\u202f", " ").replace("\u00a0", " "))
+
+
 class Clock:
     def __init__(self):
         self.moment = datetime(2026, 10, 25, 9, 0, 0, tzinfo=timezone.utc)
@@ -53,8 +77,8 @@ class Chat:
     def send(self, text, *, sid: str | None = None, media_kind: str | None = None, wait: float = 5) -> BotReply:
         Chat.counter += 1
         self.clock.advance(seconds=wait)
-        return self.assistant.handle(self.sender, text, message_sid=sid or f"SM{Chat.counter:06d}",
-                                     media_kind=media_kind)
+        return plain_spaces(self.assistant.handle(self.sender, text, message_sid=sid or f"SM{Chat.counter:06d}",
+                                                  media_kind=media_kind))
 
 
 @pytest.fixture
@@ -170,9 +194,10 @@ class TestFrenchConversation:
 
         reply = chat.send("Pâtisserie Oulfa Délices")
         assert reply.state == "awaiting_confirmation"
-        assert reply.text == render("summary", "fr", lines=order_lines(
+        expected = render("summary", "fr", lines=order_lines(
             {"entreprise_cliente": "Pâtisserie Oulfa Délices", "type_produit": "Sachets fond plat", "quantite": 3000},
             "fr"))
+        assert reply.text == expected.replace("\u202f", " ").replace("\u00a0", " ")
         assert orders(db) == []
 
         reply = chat.send("Oui")
@@ -596,7 +621,7 @@ class TestDuplicatesAndRateLimit:
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join()
+            join_thread(thread)
         assert sum(not reply.silent for reply in replies) == 1
 
     def test_rate_limit(self, db, make, tmp_path, clock):
@@ -927,8 +952,8 @@ class TestExtractor:
                     "prix_unitaire": "abc", "statut": "validee", "whatsapp_from": BOB}
 
         chat = Chat(make(extractor=extract), ALICE, clock)
-        reply = chat.send("Commande de sacs premium")
-        assert received == [("Commande de sacs premium", ALICE)]
+        reply = chat.send("Commande de sacs premium, Chocolaterie")
+        assert received == [("Commande de sacs premium, Chocolaterie", ALICE)]
         assert "Sac fond carré avec poignées torsadées" in reply.text and "10 000 pièces" in reply.text
         chat.send("oui")
         order = orders(db)[0]
@@ -1041,7 +1066,7 @@ class TestRobustness:
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join()
+            join_thread(thread)
         assert all(reply.intent == "greeting" for reply in replies)
         assert len(stored_messages(assistant)) == 16
 

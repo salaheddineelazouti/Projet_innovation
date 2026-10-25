@@ -1,14 +1,16 @@
 """Tests du programme d'évaluation ``evaluation/run_eval.py``.
 
-Le programme est exécuté hors ligne sur les deux partitions du corpus annoté du dépôt (jeu de
-développement et jeu de test tenu à l'écart) et sur de petits jeux écrits dans le dossier
-temporaire du test. Les rapports sont écrits dans ``tmp_path`` : les fichiers de
-``evaluation/results/`` ne sont jamais modifiés. L'évaluation en ligne est exercée avec une
-doublure du client des modèles de langue, sans réseau ni clé d'API.
+Le programme est exécuté hors ligne sur le jeu de développement du dépôt et sur de petits jeux
+écrits dans le dossier temporaire du test ; les chemins de partitions multiples (jeu de test,
+synthèse des deux partitions) sont exercés sur ces petits jeux. Les rapports sont écrits dans
+``tmp_path`` : les fichiers de ``evaluation/results/`` ne sont jamais modifiés. L'évaluation en
+ligne est exercée avec une doublure du client des modèles de langue, sans réseau ni clé d'API.
 
-Les contrôles portant sur le jeu de test sont structurels (schéma, effectifs, cohérence des
-rapports, absence de messages communs avec le jeu de développement) : leurs messages d'échec ne
-citent aucun texte de ce jeu.
+Aucun test ne calcule de mesure sur le jeu de test tenu à l'écart
+(``evaluation/dataset/messages_test.jsonl``). Ce fichier n'est lu que par les contrôles de
+structure de :class:`TestHeldOutFile` (schéma, identifiants, absence de message commun avec le
+jeu de développement), dont les messages d'échec ne donnent que des effectifs ; ces contrôles
+sont ignorés quand le fichier est absent.
 """
 
 from __future__ import annotations
@@ -31,11 +33,20 @@ from tests.fakes import FakeLLMClient
 ROOT = Path(__file__).resolve().parent.parent
 RUN_EVAL_PATH = ROOT / "evaluation" / "run_eval.py"
 DATASET_PATH = ROOT / "evaluation" / "dataset" / "messages.jsonl"
+COMPLEMENT_PATH = ROOT / "evaluation" / "dataset" / "messages_dev_complement.jsonl"
+DEV_PATHS = (DATASET_PATH, COMPLEMENT_PATH)
 TEST_DATASET_PATH = ROOT / "evaluation" / "dataset" / "messages_test.jsonl"
 RUN_DATE = date(2026, 1, 15)
 OTHER_DATE = date(2026, 3, 2)
 REPORT_FILES = ("rapport_hors_ligne_dev.md", "rapport_hors_ligne_dev.json", "rapport_hors_ligne_test.md",
                 "rapport_hors_ligne_test.json", "synthese.md")
+DEV_REPORT_FILES = ("rapport_hors_ligne_dev.json", "rapport_hors_ligne_dev.md")
+
+LANGUAGE_PREFIX = r"(?:fr|en|ar|darija-ar|darija-lat)-\d{3}"
+"""Identifiant d'un élément : préfixe de langue et numéro sur trois chiffres (``evaluation/README.md``, section 3)."""
+COMPLEMENT_ID_PREFIX = "dev2-"
+TEST_ID_PREFIX = "t2-"
+"""Préfixe des identifiants du jeu de test tenu à l'écart (``evaluation/README.md``, section 9.3)."""
 
 
 def _load_run_eval():
@@ -77,6 +88,23 @@ def write_dataset(path: Path, items: list[dict]) -> Path:
     return path
 
 
+def offline_report_of(path: Path, **options) -> dict:
+    """Rapport hors ligne d'un fichier, sans détecteur d'intention."""
+    options.setdefault("intent_loader", no_intents)
+    return run_eval.build_offline_report(run_eval.load_split([path]), run_date=RUN_DATE, **options)
+
+
+def json_keys_and_lists(value, key=None):
+    """Couples (clé, valeur) de toutes les entrées d'un rapport JSON, à toutes les profondeurs."""
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            yield child_key, child
+            yield from json_keys_and_lists(child, child_key)
+    elif isinstance(value, list):
+        for child in value:
+            yield from json_keys_and_lists(child, key)
+
+
 SMALL_ITEMS = [
     order_item("fr-901", "Bonjour, c'est la Boulangerie Atlas, il me faudrait 5 000 sachets fond plat svp",
                product="Sachets fond plat", quantity=5000, client="Boulangerie Atlas"),
@@ -95,21 +123,25 @@ def small_dataset(tmp_path) -> Path:
     return write_dataset(tmp_path / "petit.jsonl", SMALL_ITEMS)
 
 
-@pytest.fixture(scope="module", params=run_eval.SPLITS)
-def split(request) -> str:
-    """Partition du corpus du dépôt : chaque test qui en dépend est exécuté sur les deux."""
-    return request.param
+@pytest.fixture(scope="module")
+def dev_files():
+    """Fichiers du jeu de développement du dépôt (le jeu de test tenu à l'écart n'est jamais évalué ici)."""
+    return run_eval.load_split(run_eval.SPLIT_DATASETS["dev"])
 
 
 @pytest.fixture(scope="module")
-def dataset_items(split):
-    return run_eval.load_dataset(run_eval.SPLIT_DATASETS[split])
+def dataset_items(dev_files):
+    return run_eval.split_items(dev_files)
 
 
 @pytest.fixture(scope="module")
-def offline_report(dataset_items, split):
-    return run_eval.build_offline_report(dataset_items, dataset_path=run_eval.SPLIT_DATASETS[split],
-                                         run_date=RUN_DATE, split=split, intent_loader=no_intents)
+def dev_items(dataset_items):
+    return dataset_items
+
+
+@pytest.fixture(scope="module")
+def offline_report(dev_files):
+    return run_eval.build_offline_report(dev_files, run_date=RUN_DATE, split="dev", intent_loader=no_intents)
 
 
 @pytest.fixture(scope="module")
@@ -118,37 +150,42 @@ def offline_markdown(offline_report):
 
 
 @pytest.fixture(scope="module")
-def dev_items():
-    return run_eval.load_dataset(DATASET_PATH)
-
-
-@pytest.fixture(scope="module")
 def full_run(tmp_path_factory):
-    """Exécution complète de la ligne de commande sur les deux partitions du dépôt, dans un dossier temporaire."""
+    """Exécution complète de la ligne de commande sur le jeu de développement du dépôt, dans un dossier temporaire."""
     output_dir = tmp_path_factory.mktemp("rapports")
-    code = run_eval.main(["--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()])
-    markdown = {split: (output_dir / f"rapport_hors_ligne_{split}.md").read_text(encoding="utf-8")
-                for split in run_eval.SPLITS}
-    reports = {split: json.loads((output_dir / f"rapport_hors_ligne_{split}.json").read_text(encoding="utf-8"))
-               for split in run_eval.SPLITS}
-    synthesis = (output_dir / "synthese.md").read_text(encoding="utf-8")
-    return SimpleNamespace(code=code, output_dir=output_dir, markdown=markdown, reports=reports, synthesis=synthesis)
+    code = run_eval.main(["--split", "dev", "--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()])
+    markdown = (output_dir / "rapport_hors_ligne_dev.md").read_text(encoding="utf-8")
+    report = json.loads((output_dir / "rapport_hors_ligne_dev.json").read_text(encoding="utf-8"))
+    return SimpleNamespace(code=code, output_dir=output_dir, markdown=markdown, report=report)
 
 
-def small_split_datasets(tmp_path: Path, test_items: list[dict] | None = None) -> dict[str, Path]:
-    """Petits fichiers des deux partitions, à substituer à ``run_eval.SPLIT_DATASETS``."""
-    return {"dev": write_dataset(tmp_path / "dev.jsonl", SMALL_ITEMS),
-            "test": write_dataset(tmp_path / "test.jsonl", test_items if test_items is not None else SMALL_ITEMS[:3])}
+def small_split_datasets(tmp_path: Path, test_items: list[dict] | None = None) -> dict[str, tuple[Path, ...]]:
+    """Petits fichiers des deux partitions, à substituer à ``run_eval.SPLIT_DATASETS``.
+
+    Le jeu de développement compte deux fichiers (trois et deux éléments), le jeu de test un seul.
+    """
+    return {"dev": (write_dataset(tmp_path / "dev_a.jsonl", SMALL_ITEMS[:3]),
+                    write_dataset(tmp_path / "dev_b.jsonl", SMALL_ITEMS[3:])),
+            "test": (write_dataset(tmp_path / "test.jsonl", test_items if test_items is not None else SMALL_ITEMS[:3]),)}
 
 
 # ---------------------------------------------------------------- lecture du jeu
 
 class TestLoadDataset:
-    def test_repository_dataset_loads_every_line(self, dataset_items, split):
-        path = run_eval.SPLIT_DATASETS[split]
-        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        assert len(dataset_items) == len(lines)
+    def test_repository_dataset_loads_every_line(self, dev_files, dataset_items):
+        assert [dataset_file.path for dataset_file in dev_files] == list(DEV_PATHS)
+        for dataset_file in dev_files:
+            lines = [line for line in dataset_file.path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            assert len(dataset_file.items) == len(lines)
+        assert len(dataset_items) == sum(len(dataset_file.items) for dataset_file in dev_files)
         assert len({item.id for item in dataset_items}) == len(dataset_items)
+
+    def test_repository_identifiers_follow_the_documented_form(self, dev_files):
+        main_file, complement = dev_files
+        assert all(re.fullmatch(LANGUAGE_PREFIX, item.id) for item in main_file.items)
+        assert all(item.id.startswith(COMPLEMENT_ID_PREFIX)
+                   and re.fullmatch(LANGUAGE_PREFIX, item.id.removeprefix(COMPLEMENT_ID_PREFIX))
+                   for item in complement.items)
 
     def test_repository_labels_use_the_documented_vocabulary(self, dataset_items):
         for item in dataset_items:
@@ -169,15 +206,8 @@ class TestLoadDataset:
 
     def test_split_files(self):
         assert run_eval.SPLITS == ("dev", "test")
-        assert run_eval.SPLIT_DATASETS == {"dev": DATASET_PATH, "test": TEST_DATASET_PATH}
-
-    def test_test_split_shares_no_message_with_the_development_split(self, dev_items):
-        test_items = run_eval.load_dataset(TEST_DATASET_PATH)
-        shared_ids = len({item.id for item in dev_items} & {item.id for item in test_items})
-        shared_texts = len({run_eval.comparable_name(item.text) for item in dev_items}
-                           & {run_eval.comparable_name(item.text) for item in test_items})
-        unprefixed = sum(not item.id.startswith("test-") for item in test_items)
-        assert (shared_ids, shared_texts, unprefixed) == (0, 0, 0)
+        assert run_eval.SPLIT_DATASETS == {"dev": DEV_PATHS, "test": (TEST_DATASET_PATH,)}
+        assert run_eval.DETAILED_SPLITS == {"dev"}
 
     @pytest.mark.parametrize(("identifier", "written"), [("fr-001", "unités"), ("fr-010", "pièces")])
     def test_unit_written_by_the_client_is_the_label(self, dev_items, identifier, written):
@@ -249,6 +279,102 @@ class TestLoadDataset:
     def test_missing_file_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             run_eval.load_dataset(tmp_path / "absent.jsonl")
+        with pytest.raises(FileNotFoundError) as error:
+            run_eval.load_split([write_dataset(tmp_path / "a.jsonl", SMALL_ITEMS[:1]), tmp_path / "absent.jsonl"])
+        assert error.value.filename == str(tmp_path / "absent.jsonl")
+
+    def test_split_files_are_read_in_order(self, tmp_path):
+        first = write_dataset(tmp_path / "a.jsonl", SMALL_ITEMS[:2])
+        second = write_dataset(tmp_path / "b.jsonl", SMALL_ITEMS[2:])
+        files = run_eval.load_split([first, second])
+        assert [dataset_file.path for dataset_file in files] == [first, second]
+        assert [len(dataset_file.items) for dataset_file in files] == [2, 3]
+        assert [item.id for item in run_eval.split_items(files)] == [item["id"] for item in SMALL_ITEMS]
+
+    def test_identifier_shared_by_two_files_is_rejected(self, tmp_path):
+        first = write_dataset(tmp_path / "a.jsonl", SMALL_ITEMS[:2])
+        second = write_dataset(tmp_path / "b.jsonl", [SMALL_ITEMS[2], SMALL_ITEMS[1]])
+        with pytest.raises(run_eval.DatasetError) as error:
+            run_eval.load_split([first, second])
+        assert str(error.value) == (f"{second.resolve().as_posix()} : ligne 2 : identifiant 'fr-902' "
+                                    "déjà utilisé dans a.jsonl")
+
+    def test_split_error_names_the_file(self, tmp_path):
+        good = write_dataset(tmp_path / "a.jsonl", SMALL_ITEMS[:1])
+        bad = tmp_path / "b.jsonl"
+        bad.write_text("{faux\n", encoding="utf-8")
+        with pytest.raises(run_eval.DatasetError, match=r"b\.jsonl : ligne 1 : JSON invalide"):
+            run_eval.load_split([good, bad])
+
+    def test_split_without_file_is_rejected(self):
+        with pytest.raises(run_eval.DatasetError, match="aucun fichier"):
+            run_eval.load_split([])
+
+    def test_item_representation_hides_text_and_labels(self, small_dataset):
+        item = run_eval.load_dataset(small_dataset)[0]
+        text = repr(item)
+        assert "fr-901" in text
+        assert "Boulangerie" not in text and "expected" not in text and "5000" not in text
+        assert "Boulangerie" not in repr(run_eval.load_split([small_dataset])[0])
+
+
+SHORT_MESSAGE_WORDS = 3
+"""Nombre maximal de mots d'une formule courte (« oui », « ok merci », « wakha safi »).
+
+Une formule courte peut figurer dans les deux partitions sans que le jeu de test ait été copié du
+jeu de développement : le contrôle de recouvrement ne porte que sur les messages plus longs.
+"""
+
+
+def distinctive_texts(items) -> set[str]:
+    """Textes normalisés (:func:`run_eval.comparable_name`) des messages plus longs qu'une formule courte."""
+    texts = {run_eval.comparable_name(item.text) for item in items}
+    return {text for text in texts if len(text.split()) > SHORT_MESSAGE_WORDS}
+
+
+class HeldOutSummary:
+    """Identifiants et textes normalisés du jeu de test tenu à l'écart.
+
+    La représentation ne donne que l'effectif : un échec affiche les arguments du test, jamais le
+    contenu du jeu.
+    """
+
+    def __init__(self, items) -> None:
+        self.size = len(items)
+        self.ids = frozenset(item.id for item in items)
+        self.texts = frozenset(distinctive_texts(items))
+
+    def __repr__(self) -> str:
+        return f"<jeu de test tenu à l'écart : {self.size} éléments>"
+
+
+@pytest.fixture(scope="module")
+def held_out():
+    if not TEST_DATASET_PATH.is_file():
+        pytest.skip("evaluation/dataset/messages_test.jsonl absent : contrôles du jeu de test ignorés")
+    return HeldOutSummary(run_eval.split_items(run_eval.load_split([TEST_DATASET_PATH])))
+
+
+class TestHeldOutFile:
+    """Contrôles de structure du jeu de test tenu à l'écart, sans aucune mesure.
+
+    Les assertions ne portent que sur des effectifs : un échec ne montre ni texte, ni étiquette,
+    ni identifiant de ce jeu.
+    """
+
+    def test_held_out_file_follows_the_schema(self, held_out):
+        assert held_out.size > 0
+
+    def test_held_out_identifiers_use_their_own_prefix(self, held_out):
+        unprefixed = sum(not identifier.startswith(TEST_ID_PREFIX) for identifier in held_out.ids)
+        malformed = sum(not re.fullmatch(LANGUAGE_PREFIX, identifier.removeprefix(TEST_ID_PREFIX))
+                        for identifier in held_out.ids)
+        assert (unprefixed, malformed) == (0, 0)
+
+    def test_held_out_file_shares_no_message_with_the_development_split(self, held_out, dev_items):
+        shared_ids = len({item.id for item in dev_items} & held_out.ids)
+        shared_texts = len(distinctive_texts(dev_items) & held_out.texts)
+        assert (shared_ids, shared_texts) == (0, 0)
 
 
 # ---------------------------------------------------------------- comparaison des valeurs
@@ -412,16 +538,36 @@ def assert_binary(section: dict, positives: int) -> None:
 
 
 class TestOfflineReportConsistency:
-    def test_dataset_counts_add_up(self, offline_report, dataset_items, split):
+    def test_dataset_counts_add_up(self, offline_report, dataset_items):
         dataset = offline_report["dataset"]
-        assert offline_report["split"] == split
+        assert offline_report["split"] == "dev"
+        assert offline_report["item_details"] is True
         assert dataset["items"] == len(dataset_items)
         assert dataset["email"] + dataset["whatsapp"] == dataset["items"]
-        for key in ("items", "email", "whatsapp", "orders", "reorders", "injections", "traps"):
+        for key in run_eval.COUNT_KEYS:
             assert sum(counts[key] for counts in dataset["by_language"].values()) == dataset[key]
+            assert sum(entry[key] for entry in dataset["files"]) == dataset[key]
         assert dataset["orders"] == sum(item.is_order for item in dataset_items)
-        assert dataset["path"] == f"evaluation/dataset/{run_eval.SPLIT_DATASETS[split].name}"
-        assert re.fullmatch(r"[0-9a-f]{64}", dataset["sha256"])
+        assert [entry["path"] for entry in dataset["files"]] == [
+            "evaluation/dataset/messages.jsonl", "evaluation/dataset/messages_dev_complement.jsonl"]
+        assert [entry["sha256"] for entry in dataset["files"]] == [run_eval.file_sha256(path) for path in DEV_PATHS]
+
+    def test_each_file_has_its_own_summary(self, offline_report, dev_files):
+        by_file = offline_report["by_file"]
+        assert [(entry["path"], entry["items"]) for entry in by_file] == [
+            (run_eval.display_path(dataset_file.path), len(dataset_file.items)) for dataset_file in dev_files]
+        for index, entry in enumerate(offline_report["summary"]):
+            parts = [file_entry["summary"][index] for file_entry in by_file]
+            assert all((part["component"], part["measure"]) == (entry["component"], entry["measure"])
+                       for part in parts)
+            if entry["numerator"] is not None:
+                assert sum(part["numerator"] for part in parts) == entry["numerator"]
+                assert sum(part["denominator"] for part in parts) == entry["denominator"]
+
+    def test_single_file_report_has_no_per_file_summary(self, small_dataset):
+        report = offline_report_of(small_dataset)
+        assert "by_file" not in report
+        assert len(report["dataset"]["files"]) == 1
 
     def test_language_section(self, offline_report):
         section = offline_report["language"]
@@ -502,6 +648,12 @@ class TestOfflineReportConsistency:
                            "items": offline_report["dataset"]["items"]}
         assert offline_report["summary"][-1]["note"] == run_eval.UNAVAILABLE
 
+    def test_development_report_lists_the_errors(self, offline_report):
+        language, injection = offline_report["language"], offline_report["injection"]
+        assert isinstance(language["errors"], list) and isinstance(language["reply_errors"], list)
+        assert isinstance(injection["false_positives"], list) and isinstance(injection["false_negatives"], list)
+        assert set(injection["max_legitimate_score"]) == {"id", "score"}
+
 
 # ---------------------------------------------------------------- rapport Markdown
 
@@ -523,10 +675,19 @@ def cell_count(line: str) -> int:
     return len(re.findall(r"(?<!\\)\|", line)) - 1
 
 
+def section_of(markdown: str, title: str) -> str:
+    """Texte d'une section numérotée de premier niveau (« ## N. titre »), jusqu'à la section suivante."""
+    match = re.search(rf"^## \d+\. {re.escape(title)}\n", markdown, re.MULTILINE)
+    assert match, title
+    following = re.search(r"^## \d+\. ", markdown[match.end():], re.MULTILINE)
+    return markdown[match.start():match.end() + following.start()] if following else markdown[match.start():]
+
+
 class TestOfflineMarkdown:
     def test_numbered_sections_follow_each_other(self, offline_markdown):
         numbers = [int(match) for match in re.findall(r"^## (\d+)\. ", offline_markdown, re.MULTILINE)]
-        assert numbers == list(range(1, 9))
+        # Huit sections, plus la synthèse par fichier d'une partition de plusieurs fichiers.
+        assert numbers == list(range(1, 10))
         current = 0
         for line in offline_markdown.splitlines():
             if match := re.match(r"^## (\d+)\. ", line):
@@ -544,14 +705,31 @@ class TestOfflineMarkdown:
             assert re.fullmatch(r"\|( ---:? \|)+", rows[1])
             assert all(cell_count(row) == width for row in rows), rows[0]
 
-    def test_header_gives_split_date_dataset_and_size(self, offline_markdown, offline_report, split):
-        label = run_eval.split_label(split)
+    def test_header_gives_split_date_dataset_and_size(self, offline_markdown, offline_report):
+        label = run_eval.split_label("dev")
         assert offline_markdown.startswith(f"# Évaluation hors ligne de l'analyse des messages clients : {label}\n")
-        assert f"Ce rapport porte sur le {label} (`{split}`). {run_eval.SPLIT_ROLES[split]}" in offline_markdown
-        assert f"| Partition | `{split}` |" in offline_markdown
+        assert f"Ce rapport porte sur le {label} (`dev`). {run_eval.SPLIT_ROLES['dev']}" in offline_markdown
+        assert run_eval.AGGREGATE_ONLY_NOTE not in offline_markdown
+        assert "| Partition | `dev` |" in offline_markdown
         assert f"| Date de l'exécution | {RUN_DATE.isoformat()} |" in offline_markdown
+        assert "| Fichiers du jeu | 2 |" in offline_markdown
         assert f"| Éléments du jeu | {offline_report['dataset']['items']} |" in offline_markdown
-        assert f"`{offline_report['dataset']['sha256']}`" in offline_markdown
+        for entry in offline_report["dataset"]["files"]:
+            assert f"| `{entry['path']}` | {entry['items']} | `{entry['sha256']}` |" in offline_markdown
+
+    def test_dataset_section_gives_the_counts_of_each_file(self, offline_markdown, offline_report):
+        section = section_of(offline_markdown, "Jeu de données")
+        for entry in offline_report["dataset"]["files"]:
+            cells = " | ".join(str(entry[key]) for key in run_eval.COUNT_KEYS)
+            assert f"| `{entry['path']}` | {cells} |" in section
+
+    def test_per_file_summary_carries_the_json_numbers(self, offline_markdown, offline_report):
+        section = section_of(offline_markdown, "Synthèse par fichier")
+        assert "`messages.jsonl`" in section and "`messages_dev_complement.jsonl`" in section
+        first, second = (entry["summary"] for entry in offline_report["by_file"])
+        for left, right in zip(first, second, strict=True):
+            cells = [left["component"], left["measure"], *run_eval._split_cells(left), *run_eval._split_cells(right)]
+            assert "| " + " | ".join(cells) + " |" in section
 
     def test_unit_comparison_follows_the_written_unit(self, offline_markdown):
         assert "Égalité exacte avec l'unité écrite par le client : `pièces`" in offline_markdown
@@ -581,22 +759,25 @@ class TestOfflineMarkdown:
             assert row in offline_markdown
 
     def test_unavailable_intents_are_reported(self, offline_markdown):
-        section = offline_markdown[offline_markdown.index("## 8. Détection des intentions"):]
+        section = section_of(offline_markdown, "Détection des intentions")
         assert "Section non disponible : raison de test." in section
+
+    def test_development_report_lists_misclassified_items(self, offline_markdown):
+        assert "Éléments mal classés" in section_of(offline_markdown, "Détection de la langue")
+        assert "Erreurs par champ" in section_of(offline_markdown, "Extraction par règles des commandes")
+        assert "| Mesure | Score | Élément |" in section_of(offline_markdown, "Détection des tentatives d'injection")
 
     def test_report_does_not_talk_about_its_own_writing(self, offline_markdown):
         forbidden = r"\b(?:désormais|nouveau|nouvelle|maintenant|corrigé|renuméroté|à venir|comme convenu)\b"
         assert not re.search(forbidden, offline_markdown, re.IGNORECASE)
 
-    def test_rendering_is_deterministic(self, dataset_items, offline_report, offline_markdown, split):
-        again = run_eval.build_offline_report(dataset_items, dataset_path=run_eval.SPLIT_DATASETS[split],
-                                              run_date=RUN_DATE, split=split, intent_loader=no_intents)
+    def test_rendering_is_deterministic(self, dev_files, offline_report, offline_markdown):
+        again = run_eval.build_offline_report(dev_files, run_date=RUN_DATE, split="dev", intent_loader=no_intents)
         assert again == offline_report
         assert run_eval.render_offline_markdown(again) == offline_markdown
 
-    def test_only_the_run_date_changes_between_runs(self, dataset_items, offline_report, offline_markdown, split):
-        later = run_eval.build_offline_report(dataset_items, dataset_path=run_eval.SPLIT_DATASETS[split],
-                                              run_date=OTHER_DATE, split=split, intent_loader=no_intents)
+    def test_only_the_run_date_changes_between_runs(self, dev_files, offline_report, offline_markdown):
+        later = run_eval.build_offline_report(dev_files, run_date=OTHER_DATE, split="dev", intent_loader=no_intents)
         assert {key for key in later if later[key] != offline_report[key]} == {"run_date"}
         changed = [(old, new) for old, new in zip(offline_markdown.splitlines(),
                                                   run_eval.render_offline_markdown(later).splitlines(), strict=True)
@@ -610,9 +791,7 @@ class TestOfflineMarkdown:
 class TestErrorsAreListed:
     @pytest.fixture
     def report(self, small_dataset):
-        items = run_eval.load_dataset(small_dataset)
-        return run_eval.build_offline_report(items, dataset_path=small_dataset, run_date=RUN_DATE,
-                                             intent_loader=no_intents)
+        return offline_report_of(small_dataset)
 
     def test_language_error(self, report):
         assert report["language"]["errors"][0]["id"] == "fr-903"
@@ -641,8 +820,7 @@ class TestErrorsAreListed:
 
     def test_reply_language_error(self, tmp_path):
         path = write_dataset(tmp_path / "jeu.jsonl", [make_item("fr-911", "Bonjour, merci beaucoup", reply_language="ar")])
-        items = run_eval.load_dataset(path)
-        report = run_eval.build_offline_report(items, dataset_path=path, run_date=RUN_DATE, intent_loader=no_intents)
+        report = offline_report_of(path)
         assert report["language"]["code"]["correct"] == 1
         assert report["language"]["reply_errors"] == [
             {"id": "fr-911", "language": "fr", "expected": "ar", "obtained": "fr"}]
@@ -650,8 +828,7 @@ class TestErrorsAreListed:
 
     def test_dataset_without_injection_or_order(self, tmp_path):
         path = write_dataset(tmp_path / "jeu.jsonl", [make_item("fr-912", "Bonjour")])
-        items = run_eval.load_dataset(path)
-        report = run_eval.build_offline_report(items, dataset_path=path, run_date=RUN_DATE, intent_loader=no_intents)
+        report = offline_report_of(path)
         injection = report["injection"]
         assert injection["min_injection_score"] is None
         assert injection["recall"] is None and injection["precision"] is None
@@ -665,6 +842,110 @@ class TestErrorsAreListed:
         entry = report["language"]["by_language"]["ar"]["code"]
         assert entry == {"correct": 0, "total": 0, "rate": None}
         assert "| `ar` | 0 | 0 | n.d. | 0 | n.d. |" in run_eval.render_offline_markdown(report)
+
+
+# ---------------------------------------------------------------- rapport agrégé du jeu de test
+
+def detector_from_answers(items, answers):
+    """Détecteur d'intention de test : renvoie l'intention fixée pour le texte de chaque élément."""
+    by_text = {item.text: answers.get(item.id, "other") for item in items}
+    return lambda text, language=None: by_text[text]
+
+
+class TestAggregateOnlyReport:
+    """Le rapport du jeu de test ne donne que des chiffres agrégés."""
+
+    ANSWERS = {"fr-901": "order", "fr-902": "question", "fr-903": "other", "fr-904": "other", "fr-905": "greeting"}
+
+    @pytest.fixture
+    def reports(self, small_dataset):
+        files = run_eval.load_split([small_dataset])
+        items = run_eval.split_items(files)
+
+        def loader():
+            return detector_from_answers(items, self.ANSWERS), None
+
+        build = run_eval.build_offline_report
+        return SimpleNamespace(items=items,
+                               dev=build(files, run_date=RUN_DATE, split="dev", intent_loader=loader),
+                               test=build(files, run_date=RUN_DATE, split="test", intent_loader=loader))
+
+    def forbidden_strings(self, items):
+        """Identifiants, extraits de texte et valeurs attendues propres aux éléments du petit jeu."""
+        strings = {item.id for item in items}
+        strings |= {item.text[:25] for item in items}
+        strings |= {item.expected["entreprise_cliente"] for item in items if item.expected["entreprise_cliente"]}
+        return strings
+
+    def test_development_report_does_list_the_items(self, reports):
+        dumped = json.dumps(reports.dev, ensure_ascii=False)
+        assert "fr-902" in dumped and "Boutique A | B" in dumped
+
+    def test_test_report_keeps_only_the_aggregates(self, reports):
+        assert reports.test["item_details"] is False
+        assert reports.test == {**run_eval.without_item_details(reports.dev), "split": "test", "item_details": False}
+        assert reports.test["summary"] == reports.dev["summary"]
+        assert reports.test["intent"]["confusion_matrix"] == reports.dev["intent"]["confusion_matrix"]
+
+    def test_test_report_json_cites_no_item(self, reports):
+        dumped = json.dumps(reports.test, ensure_ascii=False)
+        leaked = [text for text in self.forbidden_strings(reports.items) if text in dumped]
+        assert leaked == []
+        for key, value in json_keys_and_lists(reports.test):
+            assert not (key in run_eval.ITEM_DETAIL_LISTS and isinstance(value, list)), key
+            if key in run_eval.EXTREME_SCORE_KEYS and value is not None:
+                assert set(value) == {"score"}
+
+    def test_test_report_markdown_cites_no_item(self, reports):
+        markdown = run_eval.render_offline_markdown(reports.test)
+        leaked = [text for text in self.forbidden_strings(reports.items) if text in markdown]
+        assert leaked == []
+        assert run_eval.AGGREGATE_ONLY_NOTE in markdown
+        for title in ("Éléments mal classés", "Erreurs par champ", "faux positifs", "faux négatifs", "Erreurs"):
+            assert not re.search(rf"^#+ .*{title}", markdown, re.MULTILINE), title
+        assert "| Mesure | Score |\n| --- | ---: |" in markdown
+        for rows in table_rows(markdown):
+            assert all(cell_count(row) == cell_count(rows[0]) for row in rows), rows[0]
+
+    @pytest.mark.parametrize(("split", "logged"), [("dev", True), ("test", False)])
+    def test_detector_failure_names_no_item_in_the_report_nor_in_the_test_log(self, small_dataset, caplog, split,
+                                                                              logged):
+        def loader():
+            def detector(text, language=None):
+                raise RuntimeError("panne")
+            return detector, None
+
+        report = run_eval.build_offline_report(run_eval.load_split([small_dataset]), run_date=RUN_DATE,
+                                               split=split, intent_loader=loader)
+        assert report["intent"]["reason"] == "erreur de detect_intent (RuntimeError)"
+        assert ("fr-901" in caplog.text) is logged
+        assert ("RuntimeError" in caplog.text) is logged
+
+    @pytest.mark.parametrize(("split", "logged"), [("dev", True), ("test", False)])
+    def test_online_failure_is_logged_with_its_item_only_for_the_development_split(self, small_dataset, caplog,
+                                                                                    split, logged):
+        def failing_extractor(item):
+            raise ConnectionError("réseau indisponible")
+
+        report = run_eval.build_online_report(run_eval.load_split([small_dataset]), run_date=RUN_DATE,
+                                              extract=failing_extractor, models={"extraction": "modele-test"},
+                                              split=split)
+        assert report["failure_count"] == 2
+        assert ("fr-901" in caplog.text) is logged
+        assert ("réseau indisponible" in caplog.text) is logged
+        assert "Extraction en échec" in caplog.text
+
+    def test_online_test_report_keeps_only_the_failure_count(self, small_dataset):
+        files = run_eval.load_split([small_dataset])
+        report = run_eval.build_online_report(files, run_date=RUN_DATE, extract=fake_extractor,
+                                              models={"extraction": "modele-test"}, split="test")
+        assert "failures" not in report and report["failure_count"] == 0
+        assert "errors" not in report["order_recognition"]
+        markdown = run_eval.render_online_markdown(report)
+        dumped = json.dumps(report, ensure_ascii=False)
+        items = run_eval.split_items(files)
+        assert [text for text in self.forbidden_strings(items) if text in dumped or text in markdown] == []
+        assert "Commandes non reconnues" not in markdown
 
 
 # ---------------------------------------------------------------- intentions
@@ -729,13 +1010,13 @@ class TestIntents:
 
         section = run_eval.evaluate_intents(items, detector, self.languages(items))
         assert section["available"] is False
-        assert section["reason"] == "erreur de detect_intent sur l'élément fr-901 (RuntimeError)"
+        assert section["reason"] == "erreur de detect_intent (RuntimeError)"
 
     def test_available_section_in_markdown(self, items, small_dataset):
         def loader():
             return (lambda text, language=None: "other"), None
 
-        report = run_eval.build_offline_report(items, dataset_path=small_dataset, run_date=RUN_DATE,
+        report = run_eval.build_offline_report(run_eval.load_split([small_dataset]), run_date=RUN_DATE,
                                                intent_loader=loader)
         markdown = run_eval.render_offline_markdown(report)
         section = markdown[markdown.index("## 8. Détection des intentions"):]
@@ -804,9 +1085,11 @@ class TestOnline:
         items = run_eval.load_dataset(small_dataset) + [
             run_eval.DatasetItem("fr-906", "commande_informelle", "whatsapp", "500 sachets", {
                 **SMALL_ITEMS[0]["expected"], "quantite": 500, "entreprise_cliente": None})]
-        report = run_eval.build_online_report(items, dataset_path=small_dataset, run_date=RUN_DATE,
-                                              extract=fake_extractor, models={"extraction": "modele-test"})
+        files = [run_eval.DatasetFile(path=small_dataset, items=tuple(items))]
+        report = run_eval.build_online_report(files, run_date=RUN_DATE, extract=fake_extractor,
+                                              models={"extraction": "modele-test"})
         assert report["failures"] == ["fr-906"]
+        assert report["failure_count"] == 1
         extraction = report["extraction"]
         assert extraction["items"] == 3
         assert extraction["fields"]["quantite"]["correct"] == 2
@@ -868,7 +1151,11 @@ class TestOnline:
         test_report = json.loads((output_dir / "rapport_en_ligne_test.json").read_text(encoding="utf-8"))
         assert test_report["split"] == "test"
         assert test_report["extraction"]["items"] == 2
-        assert test_report["failures"] == ["fr-901", "fr-902"]
+        assert test_report["failure_count"] == 2
+        assert "failures" not in test_report
+        dev_report = json.loads((output_dir / "rapport_en_ligne_dev.json").read_text(encoding="utf-8"))
+        assert dev_report["failures"] == ["fr-901", "fr-902"]
+        assert [entry["items"] for entry in dev_report["dataset"]["files"]] == [3, 2]
 
     def test_without_api_key_exits_with_code_2(self, tmp_path, capsys):
         code = run_eval.main(["--online", "--output-dir", str(tmp_path / "sortie")],
@@ -921,35 +1208,29 @@ class TestOnline:
 # ---------------------------------------------------------------- ligne de commande
 
 class TestCommandLine:
-    def test_full_run_writes_both_splits_and_the_synthesis(self, full_run):
+    def test_full_run_writes_the_development_reports(self, full_run):
         assert full_run.code == 0
-        assert sorted(path.name for path in full_run.output_dir.iterdir()) == sorted(REPORT_FILES)
-        for split, report in full_run.reports.items():
-            assert report["report"] == "hors_ligne"
-            assert report["split"] == split
-            assert report["run_date"] == RUN_DATE.isoformat()
-            assert report["dataset"]["path"] == f"evaluation/dataset/{run_eval.SPLIT_DATASETS[split].name}"
-            assert full_run.markdown[split].startswith(
-                f"# Évaluation hors ligne de l'analyse des messages clients : {run_eval.split_label(split)}\n")
+        assert sorted(path.name for path in full_run.output_dir.iterdir()) == list(DEV_REPORT_FILES)
+        report = full_run.report
+        assert (report["report"], report["split"], report["run_date"]) == ("hors_ligne", "dev", RUN_DATE.isoformat())
+        assert [entry["path"] for entry in report["dataset"]["files"]] == [
+            run_eval.display_path(path) for path in DEV_PATHS]
+        assert full_run.markdown.startswith(
+            "# Évaluation hors ligne de l'analyse des messages clients : jeu de développement\n")
 
     def test_markdown_is_rendered_from_the_json(self, full_run):
-        for split, report in full_run.reports.items():
-            assert run_eval.render_offline_markdown(report) == full_run.markdown[split]
-
-    def test_synthesis_is_rendered_from_both_json_reports(self, full_run):
-        assert run_eval.render_synthesis(full_run.reports) == full_run.synthesis
+        assert run_eval.render_offline_markdown(full_run.report) == full_run.markdown
 
     def test_full_run_intent_section_is_consistent(self, full_run):
-        for split, report in full_run.reports.items():
-            section = report["intent"]
-            if not section["available"]:
-                assert section["reason"]
-                assert f"Section {run_eval.UNAVAILABLE} : {section['reason']}." in full_run.markdown[split]
-                continue
-            assert_ratio(section["accuracy"])
-            assert len(section["errors"]) == section["accuracy"]["total"] - section["accuracy"]["correct"]
-            assert sum(entry["support"] for entry in section["per_intent"].values()) == section["items"]
-            assert sum(sum(row.values()) for row in section["confusion_matrix"]["counts"].values()) == section["items"]
+        section = full_run.report["intent"]
+        if not section["available"]:
+            assert section["reason"]
+            assert f"Section {run_eval.UNAVAILABLE} : {section['reason']}." in full_run.markdown
+            return
+        assert_ratio(section["accuracy"])
+        assert len(section["errors"]) == section["accuracy"]["total"] - section["accuracy"]["correct"]
+        assert sum(entry["support"] for entry in section["per_intent"].values()) == section["items"]
+        assert sum(sum(row.values()) for row in section["confusion_matrix"]["counts"].values()) == section["items"]
 
     def test_full_run_prints_paths_and_summary(self, tmp_path, small_dataset, capsys):
         code = run_eval.main(["--split", "dev", "--dataset", str(small_dataset), "--output-dir", str(tmp_path / "sortie")])
@@ -968,11 +1249,23 @@ class TestCommandLine:
         reports = {split: json.loads((output_dir / f"rapport_hors_ligne_{split}.json").read_text(encoding="utf-8"))
                    for split in run_eval.SPLITS}
         assert {split: report["dataset"]["items"] for split, report in reports.items()} == {"dev": 5, "test": 3}
-        assert {split: report["dataset"]["sha256"] for split, report in reports.items()} == {
-            split: run_eval.file_sha256(path) for split, path in datasets.items()}
+        assert {split: [entry["sha256"] for entry in report["dataset"]["files"]] for split, report in reports.items()} \
+            == {split: [run_eval.file_sha256(path) for path in paths] for split, paths in datasets.items()}
+        assert {split: report["item_details"] for split, report in reports.items()} == {"dev": True, "test": False}
+        assert "by_file" in reports["dev"] and "by_file" not in reports["test"]
+        synthesis = (output_dir / "synthese.md").read_text(encoding="utf-8")
+        assert run_eval.render_synthesis(reports) == synthesis
         output = capsys.readouterr().out
         assert f"Écrit : {output_dir / 'synthese.md'}" in output
         assert "Jeu de test tenu à l'écart (test) :" in output
+        assert "fr-901" not in (output_dir / "rapport_hors_ligne_test.md").read_text(encoding="utf-8")
+
+    def test_default_run_without_the_test_file_writes_nothing(self, tmp_path, monkeypatch, capsys):
+        datasets = {**small_split_datasets(tmp_path), "test": (tmp_path / "absent.jsonl",)}
+        monkeypatch.setattr(run_eval, "SPLIT_DATASETS", datasets)
+        assert run_eval.main(["--output-dir", str(tmp_path / "sortie")]) == run_eval.EXIT_INVALID_INPUT
+        assert f"Jeu de données introuvable : {tmp_path / 'absent.jsonl'}" in capsys.readouterr().err
+        assert not (tmp_path / "sortie").exists()
 
     @pytest.mark.parametrize("split", run_eval.SPLITS)
     def test_single_split_writes_its_reports_only(self, tmp_path, monkeypatch, split):
@@ -990,7 +1283,36 @@ class TestCommandLine:
         assert run_eval.main(["--split", "test", "--dataset", str(small_dataset), "--output-dir", str(output_dir)]) == 0
         report = json.loads((output_dir / "rapport_hors_ligne_test.json").read_text(encoding="utf-8"))
         assert report["split"] == "test"
-        assert report["dataset"]["path"] == small_dataset.resolve().as_posix()
+        assert [entry["path"] for entry in report["dataset"]["files"]] == [small_dataset.resolve().as_posix()]
+
+    def test_dataset_option_is_repeatable_for_the_development_split(self, tmp_path):
+        first = write_dataset(tmp_path / "a.jsonl", SMALL_ITEMS[:2])
+        second = write_dataset(tmp_path / "b.jsonl", SMALL_ITEMS[2:])
+        output_dir = tmp_path / "sortie"
+        assert run_eval.main(["--split", "dev", "--dataset", str(first), "--dataset", str(second),
+                              "--output-dir", str(output_dir), "--date", RUN_DATE.isoformat()]) == 0
+        report = json.loads((output_dir / "rapport_hors_ligne_dev.json").read_text(encoding="utf-8"))
+        assert report["dataset"]["items"] == 5
+        assert [(entry["path"], entry["items"]) for entry in report["by_file"]] == [
+            (first.resolve().as_posix(), 2), (second.resolve().as_posix(), 3)]
+        markdown = (output_dir / "rapport_hors_ligne_dev.md").read_text(encoding="utf-8")
+        assert "## 4. Synthèse par fichier" in markdown
+
+    def test_identifier_repeated_across_files_stops_the_run(self, tmp_path, capsys):
+        first = write_dataset(tmp_path / "a.jsonl", SMALL_ITEMS[:2])
+        second = write_dataset(tmp_path / "b.jsonl", SMALL_ITEMS[1:3])
+        code = run_eval.main(["--split", "dev", "--dataset", str(first), "--dataset", str(second),
+                              "--output-dir", str(tmp_path / "sortie")])
+        assert code == run_eval.EXIT_INVALID_INPUT
+        assert "identifiant 'fr-902' déjà utilisé dans a.jsonl" in capsys.readouterr().err
+        assert not (tmp_path / "sortie").exists()
+
+    def test_repeated_dataset_for_the_test_split_is_refused(self, tmp_path, small_dataset, capsys):
+        with pytest.raises(SystemExit) as exit_info:
+            run_eval.main(["--split", "test", "--dataset", str(small_dataset), "--dataset", str(small_dataset),
+                           "--output-dir", str(tmp_path / "sortie")])
+        assert exit_info.value.code == 2
+        assert run_eval.REPEATED_TEST_DATASET in capsys.readouterr().err
 
     def test_dataset_without_split_is_refused(self, tmp_path, small_dataset, capsys):
         with pytest.raises(SystemExit) as exit_info:
@@ -1005,15 +1327,21 @@ class TestCommandLine:
         assert exit_info.value.code == 2
 
     def test_requested_datasets(self, tmp_path):
+        first, second = tmp_path / "x.jsonl", tmp_path / "y.jsonl"
         assert run_eval.requested_datasets(None, None) == dict(run_eval.SPLIT_DATASETS)
-        assert run_eval.requested_datasets("test", None) == {"test": TEST_DATASET_PATH}
-        assert run_eval.requested_datasets("dev", tmp_path / "x.jsonl") == {"dev": tmp_path / "x.jsonl"}
+        assert run_eval.requested_datasets("test", None) == {"test": (TEST_DATASET_PATH,)}
+        assert run_eval.requested_datasets("dev", None) == {"dev": DEV_PATHS}
+        assert run_eval.requested_datasets("dev", [first]) == {"dev": (first,)}
+        assert run_eval.requested_datasets("dev", [first, second]) == {"dev": (first, second)}
+        assert run_eval.requested_datasets("test", [first]) == {"test": (first,)}
         with pytest.raises(ValueError, match="--split"):
-            run_eval.requested_datasets(None, tmp_path / "x.jsonl")
+            run_eval.requested_datasets(None, [first])
+        with pytest.raises(ValueError, match="un seul fichier"):
+            run_eval.requested_datasets("test", [first, second])
 
     def test_invalid_split_file_writes_nothing(self, tmp_path, monkeypatch, capsys):
         datasets = small_split_datasets(tmp_path)
-        datasets["test"].write_text("{faux\n", encoding="utf-8")
+        datasets["test"][0].write_text("{faux\n", encoding="utf-8")
         monkeypatch.setattr(run_eval, "SPLIT_DATASETS", datasets)
         assert run_eval.main(["--output-dir", str(tmp_path / "sortie")]) == run_eval.EXIT_INVALID_INPUT
         assert "ligne 1 : JSON invalide" in capsys.readouterr().err
@@ -1053,9 +1381,7 @@ class TestCommandLine:
 # ---------------------------------------------------------------- synthèse des deux partitions
 
 def small_report(items: list[dict], tmp_path: Path, split: str) -> dict:
-    path = write_dataset(tmp_path / f"{split}.jsonl", items)
-    return run_eval.build_offline_report(run_eval.load_dataset(path), dataset_path=path, run_date=RUN_DATE,
-                                         split=split, intent_loader=no_intents)
+    return offline_report_of(write_dataset(tmp_path / f"{split}.jsonl", items), split=split)
 
 
 class TestSynthesis:
@@ -1138,9 +1464,13 @@ class TestSynthesis:
 
     def test_datasets_are_described(self, synthesis, reports):
         for split, report in reports.items():
-            assert f"| `{split}` | {run_eval.split_label(split)} | {run_eval.SPLIT_USES[split]} |" in synthesis
-            assert f"`{report['dataset']['sha256']}`" in synthesis
+            dataset = report["dataset"]
+            assert (f"| `{split}` | {run_eval.split_label(split)} | {run_eval.SPLIT_USES[split]} | "
+                    f"{len(dataset['files'])} | {dataset['items']} |") in synthesis
+            for entry in dataset["files"]:
+                assert f"| `{split}` | `{entry['path']}` | {entry['items']} | `{entry['sha256']}` |" in synthesis
         assert "`rapport_hors_ligne_dev.md` et `rapport_hors_ligne_test.md`" in synthesis
+        assert "Les éléments mal classés ne sont listés que dans `rapport_hors_ligne_dev.md`." in synthesis
 
     def test_without_disjoint_intervals(self, synthesis):
         assert "Aucune mesure n'a des intervalles disjoints entre les deux partitions." in synthesis

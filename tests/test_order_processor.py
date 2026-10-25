@@ -8,10 +8,11 @@ from unittest.mock import Mock
 
 import pytest
 
+from tecpap.channels.email_receiver import MailboxBatch
 from tecpap.db.database import DatabaseManager
 from tecpap.extraction.extractor import DataExtractor
 from tecpap.extraction.prompts import CONTENT_TAG
-from tecpap.processing.order_processor import OrderProcessor
+from tecpap.processing.order_processor import OrderProcessor, email_fingerprint
 from tests.fakes import FakeLLMClient
 
 NOT_A_REORDER = {"is_reorder": False, "client_name": None, "confidence": 90}
@@ -25,9 +26,13 @@ def _email(email_id="mail-1", attachments=None):
 
 
 def _gmail(emails, downloaded=None):
+    """Boîte simulée : les emails donnés forment le lot à examiner (UID 1, 2, …)."""
+    emails = [{"uid": index, **email} for index, email in enumerate(emails, 1)]
     gmail = Mock()
     gmail.connect.return_value = True
-    gmail.get_recent_emails.return_value = emails
+    gmail.mailbox_key.return_value = "commandes@tecpap.ma/INBOX"
+    gmail.get_unprocessed_emails.return_value = MailboxBatch(
+        7, emails, last_uid=emails[-1]["uid"] if emails else None)
     gmail.download_attachments.return_value = downloaded or []
     return gmail
 
@@ -86,13 +91,15 @@ class TestOrderProcessor:
         gmail.disconnect.assert_called_once()
 
     def test_already_processed_email_costs_no_model_call(self, make_processor, test_settings):
+        email = _email()
         db = DatabaseManager(test_settings.database_path)
         db.connect()
         db.init_database()
-        db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 10, "email_id": "mail-1"})
+        db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 10, "email_id": "mail-1",
+                         "message_sid": email_fingerprint(email)})
         db.disconnect()
         llm = FakeLLMClient(chat_json=[dict(ORDER), NOT_A_REORDER])
-        processor, _sender = make_processor(_gmail([_email()]), llm)
+        processor, _sender = make_processor(_gmail([email]), llm)
 
         assert processor.process_new_emails() == []
         assert llm.calls == []
@@ -117,4 +124,4 @@ class TestOrderProcessor:
         gmail.connect.return_value = False
         processor, _sender = make_processor(gmail, FakeLLMClient())
         assert processor.process_new_emails() == []
-        gmail.get_recent_emails.assert_not_called()
+        gmail.get_unprocessed_emails.assert_not_called()

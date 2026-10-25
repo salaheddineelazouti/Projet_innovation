@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 
 {% block title %}Sauvegardes - TECPAP{% endblock %}
+{% block page_title %}Sauvegardes{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Sauvegardes</span>{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
     <!-- En-tête -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-            <h1 class="text-2xl font-bold text-gray-900">Sauvegardes</h1>
-            <p class="text-gray-600 mt-1">Gérez vos sauvegardes de base de données</p>
+            <p class="text-gray-600">Gérez vos sauvegardes de base de données</p>
         </div>
         <div class="flex gap-3">
             <button onclick="createBackup()" class="inline-flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors">
@@ -21,7 +22,7 @@
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                 </svg>
-                Télécharger backup
+                Télécharger la dernière sauvegarde
             </button>
         </div>
     </div>
@@ -65,7 +66,7 @@
                 </div>
                 <div>
                     <p class="text-sm text-gray-500">Sauvegarde auto</p>
-                    <p class="text-xl font-bold text-emerald-600">
+                    <p class="text-xl font-bold {% if scheduler.running %}text-emerald-600{% else %}text-amber-600{% endif %}">
                         {% if scheduler.running %}Actif{% else %}Inactif{% endif %}
                     </p>
                 </div>
@@ -275,9 +276,21 @@ function downloadBackup(filename) {
     window.location.href = `/api/backup/download/${filename}`;
 }
 
-function downloadLatestBackup() {
-    showToast('Préparation du téléchargement...');
-    window.location.href = '/api/backup/download-latest';
+async function downloadLatestBackup() {
+    // La sauvegarde est créée par une requête POST (jeton CSRF), puis téléchargée par son nom.
+    try {
+        showToast('Préparation du téléchargement...');
+        const response = await fetch('/api/backup/download-latest', { method: 'POST' });
+        const data = await response.json();
+        if (data.success && data.download_url) {
+            window.location.href = data.download_url;
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast(data.message || data.error || 'Erreur', 'error');
+        }
+    } catch (error) {
+        showToast('Erreur de connexion', 'error');
+    }
 }
 
 async function restoreBackup(filename) {
@@ -325,9 +338,30 @@ async function deleteBackup(filename) {
     }
 }
 
-function exportJson() {
-    showToast('Export en cours...');
-    window.location.href = '/api/backup/export-json';
+async function exportJson() {
+    // Export demandé par une requête POST (jeton CSRF) ; le fichier reçu est enregistré par le navigateur.
+    try {
+        showToast('Export en cours...');
+        const response = await fetch('/api/backup/export-json', { method: 'POST' });
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            showToast(data.message || data.error || 'Erreur', 'error');
+            return;
+        }
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = match ? match[1] : 'export.json';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('Export terminé');
+    } catch (error) {
+        showToast('Erreur de connexion', 'error');
+    }
 }
 </script>
 {% endblock %}

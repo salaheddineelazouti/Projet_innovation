@@ -27,6 +27,10 @@ from tecpap.chatbot.messages import (
 )
 from tecpap.extraction.rules import normalize_product_type
 
+# Espace fine insécable entre les milliers, espace insécable entre la quantité et son unité.
+NNBSP = "\u202f"
+NBSP = "\u00a0"
+
 REQUIRED_KEYS = {
     "greeting", "help", "ask_client", "ask_product", "ask_quantity", "quantity_invalid", "summary",
     "reorder_intro", "confirm_hint", "ask_change", "submitted", "cancelled", "cancel_forwarded", "status_list",
@@ -152,11 +156,21 @@ class TestRender:
 
 class TestFormatting:
     @pytest.mark.parametrize("value, expected", [
-        (10000, "10 000"), (10000.0, "10 000"), (1500000, "1 500 000"), (2.5, "2,5"), (1234.5, "1 234,5"),
-        (0, "0"), (-300, "-300"), (999, "999"),
+        (10000, f"10{NNBSP}000"), (10000.0, f"10{NNBSP}000"), (1500000, f"1{NNBSP}500{NNBSP}000"), (2.5, "2,5"),
+        (1234.5, f"1{NNBSP}234,5"), (0, "0"), (-300, "-300"), (999, "999"), ("10000", f"10{NNBSP}000"),
     ])
     def test_format_quantity(self, value, expected):
         assert format_quantity(value) == expected
+
+    @pytest.mark.parametrize("language", LANGUAGES)
+    @pytest.mark.parametrize("value", [10000, 1234567.5, 2500])
+    def test_no_ordinary_space_inside_a_number(self, value, language):
+        # Une espace ordinaire couperait le nombre en deux dans une réponse en arabe (« 000 10 »).
+        assert " " not in format_quantity(value, language)
+
+    def test_arabic_summary_keeps_the_number_in_one_piece(self):
+        line = order_lines({"quantite": 10000, "unite": "US"}, "ar").splitlines()[2]
+        assert line == f"- الكمية: 10{NNBSP}000{NBSP}قطعة"
 
     @pytest.mark.parametrize("value", [None, True])
     def test_format_quantity_of_non_numbers(self, value):
@@ -171,6 +185,11 @@ class TestFormatting:
     ])
     def test_format_date(self, value, expected):
         assert format_date(value) == expected
+
+    def test_menu_details_describe_the_same_products_in_every_language(self):
+        assert set(messages._PRODUCT_MENU_DETAILS["fr"]) == {"SFP", "SFCPT"}
+        for language in LANGUAGES:
+            assert set(messages._PRODUCT_MENU_DETAILS[language]) == set(messages._PRODUCT_MENU_DETAILS["fr"])
 
     def test_product_menu_is_numbered_in_catalog_order(self):
         lines = product_menu("fr").splitlines()
@@ -195,6 +214,21 @@ class TestFormatting:
     def test_unit_label(self, unit, fr, darija, ar):
         assert (unit_label(unit, "fr"), unit_label(unit, "darija"), unit_label(unit, "ar")) == (fr, darija, ar)
 
+    @pytest.mark.parametrize("unit, quantity, expected", [
+        ("carton", 1, "carton"), ("carton", 1.5, "carton"), ("carton", 2, "cartons"), ("paquet", 1, "paquet"),
+        ("paquet", 20, "paquets"), ("US", 1, "pièce"), ("pièces", 0, "pièce"), ("kg", 1, "kg"), ("kg", 25, "kg"),
+        ("carton", None, "cartons"), ("carton", "1", "cartons"), ("rouleaux", 1, "rouleaux"),
+    ])
+    def test_french_unit_agrees_with_the_quantity(self, unit, quantity, expected):
+        assert unit_label(unit, "fr", quantity) == expected
+
+    @pytest.mark.parametrize("language, expected", [("darija", "carton"), ("ar", "كرتون")])
+    def test_other_languages_keep_one_form(self, language, expected):
+        assert unit_label("carton", language, 1) == unit_label("carton", language, 50) == expected
+
+    def test_order_lines_with_a_single_carton(self):
+        assert f"- Quantité : 1{NBSP}carton" in order_lines({"quantite": 1, "unite": "carton"}, "fr")
+
     @pytest.mark.parametrize("language", LANGUAGES)
     def test_status_labels_cover_visible_statuses(self, language):
         assert set(STATUS_LABELS[language]) == {"en_attente", "validee", "rejetee"}
@@ -208,7 +242,7 @@ class TestFormatting:
                  "unite": "US", "date_livraison": "2026-12-01", "numero_commande": "BC-7"}
         text = order_lines(order, "fr")
         assert text.splitlines() == [
-            "- Client : Snack Atlas", "- Produit : Sachets fond plat", "- Quantité : 3 000 pièces",
+            "- Client : Snack Atlas", "- Produit : Sachets fond plat", f"- Quantité : 3{NNBSP}000{NBSP}pièces",
             "- Livraison souhaitée : 01/12/2026", "- Référence : BC-7",
         ]
 
@@ -217,7 +251,7 @@ class TestFormatting:
                             "quantite": 2000}, "ar")
         assert "الزبون: مكتبة القلم" in text
         assert "كيس بقاع مربع بمقابض مسطحة" in text
-        assert "2 000 قطعة" in text
+        assert f"2{NNBSP}000{NBSP}قطعة" in text
 
     def test_order_lines_with_missing_fields(self):
         assert "—" in order_lines({}, "darija")
@@ -228,7 +262,7 @@ class TestFormatting:
                   {"reference": "BC-1", "date": None, "product": None, "quantity": None, "unit": None,
                    "status": "en_attente"}]
         lines = status_lines(orders, "fr").splitlines()
-        assert lines[0] == "- CMD-3 (20/10/2026) : 2 500 pièces, Sac fond carré sans poignées — validée"
+        assert lines[0] == f"- CMD-3 (20/10/2026) : 2{NNBSP}500{NBSP}pièces, Sac fond carré sans poignées — validée"
         assert lines[1].startswith("- BC-1 (—)") and lines[1].endswith("en attente de validation")
         assert "tvalidat" in status_lines(orders, "darija")
         assert "مؤكدة" in status_lines(orders, "ar")
@@ -257,7 +291,12 @@ class TestOrderNotifications:
         lines = order_lines({"entreprise_cliente": "Snack Atlas", "type_produit": PRODUCTS[0]["type"],
                              "quantite": 3000}, language)
         text = render("order_validated", language, reference="CMD-7", lines=lines)
-        assert "CMD-7" in text and "3 000" in text
+        assert "CMD-7" in text and f"3{NNBSP}000" in text
+
+    def test_arabic_validation_addresses_the_client_in_the_singular(self):
+        text = render("order_validated", "ar", reference="CMD-7", lines="- x")
+        assert text.endswith("شكرا على ثقتك.")
+        assert "ثقتكم" not in text
 
     @pytest.mark.parametrize("language, label", [("fr", "Motif : "), ("darija", "Sabab: "), ("ar", "السبب: ")])
     def test_rejection_reason(self, language, label):

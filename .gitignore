@@ -1,5 +1,8 @@
-# Environment variables (SECRETS - NE JAMAIS COMMIT)
+# Secrets et environnements locaux (NE JAMAIS VERSER AU DÉPÔT) : .env et ses variantes
+# (.env.production, .env.local…), sauf le modèle .env.example
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -21,15 +24,17 @@ env/
 # Logs
 *.log
 
-# Base de données (contient données clients)
-orders.db
-orders.db-wal
-orders.db-shm
+# Bases de données SQLite, quel que soit leur nom ou leur dossier (elles contiennent des données
+# clients), avec leurs fichiers de journal
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.db.gz
 
 # Sauvegardes (peuvent être volumineuses)
-backups/*.db
-backups/*.db.gz
-backups/*.json
+backups/*
+!backups/.gitkeep
 
 # Médias téléchargés
 whatsapp_media/*

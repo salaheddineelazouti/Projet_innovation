@@ -8,10 +8,14 @@ Le corpus annoté est réparti en deux partitions (« split dev/test ») : le je
 | --- | --- |
 | Date de l'exécution | 2026-10-25 |
 | Partition | `dev` |
-| Jeu de données | `evaluation/dataset/messages.jsonl` |
-| Empreinte SHA-256 du fichier | `96fa89491ab4acded5276a5a68919a4ad53d0fc1d75c66758a4e8df2655f6e60` |
-| Éléments du jeu | 89 |
+| Fichiers du jeu | 2 |
+| Éléments du jeu | 198 |
 | Version du paquet `tecpap` | 3.0.0 |
+
+| Fichier | Éléments | Empreinte SHA-256 |
+| --- | ---: | --- |
+| `evaluation/dataset/messages.jsonl` | 89 | `96fa89491ab4acded5276a5a68919a4ad53d0fc1d75c66758a4e8df2655f6e60` |
+| `evaluation/dataset/messages_dev_complement.jsonl` | 109 | `1f05e48593d0e3c7265fdf18b980a7650bcb901bdd6d6ac58e96dc1b5766fcd1` |
 
 L'empreinte SHA-256 est une somme de contrôle du fichier : deux rapports qui portent la même empreinte ont été calculés sur exactement les mêmes données.
 
@@ -21,12 +25,20 @@ Codes de langue : `fr` français, `darija_latin` darija en lettres latines, `dar
 
 | Langue | Éléments | Email | WhatsApp | Commandes | Renouvellements | Injections | Pièges |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 34 | 16 | 18 | 17 | 2 | 8 | 6 |
-| `darija_latin` | 20 | 0 | 20 | 9 | 2 | 3 | 1 |
-| `darija_ar` | 13 | 0 | 13 | 5 | 1 | 1 | 0 |
-| `ar` | 10 | 3 | 7 | 5 | 1 | 2 | 1 |
-| `en` | 12 | 5 | 7 | 5 | 1 | 4 | 2 |
-| Total | 89 | 24 | 65 | 41 | 7 | 18 | 10 |
+| `fr` | 68 | 27 | 41 | 39 | 4 | 15 | 11 |
+| `darija_latin` | 46 | 0 | 46 | 24 | 4 | 7 | 4 |
+| `darija_ar` | 30 | 0 | 30 | 12 | 2 | 4 | 1 |
+| `ar` | 26 | 5 | 21 | 12 | 2 | 5 | 3 |
+| `en` | 28 | 9 | 19 | 11 | 2 | 8 | 4 |
+| Total | 198 | 41 | 157 | 98 | 14 | 39 | 23 |
+
+Effectifs par fichier :
+
+| Fichier | Éléments | Email | WhatsApp | Commandes | Renouvellements | Injections | Pièges |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `evaluation/dataset/messages.jsonl` | 89 | 24 | 65 | 41 | 7 | 18 | 10 |
+| `evaluation/dataset/messages_dev_complement.jsonl` | 109 | 17 | 92 | 57 | 7 | 21 | 13 |
+| Total | 198 | 41 | 157 | 98 | 14 | 39 | 23 |
 
 « Commandes » : éléments dont l'étiquette `is_order` est vraie, renouvellements compris. « Renouvellements » : intention `reorder`. « Injections » : tentatives d'injection d'instructions (`is_injection` vrai). « Pièges » : messages légitimes qui emploient les mots surveillés par la détection d'injection (catégorie `piege_faux_positif`).
 
@@ -54,57 +66,86 @@ Codes de langue : `fr` français, `darija_latin` darija en lettres latines, `dar
 
 | Composant | Mesure | Effectifs | Valeur | Intervalle de confiance à 95 % |
 | --- | --- | ---: | ---: | ---: |
-| Détection de la langue | Exactitude du code de langue | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
-| Détection de la langue | Exactitude de la langue de réponse | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
-| Extraction par règles | Exactitude de `type_produit` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Extraction par règles | Exactitude de `quantite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Extraction par règles | Exactitude de `unite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Extraction par règles | Exactitude de `entreprise_cliente` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Extraction par règles | Exactitude des champs obligatoires | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Détection des commandes | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
-| Détection des commandes | Précision | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
-| Détection des commandes | Rappel | 41/41 | 100,0 % | [91,4 % ; 100,0 %] |
+| Détection de la langue | Exactitude du code de langue | 198/198 | 100,0 % | [98,1 % ; 100,0 %] |
+| Détection de la langue | Exactitude de la langue de réponse | 198/198 | 100,0 % | [98,1 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `type_produit` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `quantite` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `unite` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `entreprise_cliente` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
+| Extraction par règles | Exactitude des champs obligatoires | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
+| Détection des commandes | Exactitude | 198/198 | 100,0 % | [98,1 % ; 100,0 %] |
+| Détection des commandes | Précision | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
+| Détection des commandes | Rappel | 98/98 | 100,0 % | [96,2 % ; 100,0 %] |
 | Détection des commandes | F1 | — | 100,0 % | — |
-| Détection des renouvellements | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
-| Détection des renouvellements | Précision | 7/7 | 100,0 % | [64,6 % ; 100,0 %] |
-| Détection des renouvellements | Rappel | 7/7 | 100,0 % | [64,6 % ; 100,0 %] |
+| Détection des renouvellements | Exactitude | 198/198 | 100,0 % | [98,1 % ; 100,0 %] |
+| Détection des renouvellements | Précision | 14/14 | 100,0 % | [78,5 % ; 100,0 %] |
+| Détection des renouvellements | Rappel | 14/14 | 100,0 % | [78,5 % ; 100,0 %] |
 | Détection des renouvellements | F1 | — | 100,0 % | — |
-| Détection des injections | Précision | 18/18 | 100,0 % | [82,4 % ; 100,0 %] |
-| Détection des injections | Rappel | 18/18 | 100,0 % | [82,4 % ; 100,0 %] |
+| Détection des injections | Précision | 39/39 | 100,0 % | [91,0 % ; 100,0 %] |
+| Détection des injections | Rappel | 39/39 | 100,0 % | [91,0 % ; 100,0 %] |
 | Détection des injections | F1 | — | 100,0 % | — |
-| Détection des injections | Taux de faux positifs | 0/71 | 0,0 % | [0,0 % ; 5,1 %] |
-| Détection des injections | Fausses alertes sur les pièges | 0/10 | 0,0 % | [0,0 % ; 27,8 %] |
-| Détection des intentions | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] |
+| Détection des injections | Taux de faux positifs | 0/159 | 0,0 % | [0,0 % ; 2,4 %] |
+| Détection des injections | Fausses alertes sur les pièges | 0/23 | 0,0 % | [0,0 % ; 14,3 %] |
+| Détection des intentions | Exactitude | 198/198 | 100,0 % | [98,1 % ; 100,0 %] |
 | Détection des intentions | Macro-F1 | — | 100,0 % | — |
 
-## 4. Détection de la langue
+## 4. Synthèse par fichier
 
-Composant : `tecpap.nlp.language.detect_language`, puis `tecpap.nlp.language.reply_language` pour la langue de réponse. Étiquettes comparées : `language` et `reply_language`, sur les 89 éléments du jeu.
+Mêmes mesures que la synthèse, calculées sur les éléments de chaque fichier de la partition (fichiers du tableau de la section 1). Plus un fichier est petit, plus ses intervalles de confiance sont larges.
 
-### 4.1 Exactitude par langue
+| Composant | Mesure | Effectifs (`messages.jsonl`) | Valeur (`messages.jsonl`) | Intervalle de confiance à 95 % (`messages.jsonl`) | Effectifs (`messages_dev_complement.jsonl`) | Valeur (`messages_dev_complement.jsonl`) | Intervalle de confiance à 95 % (`messages_dev_complement.jsonl`) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Détection de la langue | Exactitude du code de langue | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 109/109 | 100,0 % | [96,6 % ; 100,0 %] |
+| Détection de la langue | Exactitude de la langue de réponse | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 109/109 | 100,0 % | [96,6 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `type_produit` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `quantite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `unite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Extraction par règles | Exactitude de `entreprise_cliente` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Extraction par règles | Exactitude des champs obligatoires | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Détection des commandes | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 109/109 | 100,0 % | [96,6 % ; 100,0 %] |
+| Détection des commandes | Précision | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Détection des commandes | Rappel | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 57/57 | 100,0 % | [93,7 % ; 100,0 %] |
+| Détection des commandes | F1 | — | 100,0 % | — | — | 100,0 % | — |
+| Détection des renouvellements | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 109/109 | 100,0 % | [96,6 % ; 100,0 %] |
+| Détection des renouvellements | Précision | 7/7 | 100,0 % | [64,6 % ; 100,0 %] | 7/7 | 100,0 % | [64,6 % ; 100,0 %] |
+| Détection des renouvellements | Rappel | 7/7 | 100,0 % | [64,6 % ; 100,0 %] | 7/7 | 100,0 % | [64,6 % ; 100,0 %] |
+| Détection des renouvellements | F1 | — | 100,0 % | — | — | 100,0 % | — |
+| Détection des injections | Précision | 18/18 | 100,0 % | [82,4 % ; 100,0 %] | 21/21 | 100,0 % | [84,5 % ; 100,0 %] |
+| Détection des injections | Rappel | 18/18 | 100,0 % | [82,4 % ; 100,0 %] | 21/21 | 100,0 % | [84,5 % ; 100,0 %] |
+| Détection des injections | F1 | — | 100,0 % | — | — | 100,0 % | — |
+| Détection des injections | Taux de faux positifs | 0/71 | 0,0 % | [0,0 % ; 5,1 %] | 0/88 | 0,0 % | [0,0 % ; 4,2 %] |
+| Détection des injections | Fausses alertes sur les pièges | 0/10 | 0,0 % | [0,0 % ; 27,8 %] | 0/13 | 0,0 % | [0,0 % ; 22,8 %] |
+| Détection des intentions | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 109/109 | 100,0 % | [96,6 % ; 100,0 %] |
+| Détection des intentions | Macro-F1 | — | 100,0 % | — | — | 100,0 % | — |
+
+## 5. Détection de la langue
+
+Composant : `tecpap.nlp.language.detect_language`, puis `tecpap.nlp.language.reply_language` pour la langue de réponse. Étiquettes comparées : `language` et `reply_language`, sur les 198 éléments du jeu.
+
+### 5.1 Exactitude par langue
 
 | Langue | Éléments | Code juste | Exactitude du code | Réponse juste | Exactitude de la réponse |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 34 | 34 | 100,0 % | 34 | 100,0 % |
-| `darija_latin` | 20 | 20 | 100,0 % | 20 | 100,0 % |
-| `darija_ar` | 13 | 13 | 100,0 % | 13 | 100,0 % |
-| `ar` | 10 | 10 | 100,0 % | 10 | 100,0 % |
-| `en` | 12 | 12 | 100,0 % | 12 | 100,0 % |
-| Total | 89 | 89 | 100,0 % | 89 | 100,0 % |
+| `fr` | 68 | 68 | 100,0 % | 68 | 100,0 % |
+| `darija_latin` | 46 | 46 | 100,0 % | 46 | 100,0 % |
+| `darija_ar` | 30 | 30 | 100,0 % | 30 | 100,0 % |
+| `ar` | 26 | 26 | 100,0 % | 26 | 100,0 % |
+| `en` | 28 | 28 | 100,0 % | 28 | 100,0 % |
+| Total | 198 | 198 | 100,0 % | 198 | 100,0 % |
 
-### 4.2 Matrice de confusion du code de langue
+### 5.2 Matrice de confusion du code de langue
 
 Lignes : langue attendue. Colonnes : langue obtenue.
 
 | Attendu | `fr` | `darija_latin` | `darija_ar` | `ar` | `en` | `unknown` | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 34 | 0 | 0 | 0 | 0 | 0 | 34 |
-| `darija_latin` | 0 | 20 | 0 | 0 | 0 | 0 | 20 |
-| `darija_ar` | 0 | 0 | 13 | 0 | 0 | 0 | 13 |
-| `ar` | 0 | 0 | 0 | 10 | 0 | 0 | 10 |
-| `en` | 0 | 0 | 0 | 0 | 12 | 0 | 12 |
+| `fr` | 68 | 0 | 0 | 0 | 0 | 0 | 68 |
+| `darija_latin` | 0 | 46 | 0 | 0 | 0 | 0 | 46 |
+| `darija_ar` | 0 | 0 | 30 | 0 | 0 | 0 | 30 |
+| `ar` | 0 | 0 | 0 | 26 | 0 | 0 | 26 |
+| `en` | 0 | 0 | 0 | 0 | 28 | 0 | 28 |
 
-### 4.3 Éléments mal classés
+### 5.3 Éléments mal classés
 
 Code de langue :
 
@@ -114,9 +155,9 @@ Langue de réponse :
 
 Aucune erreur.
 
-## 5. Extraction par règles des commandes
+## 6. Extraction par règles des commandes
 
-Composant : `tecpap.extraction.rules.rule_based_extract`, appliqué aux 41 commandes du jeu (étiquette `is_order` vraie).
+Composant : `tecpap.extraction.rules.rule_based_extract`, appliqué aux 98 commandes du jeu (étiquette `is_order` vraie).
 
 | Champ | Comparaison |
 | --- | --- |
@@ -128,27 +169,27 @@ Composant : `tecpap.extraction.rules.rule_based_extract`, appliqué aux 41 comma
 
 Une valeur absente est juste quand l'étiquette vaut `null`.
 
-### 5.1 Exactitude par champ
+### 6.1 Exactitude par champ
 
 | Champ | Justes | Total | Exactitude |
 | --- | ---: | ---: | ---: |
-| `type_produit` | 41 | 41 | 100,0 % |
-| `quantite` | 41 | 41 | 100,0 % |
-| `unite` | 41 | 41 | 100,0 % |
-| `entreprise_cliente` | 41 | 41 | 100,0 % |
-| Champs obligatoires | 41 | 41 | 100,0 % |
+| `type_produit` | 98 | 98 | 100,0 % |
+| `quantite` | 98 | 98 | 100,0 % |
+| `unite` | 98 | 98 | 100,0 % |
+| `entreprise_cliente` | 98 | 98 | 100,0 % |
+| Champs obligatoires | 98 | 98 | 100,0 % |
 
-### 5.2 Exactitude par langue
+### 6.2 Exactitude par langue
 
 | Langue | Commandes | `type_produit` | `quantite` | `unite` | `entreprise_cliente` | Champs obligatoires |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 17 | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 |
-| `darija_latin` | 9 | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
-| `darija_ar` | 5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
-| `ar` | 5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
-| `en` | 5 | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+| `fr` | 39 | 39/39 | 39/39 | 39/39 | 39/39 | 39/39 |
+| `darija_latin` | 24 | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 |
+| `darija_ar` | 12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `ar` | 12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `en` | 11 | 11/11 | 11/11 | 11/11 | 11/11 | 11/11 |
 
-### 5.3 Erreurs par champ
+### 6.3 Erreurs par champ
 
 #### `type_produit`
 
@@ -172,33 +213,33 @@ Commandes dont au moins un champ obligatoire est faux :
 
 Aucune erreur.
 
-## 6. Détection des commandes et des renouvellements
+## 7. Détection des commandes et des renouvellements
 
-### 6.1 Commandes
+### 7.1 Commandes
 
-Composant : champ `est_bon_commande` renvoyé par `tecpap.extraction.rules.rule_based_extract`. Étiquette : `is_order`. Classe positive : commande (41 éléments sur 89).
+Composant : champ `est_bon_commande` renvoyé par `tecpap.extraction.rules.rule_based_extract`. Étiquette : `is_order`. Classe positive : commande (98 éléments sur 198).
 
 | Mesure | Effectifs | Valeur |
 | --- | ---: | ---: |
-| Exactitude | 89/89 | 100,0 % |
-| Précision | 41/41 | 100,0 % |
-| Rappel | 41/41 | 100,0 % |
+| Exactitude | 198/198 | 100,0 % |
+| Précision | 98/98 | 100,0 % |
+| Rappel | 98/98 | 100,0 % |
 | F1 | — | 100,0 % |
-| Taux de faux positifs | 0/48 | 0,0 % |
+| Taux de faux positifs | 0/100 | 0,0 % |
 
 | VP | FP | FN | VN |
 | ---: | ---: | ---: | ---: |
-| 41 | 0 | 0 | 48 |
+| 98 | 0 | 0 | 100 |
 
 #### Commandes — par langue
 
 | Langue | Éléments | Justes | Exactitude | FP | FN |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 34 | 34 | 100,0 % | 0 | 0 |
-| `darija_latin` | 20 | 20 | 100,0 % | 0 | 0 |
-| `darija_ar` | 13 | 13 | 100,0 % | 0 | 0 |
-| `ar` | 10 | 10 | 100,0 % | 0 | 0 |
-| `en` | 12 | 12 | 100,0 % | 0 | 0 |
+| `fr` | 68 | 68 | 100,0 % | 0 | 0 |
+| `darija_latin` | 46 | 46 | 100,0 % | 0 | 0 |
+| `darija_ar` | 30 | 30 | 100,0 % | 0 | 0 |
+| `ar` | 26 | 26 | 100,0 % | 0 | 0 |
+| `en` | 28 | 28 | 100,0 % | 0 | 0 |
 
 #### Commandes — faux positifs
 
@@ -208,31 +249,31 @@ Aucune erreur.
 
 Aucune erreur.
 
-### 6.2 Renouvellements
+### 7.2 Renouvellements
 
-Composant : `tecpap.extraction.rules.detect_reorder`. Étiquette : intention `reorder`. Classe positive : renouvellement (7 éléments sur 89).
+Composant : `tecpap.extraction.rules.detect_reorder`. Étiquette : intention `reorder`. Classe positive : renouvellement (14 éléments sur 198).
 
 | Mesure | Effectifs | Valeur |
 | --- | ---: | ---: |
-| Exactitude | 89/89 | 100,0 % |
-| Précision | 7/7 | 100,0 % |
-| Rappel | 7/7 | 100,0 % |
+| Exactitude | 198/198 | 100,0 % |
+| Précision | 14/14 | 100,0 % |
+| Rappel | 14/14 | 100,0 % |
 | F1 | — | 100,0 % |
-| Taux de faux positifs | 0/82 | 0,0 % |
+| Taux de faux positifs | 0/184 | 0,0 % |
 
 | VP | FP | FN | VN |
 | ---: | ---: | ---: | ---: |
-| 7 | 0 | 0 | 82 |
+| 14 | 0 | 0 | 184 |
 
 #### Renouvellements — par langue
 
 | Langue | Éléments | Justes | Exactitude | FP | FN |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 34 | 34 | 100,0 % | 0 | 0 |
-| `darija_latin` | 20 | 20 | 100,0 % | 0 | 0 |
-| `darija_ar` | 13 | 13 | 100,0 % | 0 | 0 |
-| `ar` | 10 | 10 | 100,0 % | 0 | 0 |
-| `en` | 12 | 12 | 100,0 % | 0 | 0 |
+| `fr` | 68 | 68 | 100,0 % | 0 | 0 |
+| `darija_latin` | 46 | 46 | 100,0 % | 0 | 0 |
+| `darija_ar` | 30 | 30 | 100,0 % | 0 | 0 |
+| `ar` | 26 | 26 | 100,0 % | 0 | 0 |
+| `en` | 28 | 28 | 100,0 % | 0 | 0 |
 
 #### Renouvellements — faux positifs
 
@@ -242,54 +283,54 @@ Aucune erreur.
 
 Aucune erreur.
 
-## 7. Détection des tentatives d'injection
+## 8. Détection des tentatives d'injection
 
-Composant : `tecpap.security.guardrails.inspect_input`. Un message est signalé quand son score atteint 50 (sur 100). Étiquette : `is_injection`. Classe positive : tentative d'injection (18 éléments sur 89). Les 71 autres éléments, dont 10 pièges, sont les cas négatifs.
+Composant : `tecpap.security.guardrails.inspect_input`. Un message est signalé quand son score atteint 50 (sur 100). Étiquette : `is_injection`. Classe positive : tentative d'injection (39 éléments sur 198). Les 159 autres éléments, dont 23 pièges, sont les cas négatifs.
 
-### 7.1 Mesures
+### 8.1 Mesures
 
 | Mesure | Effectifs | Valeur |
 | --- | ---: | ---: |
-| Exactitude | 89/89 | 100,0 % |
-| Précision | 18/18 | 100,0 % |
-| Rappel | 18/18 | 100,0 % |
+| Exactitude | 198/198 | 100,0 % |
+| Précision | 39/39 | 100,0 % |
+| Rappel | 39/39 | 100,0 % |
 | F1 | — | 100,0 % |
-| Taux de faux positifs | 0/71 | 0,0 % |
-| Fausses alertes sur les pièges | 0/10 | 0,0 % |
+| Taux de faux positifs | 0/159 | 0,0 % |
+| Fausses alertes sur les pièges | 0/23 | 0,0 % |
 
 | VP | FP | FN | VN |
 | ---: | ---: | ---: | ---: |
-| 18 | 0 | 0 | 71 |
+| 39 | 0 | 0 | 159 |
 
-### 7.2 Scores
+### 8.2 Scores
 
 | Mesure | Score | Élément |
 | --- | ---: | --- |
-| Score maximal d'un message légitime | 15 | `fr-034` |
+| Score maximal d'un message légitime | 30 | `dev2-fr-034` |
 | Score minimal d'une injection | 50 | `fr-025` |
 | Seuil de signalement | 50 | — |
 
-### 7.3 Détection par langue
+### 8.3 Détection par langue
 
 | Langue | Injections | Détectées | Précision | Rappel | F1 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 8 | 8 | 100,0 % | 100,0 % | 100,0 % |
-| `darija_latin` | 3 | 3 | 100,0 % | 100,0 % | 100,0 % |
-| `darija_ar` | 1 | 1 | 100,0 % | 100,0 % | 100,0 % |
-| `ar` | 2 | 2 | 100,0 % | 100,0 % | 100,0 % |
-| `en` | 4 | 4 | 100,0 % | 100,0 % | 100,0 % |
+| `fr` | 15 | 15 | 100,0 % | 100,0 % | 100,0 % |
+| `darija_latin` | 7 | 7 | 100,0 % | 100,0 % | 100,0 % |
+| `darija_ar` | 4 | 4 | 100,0 % | 100,0 % | 100,0 % |
+| `ar` | 5 | 5 | 100,0 % | 100,0 % | 100,0 % |
+| `en` | 8 | 8 | 100,0 % | 100,0 % | 100,0 % |
 
-### 7.4 Fausses alertes par langue
+### 8.4 Fausses alertes par langue
 
 | Langue | Légitimes | Fausses alertes | Taux de faux positifs | Pièges | Alertes sur pièges |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `fr` | 26 | 0 | 0,0 % | 6 | 0 |
-| `darija_latin` | 17 | 0 | 0,0 % | 1 | 0 |
-| `darija_ar` | 12 | 0 | 0,0 % | 0 | 0 |
-| `ar` | 8 | 0 | 0,0 % | 1 | 0 |
-| `en` | 8 | 0 | 0,0 % | 2 | 0 |
+| `fr` | 53 | 0 | 0,0 % | 11 | 0 |
+| `darija_latin` | 39 | 0 | 0,0 % | 4 | 0 |
+| `darija_ar` | 26 | 0 | 0,0 % | 1 | 0 |
+| `ar` | 21 | 0 | 0,0 % | 3 | 0 |
+| `en` | 20 | 0 | 0,0 % | 4 | 0 |
 
-### 7.5 Erreurs
+### 8.5 Erreurs
 
 Injections manquées (faux négatifs) :
 
@@ -299,59 +340,59 @@ Fausses alertes (faux positifs) :
 
 Aucune erreur.
 
-## 8. Détection des intentions
+## 9. Détection des intentions
 
-Composant : `tecpap.chatbot.intents.detect_intent`, appelé avec la langue obtenue par `tecpap.nlp.language.detect_language`, comme dans l'assistant WhatsApp. Étiquette : `intent` (définitions dans `evaluation/README.md`, section 4.3), sur les 89 éléments du jeu.
+Composant : `tecpap.chatbot.intents.detect_intent`, appelé avec la langue obtenue par `tecpap.nlp.language.detect_language`, comme dans l'assistant WhatsApp. Étiquette : `intent` (définitions dans `evaluation/README.md`, section 4.3), sur les 198 éléments du jeu.
 
 | Mesure | Effectifs | Valeur |
 | --- | ---: | ---: |
-| Exactitude | 89/89 | 100,0 % |
+| Exactitude | 198/198 | 100,0 % |
 | Macro-F1 | — | 100,0 % |
 
-### 8.1 Mesures par intention
+### 9.1 Mesures par intention
 
 « Attendus » : éléments étiquetés avec l'intention. « Prédits » : éléments auxquels le détecteur l'attribue.
 
 | Intention | Attendus | Prédits | VP | Précision | Rappel | F1 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `order` | 34 | 34 | 34 | 100,0 % | 100,0 % | 100,0 % |
-| `reorder` | 7 | 7 | 7 | 100,0 % | 100,0 % | 100,0 % |
-| `status` | 5 | 5 | 5 | 100,0 % | 100,0 % | 100,0 % |
-| `question` | 5 | 5 | 5 | 100,0 % | 100,0 % | 100,0 % |
-| `human` | 3 | 3 | 3 | 100,0 % | 100,0 % | 100,0 % |
-| `greeting` | 4 | 4 | 4 | 100,0 % | 100,0 % | 100,0 % |
-| `confirm_yes` | 7 | 7 | 7 | 100,0 % | 100,0 % | 100,0 % |
-| `confirm_no` | 4 | 4 | 4 | 100,0 % | 100,0 % | 100,0 % |
-| `cancel` | 3 | 3 | 3 | 100,0 % | 100,0 % | 100,0 % |
-| `other` | 17 | 17 | 17 | 100,0 % | 100,0 % | 100,0 % |
+| `order` | 84 | 84 | 84 | 100,0 % | 100,0 % | 100,0 % |
+| `reorder` | 14 | 14 | 14 | 100,0 % | 100,0 % | 100,0 % |
+| `status` | 10 | 10 | 10 | 100,0 % | 100,0 % | 100,0 % |
+| `question` | 10 | 10 | 10 | 100,0 % | 100,0 % | 100,0 % |
+| `human` | 8 | 8 | 8 | 100,0 % | 100,0 % | 100,0 % |
+| `greeting` | 9 | 9 | 9 | 100,0 % | 100,0 % | 100,0 % |
+| `confirm_yes` | 14 | 14 | 14 | 100,0 % | 100,0 % | 100,0 % |
+| `confirm_no` | 9 | 9 | 9 | 100,0 % | 100,0 % | 100,0 % |
+| `cancel` | 8 | 8 | 8 | 100,0 % | 100,0 % | 100,0 % |
+| `other` | 32 | 32 | 32 | 100,0 % | 100,0 % | 100,0 % |
 
-### 8.2 Exactitude par langue
+### 9.2 Exactitude par langue
 
 | Langue | Éléments | Justes | Exactitude |
 | --- | ---: | ---: | ---: |
-| `fr` | 34 | 34 | 100,0 % |
-| `darija_latin` | 20 | 20 | 100,0 % |
-| `darija_ar` | 13 | 13 | 100,0 % |
-| `ar` | 10 | 10 | 100,0 % |
-| `en` | 12 | 12 | 100,0 % |
+| `fr` | 68 | 68 | 100,0 % |
+| `darija_latin` | 46 | 46 | 100,0 % |
+| `darija_ar` | 30 | 30 | 100,0 % |
+| `ar` | 26 | 26 | 100,0 % |
+| `en` | 28 | 28 | 100,0 % |
 
-### 8.3 Matrice de confusion
+### 9.3 Matrice de confusion
 
 Lignes : intention attendue. Colonnes : intention obtenue.
 
 | Attendu | `order` | `reorder` | `status` | `question` | `human` | `greeting` | `confirm_yes` | `confirm_no` | `cancel` | `other` | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `order` | 34 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 34 |
-| `reorder` | 0 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
-| `status` | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `question` | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `human` | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
-| `greeting` | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 4 |
-| `confirm_yes` | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 7 |
-| `confirm_no` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 4 |
-| `cancel` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 |
-| `other` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 17 | 17 |
+| `order` | 84 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 84 |
+| `reorder` | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 14 |
+| `status` | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 |
+| `question` | 0 | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 10 |
+| `human` | 0 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 0 | 0 | 8 |
+| `greeting` | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 | 0 | 9 |
+| `confirm_yes` | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 14 |
+| `confirm_no` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 9 |
+| `cancel` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 8 |
+| `other` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 32 | 32 |
 
-### 8.4 Éléments mal classés
+### 9.4 Éléments mal classés
 
 Aucune erreur.

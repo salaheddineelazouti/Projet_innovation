@@ -1,16 +1,22 @@
-"""Tâches de fond de l'application web : traitement différé des messages WhatsApp.
+"""Tâches de fond de l'application web : traitement différé des messages WhatsApp et tâches périodiques.
 
 Twilio attend la réponse du webhook au plus 15 secondes. Une note vocale à transcrire, une image
 à lire ou plusieurs appels au modèle de langue peuvent dépasser ce délai : avec
-``WHATSAPP_ASYNC_REPLY=true``, le webhook répond aussitôt par un TwiML vide (format XML de
-Twilio, ici sans message) et le message est traité par :class:`BackgroundWorker` ; la réponse au
-client part ensuite par l'API REST de Twilio.
+``WHATSAPP_ASYNC_REPLY=true``, le webhook enregistre le message dans la file durable
+(:mod:`tecpap.chatbot.inbox`), répond aussitôt par un TwiML vide (format XML de Twilio, ici sans
+message) et le message est traité par :class:`BackgroundWorker` ; la réponse au client part
+ensuite par l'API REST de Twilio.
 
 Le nombre de fils d'exécution est borné (deux par défaut), de même que le nombre de tâches en
-attente : au-delà, :meth:`BackgroundWorker.submit` refuse la tâche et l'appelant la traite
-lui-même. Une exception levée par une tâche est consignée dans le journal, jamais propagée.
-Les fils sont arrêtés à la fermeture de l'application (:meth:`tecpap.web.services.Services.close`)
-ou, à défaut, à l'arrêt de l'interpréteur Python (module :mod:`atexit`).
+attente : au-delà, :meth:`BackgroundWorker.submit` refuse la tâche. Le message reste alors en
+attente dans la file durable et la reprise périodique le soumet de nouveau : une rafale de
+messages n'est jamais traitée dans les fils qui servent les requêtes. Une exception levée par une
+tâche est consignée dans le journal, jamais propagée. Les fils sont arrêtés à la fermeture de
+l'application (:meth:`tecpap.web.services.Services.close`) ou, à défaut, à l'arrêt de
+l'interpréteur Python (module :mod:`atexit`).
+
+:class:`PeriodicTask` exécute une fonction à intervalle régulier dans un fil démon (reprise des
+messages en attente, purge des journaux).
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DEFAULT_MAX_PENDING", "DEFAULT_MAX_WORKERS", "BackgroundWorker"]
+__all__ = ["DEFAULT_MAX_PENDING", "DEFAULT_MAX_WORKERS", "BackgroundWorker", "PeriodicTask"]
 
 DEFAULT_MAX_WORKERS = 2
 """Nombre de fils d'exécution des tâches de fond."""
@@ -69,7 +75,7 @@ class BackgroundWorker:
         """Planifie ``task(*args, **kwargs)`` ; renvoie ``None`` si la tâche est refusée.
 
         La tâche est refusée quand l'exécuteur est arrêté ou que :attr:`max_pending` tâches
-        attendent déjà : l'appelant la traite alors lui-même.
+        attendent déjà : l'appelant la garde alors pour plus tard.
         """
         if not self._slots.acquire(blocking=False):
             logger.warning("Tâches de fond saturées (%d en attente) : tâche refusée", self.max_pending)
@@ -106,6 +112,61 @@ class BackgroundWorker:
         if executor is not None:
             executor.shutdown(wait=wait)
             logger.info("Tâches de fond arrêtées")
+
+
+class PeriodicTask:
+    """Exécute ``task()`` dans un fil démon : après ``initial_delay`` secondes, puis toutes les ``interval`` secondes.
+
+    Une exception levée par la tâche est consignée dans le journal et n'arrête pas les exécutions
+    suivantes.
+
+    Args:
+        task: fonction sans argument.
+        interval: intervalle entre deux exécutions, en secondes.
+        initial_delay: attente avant la première exécution, en secondes.
+        name: nom du fil (visible dans le journal).
+    """
+
+    def __init__(self, task: Callable[[], Any], interval: float, *, initial_delay: float = 0.0,
+                 name: str = "tecpap-periodique"):
+        if interval <= 0 or initial_delay < 0:
+            raise ValueError("L'intervalle doit être strictement positif et l'attente initiale positive")
+        self.task = task
+        self.interval = float(interval)
+        self.initial_delay = float(initial_delay)
+        self.name = name
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def running(self) -> bool:
+        """Vrai tant que le fil tourne."""
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> bool:
+        """Démarre le fil ; ``False`` s'il tourne déjà."""
+        if self.running:
+            return False
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name=self.name, daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self, timeout: float | None = 5.0) -> None:
+        """Arrête le fil (au plus tard à la fin de l'exécution en cours)."""
+        self._stop.set()
+        thread, self._thread = self._thread, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout)
+
+    def _loop(self) -> None:
+        delay = self.initial_delay
+        while not self._stop.wait(delay):
+            try:
+                self.task()
+            except Exception:
+                logger.exception("Échec de la tâche périodique %s", self.name)
+            delay = self.interval
 
 
 @atexit.register

@@ -28,8 +28,10 @@ reconnaître une langue). Elle est déterministe, rapide et n'appelle aucun mod�
 2. Nettoyage des emails : lignes citées (« > »), en-têtes de réponse (« Le … a écrit : »),
    message d'origine sous un séparateur (« -----Original Message----- », bloc « De : … Envoyé : »),
    signature placée après le séparateur « -- » et mentions automatiques (« Envoyé de mon
-   iPhone »). Les adresses email, les adresses web et les suites de plus de
-   :data:`MAX_TOKEN_CHARS` caractères sans espace (contenu encodé, identifiants) sont ignorées.
+   iPhone »). Ce nettoyage est aussi offert seul par :func:`message_body`, pour les composants
+   qui analysent la partie écrite par l'expéditeur (détection d'intention). Les adresses email,
+   les adresses web et les suites de plus de :data:`MAX_TOKEN_CHARS` caractères sans espace
+   (contenu encodé, identifiants) sont ignorées.
 3. Écriture : part des lettres arabes parmi les lettres arabes et latines (voir :data:`SCRIPTS`).
 4. Indices : chaque mot reconnu ajoute son poids au score d'une langue, 1 pour un marqueur sans
    ambiguïté, 0,5 pour un mot qui existe aussi ailleurs (« ana » est aussi un prénom) :
@@ -38,17 +40,26 @@ reconnaître une langue). Elle est déterministe, rapide et n'appelle aucun mod�
      2, 3, 5, 7, 8 ou 9 dans un mot : « 3afak », « ch7al », à l'exclusion des quantités avec
      unité comme « 80g » et des références comme « BC-2026 » ; un chiffre placé seulement en fin
      de mot, « lbar7 », compte 0,5 car la même forme sert aux références comme « ref3 »),
-     négation « ma … ch » (« mabghitch », « ma jatch ») et réponse « la » (non) envoyée seule,
-     qui ne forme pas un message à elle seule en français. Un marqueur écrit avec une majuscule
-     au milieu d'une phrase compte pour moitié (:data:`PROPER_NOUN_FACTOR`) : c'est
+     négation « ma … ch » (« mabghitch », « ma jatch »), préfixes verbaux du futur « gha- »
+     (« ghansift », 1) et du présent « ka- » (« katsifto », 0,5, car quelques mots empruntés
+     commencent ainsi, comme « kanban ») suivis d'un préfixe de personne n, t ou y, et réponse
+     « la » (non) envoyée seule, qui ne forme pas un message à elle seule en français. Un
+     marqueur écrit avec une majuscule au milieu d'une phrase compte pour moitié (:data:`PROPER_NOUN_FACTOR`) : c'est
      probablement un nom propre (« Snack Daba », « Boutique Lina ») ;
    - darija en lettres arabes : lexique :data:`DARIJA_ARABIC_MARKERS` (« بغيت », « ديال »,
-     « واش »…), négation « ما … ش » (« ما بقيتش ») ;
+     « واش »…), négation « ما … ش » (« ما بقيتش »), futur « غا » suivi d'un préfixe de personne
+     (« غانصيفط », « غاتوصل ») ;
    - arabe standard : :data:`MSA_MARKERS`, mots que la darija n'emploie pas (« أريد », « هل »,
      « الذي », « سوف »…) ; les mots communs aux deux (« هذا », « من ») ne comptent pas ;
-   - français : :data:`FRENCH_MARKERS` (mots outils, formules de politesse), élisions (« c' »,
-     « j' », 0,5) et mots accentués (0,5) ;
-   - anglais : :data:`ENGLISH_MARKERS` et contractions (« don't », « I'm », 0,5).
+   - français : :data:`FRENCH_MARKERS` (mots outils, formules de politesse, réponses courtes
+     comme « parfait », et à 0,5 les noms du métier, les jours, les mois, les repères de temps
+     et les nombres écrits en toutes lettres : « demain », « jeudi », « cinq mille »), élisions
+     (« c' », « j' », 0,5), terminaison verbale en « -ez » (« envoyez », « validez », 0,5) et
+     mots accentués (0,5) ;
+   - anglais : :data:`ENGLISH_MARKERS` (mots outils, réponses courtes comme « great », et à 0,5
+     les noms et verbes du métier en orthographe anglaise : « bags », « order », « shipped »,
+     ainsi que les jours, les mois et les nombres écrits en toutes lettres) et contractions
+     (« don't », « I'm », 0,5).
 
    En écriture arabe, un mot absent des lexiques est aussi cherché sans son proclitique
    (préfixe collé au mot) : particule « و », « ف », « ب », « ل », « ك » devant tout mot,
@@ -280,6 +291,22 @@ def _strip_non_words(text: str) -> str:
     return text
 
 
+def message_body(text: str) -> str:
+    """Partie d'un message écrite par son expéditeur (nettoyage de l'étape 2 de la détection).
+
+    Les lignes citées, les en-têtes de réponse, le message d'origine placé sous un séparateur, la
+    signature et les mentions automatiques sont retirés ; les apostrophes typographiques sont
+    unifiées. Un message réduit à un transfert garde tout son texte. Le reste du texte n'est pas
+    modifié (casse, accents et chiffres conservés), ce qui permet d'y appliquer l'extraction.
+
+    Raises:
+        TypeError: ``text`` n'est pas une chaîne.
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"message_body attend une chaîne de caractères, reçu {type(text).__name__}")
+    return _strip_email_noise(text.translate(_APOSTROPHES))
+
+
 # --------------------------------------------------------------------------- lexiques
 
 
@@ -301,8 +328,9 @@ DARIJA_LATIN_MARKERS: Mapping[str, float] = _lexicon(
         "dyal", "dial", "dyali", "diali", "dyalk", "dialk", "dyalek", "dialek", "dyalkom", "dialkom",
         "dyalkoum", "dyalna", "dialna", "dyalo", "dyalou", "dialo", "dyalha", "dialha", "dyalhom", "dialhom",
         # interrogatifs
-        "wach", "achno", "chno", "chnou", "chnu", "ch7al", "chhal", "bch7al", "bchhal", "kifach", "kifash",
-        "kifech", "fen", "mnin", "imta", "fo9ach", "fou9ach", "foqach", "3lach", "3lash", "3lache", "3lech",
+        "wach", "achno", "achnou", "chno", "chnou", "chnu", "ch7al", "chhal", "bch7al", "bchhal", "kifach", "kifash",
+        "kifech", "fen", "mnin", "imta", "fo9ach", "fou9ach", "foqach", "fach", "3lach", "3lash", "3lache", "3lech",
+        "chkoun", "chkon", "chkun", "achmen", "chmen", "chnahiya", "chnahowa",
         # adverbes et repères de temps
         "daba", "dba", "bzaf", "bezaf", "bzzaf", "bezzaf", "ghir", "mazal", "mazala", "ba9i", "lyoum",
         "lyouma", "lyoma", "lbare7", "lbar7", "lbareh", "ghda", "ghedda", "ghedwa", "dima", "chwiya", "chwia",
@@ -311,11 +339,14 @@ DARIJA_LATIN_MARKERS: Mapping[str, float] = _lexicon(
         "3afak", "afak", "3fak", "3afakom", "3afakoum", "ykhlik", "chokran", "choukran", "chukran", "shokran",
         "shukran", "lahoufik", "3likom", "alikom", "3alikom", "3alaykom", "labas", "bikhir", "hamdollah",
         "hamdoulah", "hamdoullah", "lhamdulillah", "hamdulillah", "nchallah", "wakha", "waxa", "wakhkha",
-        "iyeh", "iyah", "eyeh", "ewa", "iwa", "khoya", "khouya", "khti", "sahbi",
+        "iyeh", "iyah", "eyeh", "ewa", "iwa", "khoya", "khouya", "khti", "sahbi", "bslama", "beslama", "bsslama",
+        "marhba", "kidayr", "kidayra", "kidayrin", "kidayer", "kirak", "kiraki", "smhli", "smahli", "smah",
+        "tbarkellah", "tbarkallah", "tbarkalah", "momkin", "mumkin", "momkine", "mumkine", "yemken", "imken",
         # négation
         "machi", "mashi", "makaynch", "makaynach", "walou", "walo", "wlou",
         # verbes fréquents (vouloir, falloir, donner, envoyer, faire, y avoir, avoir, dire, parler…)
         "bghit", "bghiti", "bghina", "bghitou", "bgha", "bghat", "bghaw", "nbghi", "kanbghi", "kanbghiw",
+        "baghi", "baghya", "baghin", "baghyin",
         "khassni", "khasni", "khesni", "khessni", "khassna", "khasna", "khassek",
         "3tini", "3tina", "a3tini", "3tih", "3tiha", "3ti",
         "sift", "sifet", "siftli", "siftlia", "siftlina", "sifto", "siftoha", "siftohom", "tsiftoha",
@@ -327,8 +358,13 @@ DARIJA_LATIN_MARKERS: Mapping[str, float] = _lexicon(
         "galt", "galo", "galik", "golia", "goulia", "gouli", "goli",
         "nhder", "nhdar", "nhdro", "hder", "nchouf", "chouf", "choufo", "chof",
         "ghadi", "ghadin", "ghadya", "n9der", "t9der", "t9dro", "tqder", "nqder",
-        "mchit", "mcha", "jat", "jit", "nsa", "nsit", "nsaw", "ndir", "tdir", "ydir", "zid", "zidni", "zido",
+        "mchit", "mcha", "jat", "jit", "nsa", "nsit", "nsaw", "ndir", "tdir", "ydir", "dir", "dirou", "zid", "zidni",
+        "zido",
         "rah", "raha", "rak", "rakom", "warini", "werini", "nlghi", "lghi",
+        "tsenna", "tsena", "tsna", "nsenna", "stanna", "nstanna", "tstanna", "kantsenna", "kanstanna",
+        "nchri", "nchriw", "chrit", "chrina", "nkhelles", "nkhles", "khlest", "khelest", "tkhelso", "khod", "khoud",
+        "nakhod", "nakhdo", "diri", "diro", "dirha", "battel", "nbattel", "battelha", "battlo", "battliha",
+        "wajda", "wajed", "wajdin", "ghalat", "ghalta", "khata",
         # nombres
         "wahed", "wa7ed", "wa7d", "jouj", "juj", "zouj", "tlata", "tlat", "tleta", "rb3a", "reb3a", "rab3a",
         "khamsa", "khmsa", "stta", "setta", "sb3a", "seb3a", "tmnya", "tmenya", "tmanya", "tes3oud", "ts3ud",
@@ -345,14 +381,26 @@ DARIJA_LATIN_MARKERS: Mapping[str, float] = _lexicon(
     ),
     weak=(
         "ana", "salam", "slm", "slam", "salamo", "inchallah", "inshallah", "safi", "li", "chi", "kif", "bla",
-        "jib", "kain", "rani", "hadi", "lia", "lina", "mahal", "hiya",
+        "jib", "kain", "rani", "hadi", "lia", "lina", "mahal", "hiya", "ila", "brit", "lli", "yallah", "yalah",
+        "ahlan", "wah",
     ),
 )
 """Darija en lettres latines : mots outils, verbes et noms fréquents, avec leurs graphies courantes."""
 
+# Noms du métier empruntés au français, que la darija écrit avec son article « l » attaché
+# (« lcommande », « lsachet », « lprix ») : le français écrit « la commande » ou « l'emballage ».
+_DARIJA_LATIN_LOANWORDS: tuple[str, ...] = (
+    "commande", "commandes", "sac", "sacs", "sachet", "sachets", "prix", "facture", "livraison", "logo", "carton",
+    "cartons", "kraft", "client", "stock", "papier", "couleur", "model", "modele", "taille", "quantite", "adresse",
+    "numero", "camion", "produit", "produits", "poignee", "poignees", "catalogue", "minimum",
+)
+_LATIN_ARTICLE_LOANWORD = re.compile(r"^l(?:" + "|".join(_DARIJA_LATIN_LOANWORDS) + r")$")
+
 # Mots empruntés au français, propres à la darija (l'arabe standard dit طلبية، زبون، كيس، أسبوع، ورق).
 _DARIJA_ARABIC_LOANWORDS: tuple[str, ...] = (
     "كوموند", "كومند", "كوماند", "كليان", "ساك", "ساكات", "ساشي", "ساشيات", "سيمانة", "كاغيط",
+    # noms français écrits avec l'article « la » collé (« la livraison », « la commande », « la facture »)
+    "لافريزون", "ليفريزون", "لاكوموند", "لاكومند", "لافاكتور", "لافاكتير",
 )
 
 DARIJA_ARABIC_MARKERS: Mapping[str, float] = _lexicon(
@@ -371,11 +419,14 @@ DARIJA_ARABIC_MARKERS: Mapping[str, float] = _lexicon(
         "كاين", "كاينة", "كاينين", "كاينش", "ماكاينش", "مكاينش",
         "هادشي", "داكشي", "هاد", "هادي", "هادا", "هادو", "داك", "هداك", "هديك",
         "كاع", "كلشي", "كولشي", "لوخرين", "لوخرا", "بحال", "كيما",
-        "ليا", "لينا", "ليك", "جوج", "تلاتة", "اللي", "حيت", "باش", "البارح", "لبارح", "إيوا",
+        "ليا", "لينا", "ليك", "ليكم", "جوج", "تلاتة", "اللي", "حيت", "باش", "البارح", "لبارح", "إيوا",
+        "معاك", "معاكم", "معايا", "معاه", "معاها", "معاهم", "معانا", "شكون", "فاش", "بسلامة", "مرسي", "خويا",
+        "اخويا", "كنتسنى", "كنتسناو", "نتسنى", "تسنى", "مكاين", "ماكاين", "زربة", "نشري", "نشريو", "شريت", "كنشري",
         *_DARIJA_ARABIC_LOANWORDS,
     ),
     # « جيب » (apporte) et « ديك » (ce, cette) sont aussi des noms en arabe standard (poche, coq).
-    weak=("إيه", "شي", "ليه", "جيب", "ديك"),
+    # « سير » (va, impératif) est aussi un nom en arabe standard (marche, déroulement).
+    weak=("إيه", "شي", "ليه", "جيب", "ديك", "سير", "سيري", "سيرو"),
 )
 """Darija en lettres arabes : mots absents de l'arabe standard ou de sens différent."""
 
@@ -390,7 +441,9 @@ MSA_MARKERS: Mapping[str, float] = _lexicon(
         "أين", "متى", "ماذا", "لماذا", "كم", "جميع", "السادة", "المحترمون", "المحترمين", "المحترم",
         "المحترمة", "تحية", "تحياتي", "تحياتنا", "وبعد", "نعم", "أؤكد", "نؤكد", "يمكنكم", "يمكنني", "يمكننا",
         "أعطني", "أعطونا", "الآن", "جدا", "أيضا", "فقط", "ذلك", "تلك", "هؤلاء", "بخصوص", "بشأن", "عندما",
-        "حيث", "نحن", "إذا", "نشكركم", "حضرتكم", "سيادتكم", "التالي", "التالية",
+        "حيث", "نحن", "إذا", "نشكركم", "حضرتكم", "سيادتكم", "التالي", "التالية", "أستطيع", "نستطيع", "تستطيع",
+        "يستطيع", "تستطيعون", "هناك", "هنالك", "سيتم", "يتم", "منذ", "أمس", "إلينا", "إليكم", "لدى", "ننتظر",
+        "أنتظر", "بحاجة",
     ),
     weak=("إلى", "أن", "في", "أو", "هذه", "يمكن", "طيبة"),
 )
@@ -410,10 +463,22 @@ FRENCH_MARKERS: Mapping[str, float] = _lexicon(
         "pourrait", "voudrais", "voulons", "voulez", "veux", "veut", "souhaite", "souhaitons", "veuillez",
         "faut", "faudrait", "besoin", "bon", "bonne", "merci", "bonjour", "bonsoir", "salut", "oui", "non",
         "cordialement", "madame", "monsieur", "mesdames", "messieurs", "euh",
+        # réponses courtes
+        "parfait", "parfaite", "parfaitement", "exactement", "absolument", "effectivement", "volontiers", "désolé",
+        "désolée",
         # abréviations de messagerie
         "slt", "svp", "stp", "bjr", "cdt", "cv", "dsl", "mrc",
     ),
-    weak=("la", "ma", "ta", "y", "plus", "car", "ai"),
+    # Noms du métier en orthographe française : la darija les emploie aussi (« bghit ndir commande »),
+    # d'où un poids faible. Les repères de temps (jours, mois, « demain »), les nombres écrits en toutes lettres
+    # et les noms de quantité reconnaissent un message dicté ou télégraphique sans mot outil (« cinq mille
+    # sachets jeudi »). Les mots de la darija qui s'en rapprochent sont écrits autrement (« ghda », « tlata »).
+    weak=("la", "ma", "ta", "y", "plus", "car", "ai", "commande", "commandes", "livraison", "statut", "facture",
+          "devis", "tarif", "tarifs", "demain", "hier", "aujourd", "semaine", "semaines", "mois", "jour", "jours",
+          "heure", "heures", "prochain", "prochaine", "dernier", "dernière", "lundi", "mardi", "mercredi", "jeudi",
+          "vendredi", "samedi", "dimanche", "janvier", "février", "mars", "avril", "juin", "juillet", "août",
+          "septembre", "octobre", "novembre", "décembre", "deux", "trois", "quatre", "cinq", "sept", "huit", "neuf",
+          "dix", "cent", "cents", "mille", "quantité", "quantite"),
 )
 """Français : mots outils, auxiliaires et formules de politesse (sans les mots partagés avec
 l'anglais comme « on » ou « me »)."""
@@ -429,8 +494,19 @@ ENGLISH_MARKERS: Mapping[str, float] = _lexicon(
         "all", "some", "if", "so", "but", "like", "want", "need", "same", "usual", "now", "then", "only",
         "also", "just", "more", "much", "many", "again", "today", "tomorrow", "next", "send", "give", "tell",
         "get", "got", "let", "know", "as", "sir", "madam", "best", "morning", "afternoon", "evening",
+        # réponses courtes
+        "great", "perfect", "sorry", "wrong", "ahead", "sure", "noted", "cheers", "awesome", "good", "sounds",
+        "yeah", "yep", "nope",
     ),
-    weak=("i", "an", "or", "had"),
+    # Noms et verbes du métier, en orthographe anglaise ; « fine » est aussi un adjectif français.
+    # Les repères de temps et les nombres écrits en toutes lettres reconnaissent un message télégraphique.
+    weak=("i", "an", "or", "had", "bag", "bags", "handle", "handles", "order", "orders", "ordered", "quote",
+          "receipt", "purchase", "deliver", "delivered", "shipped", "received", "confirm", "confirmed", "fine",
+          "regarding", "invoice", "payment", "delivery", "price", "prices", "yesterday", "week", "weeks", "month",
+          "months", "day", "days", "hour", "hours", "monday", "tuesday", "wednesday", "thursday", "friday",
+          "saturday", "sunday", "january", "february", "april", "june", "july", "september", "october",
+          "november", "december", "one", "two", "three", "four", "five", "seven", "eight", "nine", "ten",
+          "hundred", "thousand", "quantity", "pallet", "pallets"),
 )
 """Anglais : mots outils, auxiliaires et formules de politesse (sans « us », code d'unité, ni
 les mots partagés avec le français)."""
@@ -449,6 +525,9 @@ _SENTENCE_BOUNDARY = re.compile(r"[.!?:;\n]")
 _FRENCH_ELISION = re.compile(r"(?<![^\W\d_])(?:c|d|j|l|m|n|s|t|qu|jusqu|lorsqu|puisqu)'(?=[^\W\d_])")
 _ENGLISH_CONTRACTION = re.compile(r"(?<=[a-z])'(?:s|m|re|ll|ve|d|t)(?![^\W\d_])")
 _FRENCH_ACCENT = re.compile("[àâäéèêëîïôöùûüçœæ]")
+# Deuxième personne du pluriel du présent et de l'impératif (« envoyez », « validez », « annulez »),
+# terminaison propre au français parmi les langues des clients.
+_FRENCH_VERB_FORM = re.compile(r"^[a-z]{3,}ez$")
 _TOKEN = re.compile(r"[^\W_]+")
 _ARABIC_LETTER = re.compile(_code_point_class(
     (0x0620, 0x064A), (0x066E, 0x06D3), (0x06D5, 0x06D5), (0x06FA, 0x06FF), (0x0750, 0x077F),
@@ -485,6 +564,24 @@ _NOT_NEGATED: frozenset[str] = frozenset({
 })
 _LATIN_NEGATION_MIN_CHARS = 6
 _ARABIC_NEGATION_MIN_CHARS = 5
+
+# Préfixes verbaux de la darija : futur « gha- » (« ghansift », j'enverrai) et présent « ka- »
+# (« katsifto », vous envoyez), suivis du préfixe de personne n (je, nous), t (tu, elle, vous) ou
+# y (il, ils) et d'un radical d'au moins trois lettres. Le futur ne forme presque aucun mot
+# français ou anglais ; le présent en forme quelques-uns (« katana », « kanban »), exclus, et ne
+# compte que pour :data:`WEAK`.
+_LATIN_VERB_PREFIXES: Mapping[str, float] = MappingProxyType({"gha": STRONG, "ka": WEAK})
+_LATIN_VERB_FORM = re.compile(r"^(gha|ka)[nty][a-z]{3,}$")
+_NOT_LATIN_VERB_FORMS: frozenset[str] = frozenset({
+    "katana", "katanas", "kayaks", "kayaking", "kanban", "kangourou", "kangourous", "kangaroo", "kangaroos",
+    "kantien", "kantienne", "kantian", "katherine", "katrina", "kaynes", "ghanaian", "ghanaians", "ghaneen",
+    "ghaneenne",
+})
+# Futur de la darija en lettres arabes : « غا » suivi du préfixe de personne (« غانصيفط », « غاتوصل »,
+# « غايجيب ») ; « غاية » (but) et ses formes (« غايتنا ») ne sont pas des verbes.
+_ARABIC_FUTURE_PREFIXES: tuple[str, ...] = ("غان", "غات", "غاي")
+_NOT_ARABIC_FUTURE_STARTS: tuple[str, ...] = ("غايت", "غايه", "غايات")
+_VERB_STEM_MIN_CHARS = 3
 
 
 # --------------------------------------------------------------------------- indices
@@ -528,6 +625,25 @@ def _arabizi_weight(token: str) -> float:
     return min(weight, WEAK) if final_digit_only else weight
 
 
+def _strip_accents(word: str) -> str:
+    """Mot sans ses signes diacritiques (« quantité » → « quantite »)."""
+    return "".join(char for char in unicodedata.normalize("NFD", word) if unicodedata.category(char) != "Mn")
+
+
+def _latin_verb_prefix_weight(token: str) -> float:
+    """Poids d'un verbe de darija reconnu par son préfixe de futur ou de présent (« ghansift », « kaydir »)."""
+    match = _LATIN_VERB_FORM.match(token)
+    if match is None or token in _NOT_LATIN_VERB_FORMS:
+        return 0.0
+    return _LATIN_VERB_PREFIXES[match.group(1)]
+
+
+def _is_arabic_future(token: str) -> bool:
+    """Futur de la darija en lettres arabes : « غانصيفط », « غاتوصل »."""
+    return (token.startswith(_ARABIC_FUTURE_PREFIXES) and not token.startswith(_NOT_ARABIC_FUTURE_STARTS)
+            and len(token) - len(_ARABIC_FUTURE_PREFIXES[0]) >= _VERB_STEM_MIN_CHARS)
+
+
 def _is_latin_negation(token: str, previous: str) -> bool:
     """Négation darija « ma … ch » : « mabghitch », « makaynch », ou « ma » suivi de « jatch »."""
     if not token.endswith(("ch", "sh")) or token in _NOT_NEGATED or not token.isascii():
@@ -544,6 +660,19 @@ def _is_arabic_negation(token: str, previous: str) -> bool:
     if previous == "ما":
         return len(token) >= 3
     return token.startswith("ما") and len(token) >= _ARABIC_NEGATION_MIN_CHARS
+
+
+def is_darija_negation(word: str, previous: str = "") -> bool:
+    """Vrai pour un mot nié par la négation darija « ma … ch » ou « ما … ش ».
+
+    La négation entoure le verbe (« mabghitch », « matsiftch », « مابغيتش ») ou suit la particule
+    « ma » / « ما » écrite à part (« ma tsiftohach », « ما تصيفطش ») ; ``previous`` est le mot qui
+    précède ``word``. Les mots sont comparés sous la forme normalisée de l'étape 1 de la détection.
+    """
+    word, previous = _normalize_word(word), _normalize_word(previous)
+    if _ARABIC_LETTER.search(word):
+        return _is_arabic_negation(word, previous)
+    return _is_latin_negation(word, previous)
 
 
 def _stem_weight(token: str, lexicon: Mapping[str, float], nouns: frozenset[str] = frozenset()) -> float:
@@ -569,15 +698,19 @@ def _arabic_token_weights(token: str) -> tuple[float, float]:
     msa = MSA_MARKERS.get(token, 0.0)
     if darija or msa:
         return darija, msa
+    if _is_arabic_future(token):
+        return STRONG, 0.0
     return _stem_weight(token, DARIJA_ARABIC_MARKERS, DARIJA_ARABIC_NOUNS), _stem_weight(token, MSA_MARKERS)
 
 
 def _latin_darija_weight(token: _Token, previous: str) -> float:
-    """Poids darija d'un mot latin : lexique, arabizi ou négation, réduit pour un nom propre probable."""
+    """Poids darija d'un mot latin (lexique, arabizi, préfixe verbal, négation), réduit pour un nom propre probable."""
     weight = max(
         DARIJA_LATIN_MARKERS.get(token.text, 0.0),
         _arabizi_weight(token.text),
+        _latin_verb_prefix_weight(token.text),
         STRONG if _is_latin_negation(token.text, previous) else 0.0,
+        STRONG if _LATIN_ARTICLE_LOANWORD.match(_strip_accents(token.text)) else 0.0,
     )
     return weight * PROPER_NOUN_FACTOR if token.proper else weight
 
@@ -591,6 +724,8 @@ def _latin_evidence(tokens: list[_Token], lowered_text: str) -> tuple[float, flo
         french += FRENCH_MARKERS.get(token.text, 0.0)
         english += ENGLISH_MARKERS.get(token.text, 0.0)
         if _FRENCH_ACCENT.search(token.text):
+            french += AFFIX_WEIGHT
+        elif _FRENCH_VERB_FORM.match(token.text) and not token.proper and token.text not in FRENCH_MARKERS:
             french += AFFIX_WEIGHT
         previous = token.text
     french += AFFIX_WEIGHT * len(_FRENCH_ELISION.findall(lowered_text))

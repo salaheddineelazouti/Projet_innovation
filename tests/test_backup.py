@@ -125,8 +125,17 @@ class TestBackupRestore:
 
     def test_restore_creates_pre_restore_backup(self, with_backup):
         self._restore(with_backup)
-        pre_restore = [f for f in os.listdir(with_backup["backup_dir"]) if f.startswith("pre_restore_")]
-        assert len(pre_restore) >= 1
+        pre_restore = [f for f in os.listdir(with_backup["backup_dir"]) if f.endswith("_pre_restore.db.gz")]
+        assert len(pre_restore) == 1
+        # La copie contient la base telle qu'elle était avant la restauration.
+        with gzip.open(os.path.join(with_backup["backup_dir"], pre_restore[0]), "rb") as f_in:
+            content = f_in.read()
+        copy = os.path.join(with_backup["backup_dir"], "lecture.db")
+        with open(copy, "wb") as f_out:
+            f_out.write(content)
+        conn = sqlite3.connect(copy)
+        assert conn.execute("SELECT name FROM test").fetchone() == ("Modified",)
+        conn.close()
 
     def test_restore_leaves_no_temporary_file(self, with_backup):
         self._restore(with_backup)
@@ -172,7 +181,10 @@ class TestBackupList:
             assert {"filename", "size", "compressed", "date", "path"} <= set(backup)
 
     def test_list_backup_date_is_formatted(self, with_backups):
-        assert backup_module.list_backups(with_backups["backup_dir"])[0]["date"] == "03/01/2025 12:00:00"
+        # Le nom du fichier porte l'heure UTC ; la date affichée est celle de Casablanca (UTC+1 en janvier).
+        newest = backup_module.list_backups(with_backups["backup_dir"])[0]
+        assert newest["date"] == "03/01/2025 13:00:00"
+        assert newest["created_at"] == "2025-01-03T12:00:00+00:00"
 
     def test_list_ignores_other_files(self, with_backups):
         open(os.path.join(with_backups["backup_dir"], "notes.txt"), "w").close()

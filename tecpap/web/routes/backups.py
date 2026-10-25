@@ -5,16 +5,24 @@ Un nom de fichier reçu dans l'URL n'est accepté que s'il ne contient que des l
 accentuées, des chiffres, ``_``, ``.`` et ``-``, et s'il désigne un fichier situé directement
 dans le dossier des sauvegardes une fois les liens symboliques résolus (``os.path.realpath``) :
 aucune requête ne peut lire, restaurer ou supprimer un fichier ailleurs sur le serveur.
+
+Toute action qui crée un fichier est une requête POST, soumise au jeton CSRF : une page d'un
+autre site ne peut pas, en ouvrant une adresse, multiplier les sauvegardes (et faire supprimer
+les anciennes par la rotation) ni les copies de la base. Les requêtes GET ne font que lire.
+L'export JSON est construit dans un dossier temporaire supprimé aussitôt et envoyé depuis la
+mémoire : aucune copie en clair des données personnelles ne reste sur le serveur.
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import re
+import tempfile
 from datetime import datetime
 
-from flask import Blueprint, jsonify, render_template, request, send_file
+from flask import Blueprint, jsonify, render_template, request, send_file, url_for
 
 from tecpap.db.backup import (
     create_backup,
@@ -108,17 +116,26 @@ def api_download_backup(filename: str):
         return server_error()
 
 
-@bp.route("/api/backup/download-latest")
+@bp.route("/api/backup/download-latest", methods=["POST"])
 def api_download_latest_backup():
-    """Crée une sauvegarde compressée et la télécharge."""
+    """Crée une sauvegarde compressée et renvoie l'adresse de son téléchargement (``download_url``).
+
+    Le navigateur télécharge ensuite le fichier par ``GET /api/backup/download/<nom>``.
+    """
     settings = get_services().settings
     try:
         backup_path = create_backup(compress=True, db_path=settings.database_path, backup_dir=settings.backup_dir)
         if not backup_path:
             return json_error("Échec de la création de la sauvegarde", 500)
-        return send_file(os.path.abspath(backup_path), as_attachment=True, download_name=os.path.basename(backup_path))
+        filename = os.path.basename(backup_path)
+        return jsonify({
+            "success": True,
+            "message": "Sauvegarde créée",
+            "filename": filename,
+            "download_url": url_for(".api_download_backup", filename=filename),
+        })
     except Exception:
-        logger.exception("Échec du téléchargement de la dernière sauvegarde")
+        logger.exception("Échec de la création de la sauvegarde à télécharger")
         return server_error()
 
 
@@ -159,16 +176,21 @@ def api_delete_backup(filename: str):
         return server_error()
 
 
-@bp.route("/api/backup/export-json")
+@bp.route("/api/backup/export-json", methods=["POST"])
 def api_export_json():
-    """Exporte toute la base en JSON et télécharge le fichier."""
+    """Exporte toute la base en JSON et l'envoie en pièce jointe, sans en garder de copie sur le serveur."""
     settings = get_services().settings
     try:
         output_file = f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        export_path = export_to_json(output_file, db_path=settings.database_path, backup_dir=settings.backup_dir)
-        if export_path:
-            return send_file(os.path.abspath(export_path), as_attachment=True, download_name=output_file)
-        return json_error("Échec de l'export JSON", 500)
+        with tempfile.TemporaryDirectory(prefix="tecpap-export-") as directory:
+            export_path = export_to_json(output_file, db_path=settings.database_path, backup_dir=directory)
+            if not export_path:
+                return json_error("Échec de l'export JSON", 500)
+            with open(export_path, "rb") as exported:
+                content = exported.read()
+        logger.info("Export JSON de la base envoyé (%d octets)", len(content))
+        return send_file(io.BytesIO(content), mimetype="application/json", as_attachment=True,
+                         download_name=output_file)
     except Exception:
         logger.exception("Échec de l'export JSON de la base")
         return server_error()

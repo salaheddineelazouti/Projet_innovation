@@ -3,6 +3,10 @@
 Le rapport tient sur trois pages : synthèse (indicateurs, répartition par statut, canal et
 segment de clients), analyse détaillée (tendances, meilleurs clients, produits) et commandes
 récentes avec des recommandations calculées par des règles fixes.
+
+Les commandes supprimées (suppression logique) ne sont comptées nulle part ; le chiffre
+d'affaires ne porte que sur les commandes validées. Les nombres et les montants sont écrits à la
+française (:mod:`tecpap.formatting`).
 """
 
 from __future__ import annotations
@@ -14,9 +18,34 @@ from pathlib import Path
 from typing import Any
 
 from tecpap.config import load_settings
+from tecpap.formatting import THOUSANDS_SEPARATOR, UNIT_SEPARATOR, format_amount, format_number
 from tecpap.reporting.analytics import Analytics
+from tecpap.reporting.spreadsheet import unique_export_path
 
 LOGO_PATH = Path(__file__).resolve().parent.parent / "web" / "static" / "images" / "logo_tecpap.png"
+
+# Commandes comptées dans le rapport : toutes sauf les commandes supprimées.
+_ACTIVE = "COALESCE(statut, '') != 'supprimee'"
+_ACTIVE_C = "COALESCE(c.statut, '') != 'supprimee'"
+
+
+def pdf_safe_text(text: str) -> str:
+    """Texte affichable avec les polices standard du PDF (Helvetica, codage WinAnsi).
+
+    L'espace fine insécable (U+202F) des milliers n'existe pas dans ce codage : elle est
+    remplacée par l'espace insécable (U+00A0), qui garde le nombre sur une seule ligne.
+    """
+    return text.replace(THOUSANDS_SEPARATOR, UNIT_SEPARATOR)
+
+
+def _number(value: Any) -> str:
+    """Nombre entier écrit à la française pour le PDF (« 552 000 »)."""
+    return pdf_safe_text(format_number(value or 0, decimals=0))
+
+
+def _percent(value: float, decimals: int = 1) -> str:
+    """Pourcentage écrit à la française (« 66,7 % »), espace insécable avant le signe."""
+    return pdf_safe_text(f"{format_number(value, decimals=decimals)}{UNIT_SEPARATOR}%")
 
 
 def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: str = "month") -> str:
@@ -24,7 +53,8 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
 
     Args:
         db: base des commandes (:class:`tecpap.db.database.DatabaseManager`).
-        filepath: fichier à écrire ; par défaut ``rapport.pdf`` dans ``Settings.export_dir``.
+        filepath: fichier à écrire ; par défaut un fichier au nom unique (« rapport_<suffixe>.pdf »)
+            dans ``Settings.export_dir``, que l'appelant supprime après usage.
         period: période couverte (toutes les données sont actuellement incluses).
     """
     import matplotlib
@@ -41,7 +71,7 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
     import numpy as np
 
     if filepath is None:
-        filepath = os.path.join(load_settings().export_dir, "rapport.pdf")
+        filepath = unique_export_path(load_settings().export_dir, "rapport.pdf")
     directory = os.path.dirname(filepath)
     if directory:
         os.makedirs(directory, exist_ok=True)
@@ -101,40 +131,41 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
     cursor = db.connection.cursor()
 
     # Répartition par canal
-    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp'")
+    cursor.execute(f"SELECT COUNT(*) FROM commandes WHERE source = 'whatsapp' AND {_ACTIVE}")
     whatsapp_count = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM commandes WHERE source = 'email' OR source IS NULL")
+    cursor.execute(f"SELECT COUNT(*) FROM commandes WHERE (source = 'email' OR source IS NULL) AND {_ACTIVE}")
     email_count = cursor.fetchone()[0]
 
     # Tendance des 7 derniers jours
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT DATE(created_at) as date, COUNT(*) as count, SUM(quantite) as qty
-        FROM commandes WHERE created_at >= datetime('now', '-7 days')
+        FROM commandes WHERE created_at >= datetime('now', '-7 days') AND {_ACTIVE}
         GROUP BY DATE(created_at) ORDER BY date
     """)
     weekly_data = [dict(row) for row in cursor.fetchall()]
 
     # Taux de validation par canal
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT source,
                COUNT(*) as total,
                SUM(CASE WHEN statut = 'validee' THEN 1 ELSE 0 END) as validated
-        FROM commandes GROUP BY source
+        FROM commandes WHERE {_ACTIVE} GROUP BY source
     """)
     source_validation = {row[0] or 'email': {'total': row[1], 'validated': row[2]} for row in cursor.fetchall()}
 
-    # Produits les plus commandés et chiffre d'affaires
-    cursor.execute("""
-        SELECT p.type, COUNT(*) as orders, SUM(c.quantite) as qty, SUM(c.prix_total) as revenue
+    # Produits les plus commandés et chiffre d'affaires validé
+    cursor.execute(f"""
+        SELECT p.type, COUNT(*) as orders, SUM(c.quantite) as qty,
+               SUM(CASE WHEN c.statut = 'validee' THEN c.prix_total END) as revenue
         FROM commandes c
         LEFT JOIN produits p ON c.produit_id = p.id
-        WHERE p.type IS NOT NULL
+        WHERE p.type IS NOT NULL AND {_ACTIVE_C}
         GROUP BY p.type ORDER BY orders DESC
     """)
     products_data = [dict(row) for row in cursor.fetchall()]
 
     # Segments de clients selon le nombre de commandes
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT
             CASE
                 WHEN order_count >= 5 THEN 'Fidèles (5+)'
@@ -144,7 +175,7 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
             COUNT(*) as clients
         FROM (
             SELECT client_id, COUNT(*) as order_count
-            FROM commandes GROUP BY client_id
+            FROM commandes WHERE {_ACTIVE} GROUP BY client_id
         ) GROUP BY segment
     """)
     client_segments = {row[0]: row[1] for row in cursor.fetchall()}
@@ -165,16 +196,16 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
 
     kpi_data = [
         [
-            create_kpi_box("COMMANDES", str(stats["total_orders"]), "Total reçues", TECPAP_GREEN),
-            create_kpi_box("VALIDÉES", str(stats["validated_orders"]), f"{validation_rate:.1f}% du total", "#16a34a"),
-            create_kpi_box("EN ATTENTE", str(stats["pending_orders"]), "À traiter", "#f59e0b"),
-            create_kpi_box("REJETÉES", str(stats["rejected_orders"]), f"{rejection_rate:.1f}% du total", "#ef4444"),
+            create_kpi_box("COMMANDES", _number(stats["total_orders"]), "Total reçues", TECPAP_GREEN),
+            create_kpi_box("VALIDÉES", _number(stats["validated_orders"]), f"{_percent(validation_rate)} du total", "#16a34a"),
+            create_kpi_box("EN ATTENTE", _number(stats["pending_orders"]), "À traiter", "#f59e0b"),
+            create_kpi_box("REJETÉES", _number(stats["rejected_orders"]), f"{_percent(rejection_rate)} du total", "#ef4444"),
         ],
         [
-            create_kpi_box("CA TOTAL", f"{stats['total_revenue']:,.0f}", "MAD", "#0ea5e9"),
-            create_kpi_box("PANIER MOYEN", f"{stats['avg_order_value']:,.0f}", "MAD/commande", "#8b5cf6"),
-            create_kpi_box("CLIENTS", str(stats["total_clients"]), "Actifs", "#06b6d4"),
-            create_kpi_box("WHATSAPP", f"{whatsapp_rate:.0f}%", f"{whatsapp_count} commandes", "#25D366"),
+            create_kpi_box("CA VALIDÉ", _number(stats["total_revenue"]), "MAD", "#0ea5e9"),
+            create_kpi_box("PANIER MOYEN", _number(stats["avg_order_value"]), "MAD par commande validée", "#8b5cf6"),
+            create_kpi_box("CLIENTS", _number(stats["total_clients"]), "Enregistrés", "#06b6d4"),
+            create_kpi_box("WHATSAPP", _percent(whatsapp_rate, 0), f"{_number(whatsapp_count)} commandes", "#25D366"),
         ]
     ]
 
@@ -249,7 +280,7 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
         rate = (data['validated'] / data['total'] * 100) if data['total'] > 0 else 0
         trend = "↑ Bon" if rate >= 70 else "→ Moyen" if rate >= 50 else "↓ À améliorer"
         source_name = "WhatsApp" if source == "whatsapp" else "Email"
-        perf_data.append([source_name, str(data['total']), str(data['validated']), f"{rate:.1f}%", trend])
+        perf_data.append([source_name, _number(data['total']), _number(data['validated']), _percent(rate), trend])
 
     perf_table = Table(perf_data, colWidths=[3.5*cm, 3*cm, 3*cm, 3.5*cm, 3*cm])
     perf_table.setStyle(TableStyle([
@@ -329,23 +360,24 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
     elements.append(Spacer(1, 0.5*cm))
 
     # Tableau des meilleurs clients
-    elements.append(Paragraph("Top 10 Clients par Chiffre d'Affaires", section_style))
+    elements.append(Paragraph("Top 10 Clients par Nombre de Commandes", section_style))
 
     if stats["top_clients"]:
-        client_header = [["#", "Client", "Commandes", "CA Total (MAD)", "Panier Moyen", "Part CA"]]
+        client_header = [["#", "Client", "Commandes", "CA validé (MAD)", "Panier Moyen", "Part CA"]]
         total_ca = stats["total_revenue"] or 1
 
         for i, client in enumerate(stats["top_clients"][:10], 1):
             ca = client['total_spent'] or 0
-            avg = ca / client['order_count'] if client['order_count'] > 0 else 0
+            validated_count = client.get('validated_count') or 0
+            avg = ca / validated_count if validated_count > 0 else 0
             share = (ca / total_ca * 100)
             client_header.append([
                 str(i),
                 (client["nom"] or "N/A")[:20],
-                str(client["order_count"]),
-                f"{ca:,.0f}",
-                f"{avg:,.0f}",
-                f"{share:.1f}%"
+                _number(client["order_count"]),
+                _number(ca),
+                _number(avg),
+                _percent(share)
             ])
 
         client_table = Table(client_header, colWidths=[1*cm, 5*cm, 2.5*cm, 3*cm, 3*cm, 2*cm])
@@ -395,7 +427,7 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
         axes[1].invert_yaxis()
 
         for bar, rev in zip(bars2, prod_revenues, strict=True):
-            axes[1].text(bar.get_width() + 0.2, bar.get_y() + bar.get_height()/2, f"{rev:.1f}K",
+            axes[1].text(bar.get_width() + 0.2, bar.get_y() + bar.get_height()/2, f"{format_number(rev, decimals=1)} K",
                         va='center', fontsize=9, fontweight='bold')
 
         plt.tight_layout()
@@ -415,10 +447,11 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
     # Tableau des 15 dernières commandes
     elements.append(Paragraph("15 Dernières Commandes", section_style))
 
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT c.id, c.numero_commande, cl.nom, c.nature_produit, c.quantite,
                c.prix_total, c.statut, c.source, c.created_at
         FROM commandes c LEFT JOIN clients cl ON c.client_id = cl.id
+        WHERE {_ACTIVE_C}
         ORDER BY c.created_at DESC LIMIT 15
     """)
     recent_orders = cursor.fetchall()
@@ -428,12 +461,12 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
         for order in recent_orders:
             statut_display = {"en_attente": "⏳ Attente", "validee": "✅ Validée", "rejetee": "❌ Rejetée"}.get(order[6], order[6])
             source_display = "📱 WhatsApp" if order[7] == "whatsapp" else "📧 Email"
-            montant = f"{order[5]:,.0f}" if order[5] else "-"
+            montant = _number(order[5]) if order[5] else "-"
             orders_header.append([
                 str(order[0]),
                 (order[2] or "N/A")[:12],
                 (order[3] or "N/A")[:15],
-                str(order[4] or 0),
+                _number(order[4]),
                 montant,
                 statut_display,
                 source_display,
@@ -465,15 +498,15 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
 
     # Taux de validation
     if validation_rate >= 80:
-        insights.append(("✅ Excellent taux de validation", f"Le taux de validation de {validation_rate:.1f}% est excellent. Continuez ainsi!", "#16a34a"))
+        insights.append(("✅ Excellent taux de validation", f"Le taux de validation de {_percent(validation_rate)} est excellent. Continuez ainsi!", "#16a34a"))
     elif validation_rate >= 60:
-        insights.append(("⚠️ Taux de validation moyen", f"Le taux de {validation_rate:.1f}% peut être amélioré. Analysez les rejets.", "#f59e0b"))
+        insights.append(("⚠️ Taux de validation moyen", f"Le taux de {_percent(validation_rate)} peut être amélioré. Analysez les rejets.", "#f59e0b"))
     else:
-        insights.append(("❌ Taux de validation faible", f"Avec {validation_rate:.1f}%, il faut revoir le processus de qualification.", "#ef4444"))
+        insights.append(("❌ Taux de validation faible", f"Avec {_percent(validation_rate)}, il faut revoir le processus de qualification.", "#ef4444"))
 
     # Part du canal WhatsApp
     if whatsapp_rate > 50:
-        insights.append(("📱 Canal WhatsApp dominant", f"{whatsapp_rate:.0f}% des commandes viennent de WhatsApp. Optimisez ce canal!", "#25D366"))
+        insights.append(("📱 Canal WhatsApp dominant", f"{_percent(whatsapp_rate, 0)} des commandes viennent de WhatsApp. Optimisez ce canal!", "#25D366"))
 
     # Commandes en attente
     if stats["pending_orders"] > 5:
@@ -483,7 +516,7 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
     if stats["top_clients"]:
         top_client_share = ((stats["top_clients"][0]["total_spent"] or 0) / total_ca * 100) if total_ca > 0 else 0
         if top_client_share > 30:
-            insights.append(("📊 Concentration client", f"Le top client représente {top_client_share:.0f}% du CA. Diversifiez!", "#0ea5e9"))
+            insights.append(("📊 Concentration client", f"Le top client représente {_percent(top_client_share, 0)} du CA validé. Diversifiez!", "#0ea5e9"))
 
     for title, desc, color in insights:
         insight_data = [[Paragraph(f"<b>{title}</b><br/><font size='8'>{desc}</font>",
@@ -503,10 +536,10 @@ def generate_pdf_report_improved(db: Any, filepath: str | None = None, period: s
     elements.append(Spacer(1, 0.5*cm))
     summary_text = f"""
     <b>Résumé Exécutif</b><br/><br/>
-    • <b>{stats['total_orders']}</b> commandes traitées avec un CA de <b>{stats['total_revenue']:,.0f} MAD</b><br/>
-    • Taux de validation: <b>{validation_rate:.1f}%</b> | Panier moyen: <b>{stats['avg_order_value']:,.0f} MAD</b><br/>
-    • Canal principal: <b>{'WhatsApp' if whatsapp_count > email_count else 'Email'}</b> ({max(whatsapp_rate, 100-whatsapp_rate):.0f}%)<br/>
-    • <b>{stats['total_clients']}</b> clients actifs | Top client: <b>{(stats['top_clients'][0]['nom'] if stats['top_clients'] else 'N/A')[:15]}</b>
+    • <b>{_number(stats['total_orders'])}</b> commandes traitées avec un CA validé de <b>{pdf_safe_text(format_amount(stats['total_revenue']))}</b><br/>
+    • Taux de validation: <b>{_percent(validation_rate)}</b> | Panier moyen: <b>{pdf_safe_text(format_amount(stats['avg_order_value']))}</b><br/>
+    • Canal principal: <b>{'WhatsApp' if whatsapp_count > email_count else 'Email'}</b> ({_percent(max(whatsapp_rate, 100-whatsapp_rate), 0)})<br/>
+    • <b>{_number(stats['total_clients'])}</b> clients enregistrés | Top client: <b>{(stats['top_clients'][0]['nom'] if stats['top_clients'] else 'N/A')[:15]}</b>
     """
 
     summary_para = Paragraph(summary_text, ParagraphStyle('Summary', fontSize=10, textColor=colors.HexColor(TECPAP_DARK), leading=14))

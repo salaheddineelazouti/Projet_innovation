@@ -18,7 +18,6 @@ from tecpap.config import Settings
 from tecpap.extraction.extractor import RULES_FALLBACK_ANOMALY, RULES_ROUTING_REASON
 from tecpap.security.events import KIND_PROMPT_INJECTION, recent_security_events
 from tecpap.web import create_app
-from tecpap.web.routes.webhooks import PROCESSING_ERROR_REPLY
 from tests.fakes import FakeLLMClient
 
 CLIENT = "whatsapp:+212612345678"
@@ -130,7 +129,7 @@ class TestConversation:
         assert phone.say(first) == render("ask_quantity", "darija")
         summary = phone.say("3000")
         assert summary.startswith("Hak l'récap")
-        assert "3 000" in summary and "Snack Atlas" in summary
+        assert "3 000" in summary and "Snack Atlas" in summary
         assert services.db.get_all_orders() == []
 
         confirmation = phone.say("wakha")
@@ -174,7 +173,7 @@ class TestConversation:
         summary = phone.say(MediaUrl0="https://api.twilio.com/2010-04-01/Media/ME1", MediaContentType0="audio/ogg")
 
         assert downloads == ["https://api.twilio.com/2010-04-01/Media/ME1"]
-        assert summary.startswith("Hak l'récap") and "3 000" in summary
+        assert summary.startswith("Hak l'récap") and "3 000" in summary
         (transcription_call,) = fake_llm.calls_to("transcribe")
         assert transcription_call["model"] == "whisper-1"
         assert chat_messages(services, "in")[0]["body"].startswith("[audio] salam, ana Snack Atlas")
@@ -327,16 +326,17 @@ class TestAsynchronousReply:
         Phone(app).send("salam")
         futures[0].result(timeout=30)
 
-        assert sent == [PROCESSING_ERROR_REPLY]
+        assert sent == [render("error", "darija")]
         # Le message n'est plus réservé après le traitement : une nouvelle livraison serait acceptée.
         assert services.claim_message(f"SM{Phone.counter:032d}") is True
 
-    def test_saturated_worker_falls_back_to_a_synchronous_reply(self, make_app, monkeypatch):
+    def test_saturated_worker_keeps_the_message_pending_without_inline_reply(self, make_app, monkeypatch):
         app = make_app(whatsapp_async_reply=True)
         services = app.extensions["tecpap"]
         monkeypatch.setattr(services.worker, "submit", lambda *args, **kwargs: None)
-        reply = Phone(app).say("salam, ana Snack Atlas, bghit 3000 sachet fond plat")
-        assert reply.startswith("Hak l'récap")
+        response = Phone(app).send("salam, ana Snack Atlas, bghit 3000 sachet fond plat")
+        assert MESSAGE_RE.search(response.get_data(as_text=True)) is None
+        assert services.inbox().counts()["pending"] == 1
 
 
 class TestNotifications:
@@ -365,7 +365,7 @@ class TestNotifications:
         ((number, message),) = sent
         assert number == "+212612345678"
         assert message.startswith(f"Khbar mzyan: la commande CMD-{order_id} tvalidat")
-        assert "3 000" in message
+        assert "3 000" in message
         last = chat_messages(services, "out")[-1]
         assert (last["body"], last["intent"]) == (message, "order_validated")
 
@@ -393,7 +393,7 @@ class TestNotifications:
 
 
 class TestPhoneAttachment:
-    """Un numéro inconnu qui écrit au nom d'un client existant n'obtient pas ses commandes avant validation."""
+    """Un numéro inconnu qui écrit au nom d’un client existant n’obtient jamais ses commandes, même après validation."""
 
     @pytest.fixture
     def victim(self, services):
@@ -432,11 +432,11 @@ class TestPhoneAttachment:
         assert self._client_phone(services) is None
         assert AssistantTools(services.db.connection, services.db, ATTACKER).my_order_status("EM-77") is None
 
-    def test_validation_by_the_sales_team_attaches_the_phone(self, app, services, victim):
+    def test_validation_by_the_sales_team_does_not_attach_the_phone(self, app, services, victim):
         attack = self._attack(app, services)
         app.test_client().post(f"/api/orders/{attack['id']}/validate", json={})
-        assert self._client_phone(services) == "+212699999999"
-        assert AssistantTools(services.db.connection, services.db, ATTACKER).my_order_status("EM-77") is not None
+        assert self._client_phone(services) is None
+        assert AssistantTools(services.db.connection, services.db, ATTACKER).my_order_status("EM-77") is None
 
     def test_an_existing_phone_is_never_replaced(self, services):
         client = services.db.get_or_create_client("Snack Atlas", telephone="+212600000001")

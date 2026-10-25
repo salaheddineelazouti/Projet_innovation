@@ -24,16 +24,36 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+def _source_allows(source: str, url: str) -> bool:
+    """Vrai quand la source d'une directive CSP autorise l'adresse ``url``.
+
+    Une source sans chemin désigne toute l'origine ; une source dont le chemin se termine par « / »,
+    tout ce qui commence par ce chemin ; sinon, ce seul fichier.
+    """
+    if not source.startswith("https://"):
+        return False
+    parts = urlsplit(source)
+    if not parts.path:
+        return _origin(url) == _origin(source)
+    if parts.path.endswith("/"):
+        return url.startswith(source)
+    return url == source
+
+
+def _allowed(url: str, sources: tuple[str, ...]) -> bool:
+    return any(_source_allows(source, url) for source in sources)
+
+
 def _template_resources() -> tuple[set[str], set[str]]:
-    """Origines des scripts et des feuilles de style externes chargés par les gabarits."""
+    """Adresses des scripts et des feuilles de style externes chargés par les gabarits."""
     scripts, styles = set(), set()
     for template in TEMPLATES.glob("*.html"):
         content = template.read_text(encoding="utf-8")
-        scripts |= {_origin(url) for url in re.findall(r'<script[^>]+src="(https?://[^"]+)"', content)}
+        scripts |= set(re.findall(r'<script[^>]+src="(https?://[^"]+)"', content))
         for tag in re.findall(r"<link\b[^>]*>", content):
             href = re.search(r'href="(https?://[^"]+)"', tag)
             if href and "stylesheet" in tag:
-                styles.add(_origin(href.group(1)))
+                styles.add(href.group(1))
     return scripts, styles
 
 
@@ -103,27 +123,37 @@ class TestContentSecurityPolicy:
     def test_external_scripts_are_allowed(self):
         scripts, _ = _template_resources()
         assert scripts, "aucun script externe trouvé dans les gabarits"
-        assert scripts <= set(CSP_DIRECTIVES["script-src"])
+        for url in scripts:
+            assert _allowed(url, CSP_DIRECTIVES["script-src"]), url
 
     def test_external_stylesheets_and_their_fonts_are_allowed(self):
         _, styles = _template_resources()
         assert styles
-        assert styles <= set(CSP_DIRECTIVES["style-src"])
-        for origin in styles:
-            assert FONT_HOSTS_OF_STYLESHEETS[origin] in CSP_DIRECTIVES["font-src"]
+        for url in styles:
+            assert _allowed(url, CSP_DIRECTIVES["style-src"]), url
+            assert FONT_HOSTS_OF_STYLESHEETS[_origin(url)] in CSP_DIRECTIVES["font-src"]
 
     def test_no_unused_cdn(self):
-        """Aucune origine externe n'est autorisée sans être utilisée par un gabarit."""
+        """Aucune source externe n'est autorisée sans être utilisée par un gabarit."""
         scripts, styles = _template_resources()
-        used = scripts | styles | {FONT_HOSTS_OF_STYLESHEETS[origin] for origin in styles}
+        used = scripts | styles | {FONT_HOSTS_OF_STYLESHEETS[_origin(url)] for url in styles}
         allowed = {source for sources in CSP_DIRECTIVES.values() for source in sources if source.startswith("https://")}
-        assert allowed == used
+        for source in allowed:
+            assert any(_source_allows(source, url) or _source_allows(source, url + "/") for url in used), source
 
     def test_every_external_url_in_templates_is_covered(self):
-        allowed = {source for sources in CSP_DIRECTIVES.values() for source in sources}
+        allowed = tuple(source for sources in CSP_DIRECTIVES.values() for source in sources)
         for template in TEMPLATES.glob("*.html"):
             for url in re.findall(r'(?:src|href)="(https?://[^"]+)"', template.read_text(encoding="utf-8")):
-                assert _origin(url) in allowed, f"{template.name} : {url}"
+                assert _allowed(url, allowed), f"{template.name} : {url}"
+
+    def test_jsdelivr_is_limited_to_the_chart_library(self):
+        """Le CDN jsdelivr sert n'importe quel paquet npm : seul le dossier de Chart.js est autorisé."""
+        sources = CSP_DIRECTIVES["script-src"]
+        assert "https://cdn.jsdelivr.net" not in sources
+        assert _allowed("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js", sources)
+        assert not _allowed("https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js", sources)
+        assert not _allowed("https://cdn.jsdelivr.net/npm/chart.js@4.4.1-evil/x.js", sources)
 
     def test_inline_code_is_allowed(self):
         base = (TEMPLATES / "base.html").read_text(encoding="utf-8")

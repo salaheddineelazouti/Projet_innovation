@@ -24,23 +24,28 @@ Racinisation légère
     du catalogue devient insensible au singulier, au pluriel et au genre.
 Lecture des nombres
     Chiffres avec séparateur des milliers (espace, point, virgule, apostrophe) ou suffixe « k »,
-    nombres en lettres en français, en anglais, en darija (« jouj alaf ») et en arabe
-    (« ثلاث آلاف »), combinaisons (« 2 mille », « 1,5 million »). Le mot « wahed » / « واحد »
-    placé devant un nombre est un article (« un ») et non la quantité 1.
+    nombres en lettres en français, en anglais, en darija (« jouj alaf », « tlata d alaf »,
+    « khamsmya ») et en arabe (« ثلاث آلاف », « تلاتة د الاف »), combinaisons de chiffres et de
+    lettres (« 2 mille 500 », « 1,5 million »). Le mot « wahed » / « واحد » placé devant un nombre
+    est un article (« un ») et non la quantité 1.
 Choix de la quantité dans un message
     Les adresses email, adresses web, téléphones, dates, dimensions et heures sont d'abord
     masqués. Chaque nombre restant reçoit un score selon son contexte : nom de produit ou unité
     qui suit (+3), libellé « quantité » qui précède (+3), formule « au lieu de » qui suit (+3),
-    verbe de commande qui précède (+1). Un nombre suivi d'une devise ou d'une unité de mesure
-    (g, cm, jours…), précédé d'un libellé de prix ou de référence, ou présenté comme un ajout
-    (« zid 1000 ») est écarté. Le meilleur score l'emporte ; sans aucun indice favorable, aucune
-    quantité n'est retenue. Un tableau dont les colonnes sont séparées par « | » est lu d'après
-    son en-tête (colonne « Qté »).
+    reprise après « non » ou « pardon » (+3), verbe de commande qui précède (+1), nombre qui suit la
+    description d'un article sans verbe ni unité (« sachets fond plat : 5000 », +1). Un nombre suivi
+    d'une devise ou d'une unité de mesure (g, cm, jours…), précédé d'un libellé de prix ou de
+    référence, ou présenté comme un ajout (« zid 1000 ») est écarté. Le meilleur score l'emporte ;
+    sans aucun indice favorable, aucune quantité n'est retenue. Un tableau dont les colonnes sont
+    séparées par « | » est lu d'après son en-tête (colonne « Qté »). L'unité est celle que le client a
+    écrite après le nombre (« pièces », « carton », « kg », « paquet ») ; « US » (unité de stock) quand
+    la quantité n'a pas d'unité.
 Motifs de texte
     Expressions régulières pour les dates, les téléphones, les références de commande et le nom
     du client : libellé « Client : », présentation (« ana X mn Y », « c'est X du Y »,
-    « أنا X من Y »), « smitou X », « pour X », « l X », signature de l'email. Chaque motif a une
-    priorité ; le motif le plus sûr l'emporte.
+    « Amina from X », « أنا X من Y »), « de la part de X », « pour le compte de X », « smitou X »,
+    « pour X », « l X », signature de l'email. Chaque motif a une priorité ; le motif le plus sûr
+    l'emporte, et un commerce nommé l'emporte sur le prénom de la personne qui écrit.
 Contrôles métier
     :func:`normalize_order` applique tous les normalisateurs, rédige les anomalies destinées à
     l'équipe commerciale et calcule une confiance déterministe.
@@ -238,9 +243,19 @@ def _latin_stem(word: str) -> str:
     return word
 
 
+# Pluriels internes (« brisés ») de l'arabe : la racinisation légère ne les ramène pas au singulier.
+_ARABIC_BROKEN_PLURALS = {fold(plural): fold(singular) for plural, singular in {
+    "أيدي": "يد", "أيادي": "يد", "ايد": "يد", "مقابض": "مقبض", "حبال": "حبل", "أكياس": "كيس", "أكياش": "كيس",
+    "شكاير": "شكارة", "كراتين": "كرتون", "كراطن": "كرتون",
+}.items()}
+
+
 def _stem(word: str) -> str:
     """Racine légère d'un mot déjà en forme de comparaison (voir le docstring du module)."""
-    return _arabic_stem(word) if _has_arabic(word) else _latin_stem(word)
+    if _has_arabic(word):
+        stem = _arabic_stem(word)
+        return _ARABIC_BROKEN_PLURALS.get(stem, stem)
+    return _latin_stem(word)
 
 
 def _stems(text: str) -> list[str]:
@@ -431,6 +446,10 @@ def _mask_spans(text: str, spans: Iterable[tuple[int, int]]) -> str:
     return "".join(chars)
 
 
+# Lettre arabe collée à un chiffre (« و500 », « 3000كيس ») : une espace les sépare avant le découpage.
+_ARABIC_DIGIT_BOUNDARY_RE = re.compile("(?<=[\u0600-\u06ff])(?=[0-9])|(?<=[0-9])(?=[\u0600-\u06ff])")
+
+
 def _masked_tokens(text: str) -> list[_Token]:
     """Jetons d'un texte où les emails, adresses web, téléphones, dates, dimensions et heures sont masqués."""
     folded = fold(text)
@@ -439,7 +458,7 @@ def _masked_tokens(text: str) -> list[_Token]:
     folded = _mask_spans(folded, (match.span() for _, match in _date_matches(folded)))
     for pattern in (_DIMENSION_RE, _TIME_RE):
         folded = _mask(folded, pattern)
-    return _tokenize(folded)
+    return _tokenize(_ARABIC_DIGIT_BOUNDARY_RE.sub(" ", folded))
 
 
 # ---------------------------------------------------------------- nombres en lettres
@@ -472,39 +491,90 @@ _SMALL_NUMBERS = _folded_mapping({
     "3echrin": 20, "3chrin": 20, "3ichrin": 20, "tlatin": 30, "rb3in": 40, "rab3in": 40,
     "khamsin": 50, "sttin": 60, "settin": 60, "sb3in": 70, "seb3in": 70, "tmanin": 80, "tmenin": 80,
     "ts3in": 90, "tes3in": 90,
+    # darija : nombres de 11 à 19, formés sur le suffixe « -tach » / « -طاش »
+    "hdach": 11, "7dach": 11, "hdache": 11, "7dache": 11, "tna3ch": 12, "tnach": 12, "tna3che": 12,
+    "tlattach": 13, "tlettach": 13, "tletach": 13, "tlatach": 13, "rb3tach": 14, "rba3tach": 14, "arba3tach": 14,
+    "khmstach": 15, "khamstach": 15, "khemstach": 15, "5mstach": 15, "sttach": 16, "settach": 16, "sotach": 16,
+    "sb3tach": 17, "sba3tach": 17, "tmntach": 18, "tmentach": 18, "tmantach": 18, "ts3tach": 19, "tsa3tach": 19,
+    "tes3tach": 19,
     # arabe standard et darija en écriture arabe
-    "واحد": 1, "اثنان": 2, "اثنين": 2, "جوج": 2, "زوج": 2,
-    "ثلاثة": 3, "ثلاث": 3, "تلاتة": 3, "تلت": 3,
+    "واحد": 1, "أحد": 1, "إحدى": 1, "اثنان": 2, "اثنين": 2, "اثنا": 2, "اثني": 2, "جوج": 2, "زوج": 2,
+    "ثلاثة": 3, "ثلاث": 3, "تلاتة": 3, "تلات": 3, "تلت": 3, "تلاتا": 3,
     "أربعة": 4, "أربع": 4, "ربعة": 4, "خمسة": 5, "خمس": 5, "ستة": 6, "ست": 6, "سبعة": 7, "سبع": 7,
-    "ثمانية": 8, "ثمان": 8, "تمنية": 8, "تسعة": 9, "تسع": 9, "تسعود": 9, "عشرة": 10, "عشر": 10,
-    "عشرين": 20, "عشرون": 20, "ثلاثين": 30, "ثلاثون": 30, "أربعين": 40, "أربعون": 40,
-    "خمسين": 50, "خمسون": 50, "ستين": 60, "ستون": 60, "سبعين": 70, "سبعون": 70,
-    "ثمانين": 80, "ثمانون": 80, "تسعين": 90, "تسعون": 90,
+    "ثمانية": 8, "ثمان": 8, "تمنية": 8, "تمنيا": 8, "تسعة": 9, "تسع": 9, "تسعود": 9, "عشرة": 10, "عشر": 10,
+    "حداش": 11, "طناش": 12, "تلطاش": 13, "ربعطاش": 14, "خمسطاش": 15, "سطاش": 16, "سبعطاش": 17,
+    "تمنطاش": 18, "تسعطاش": 19,
+    "عشرين": 20, "عشرون": 20, "ثلاثين": 30, "ثلاثون": 30, "تلاتين": 30, "أربعين": 40, "أربعون": 40,
+    "ربعين": 40, "خمسين": 50, "خمسون": 50, "ستين": 60, "ستون": 60, "سبعين": 70, "سبعون": 70,
+    "ثمانين": 80, "ثمانون": 80, "تمانين": 80, "تسعين": 90, "تسعون": 90,
 })
 _HUNDRED_WORDS = _folded_set(("cent", "cents", "hundred", "hundreds", "mya", "miya", "mia", "myat",
-                              "مية", "مائة", "مئة"))
+                              "مية", "مائة", "مئة", "ميا"))
 _HUNDREDS = _folded_mapping({
-    "myatayn": 200, "mitin": 200, "miteen": 200, "myatin": 200, "tlatmya": 300, "rb3mya": 400,
-    "khamsmya": 500, "settmya": 600, "sb3mya": 700, "tmnmya": 800, "ts3mya": 900,
-    "ميتين": 200, "مئتين": 200, "مائتين": 200, "مائتان": 200, "ثلاثمائة": 300, "ثلاثمية": 300,
-    "أربعمائة": 400, "خمسمائة": 500, "خمسمية": 500, "ستمائة": 600, "سبعمائة": 700, "ثمانمائة": 800,
-    "تسعمائة": 900,
+    "myatayn": 200, "mitin": 200, "miteen": 200, "myatin": 200, "mitayn": 200, "mitine": 200, "miyatayn": 200,
+    "ميتين": 200, "مئتين": 200, "مائتين": 200, "مائتان": 200, "مئتان": 200, "مئتا": 200, "مائتا": 200,
+    "مئتي": 200, "مائتي": 200,
+})
+# Centaines composées en un seul mot : chiffre de 3 à 9 suivi du mot « cent » (« khamsmya » = 500,
+# « خمسمائة » = 500, « تلتمية » = 300). Racines des chiffres employées devant le suffixe.
+_HUNDRED_SUFFIXES = tuple(sorted(_folded_set(("mya", "miya", "mia", "مائة", "مية", "مئة", "ميا")), key=len,
+                                 reverse=True))
+_HUNDRED_PREFIXES = _folded_mapping({
+    "tlat": 3, "tlata": 3, "tlet": 3, "tleta": 3, "rb3": 4, "rob3": 4, "reb3": 4, "rba3": 4, "rb3a": 4, "rab3a": 4,
+    "khams": 5, "khamsa": 5, "khms": 5, "khems": 5, "5ams": 5, "stt": 6, "sett": 6, "sit": 6,
+    "sb3": 7, "seb3": 7, "sba3": 7, "sb3a": 7, "tmn": 8, "tmen": 8, "tman": 8, "tmnt": 8, "ts3": 9, "tes3": 9,
+    "tsa3": 9, "ts3a": 9,
+    "ثلاث": 3, "ثلاثة": 3, "تلت": 3, "تلات": 3, "أربع": 4, "ربع": 4, "خمس": 5, "ست": 6, "سبع": 7, "ثمان": 8,
+    "ثماني": 8, "تمن": 8, "تسع": 9,
 })
 _THOUSAND_WORDS = _folded_set(("mille", "milles", "thousand", "thousands", "alf", "alef", "alaf", "alaaf",
-                               "ألف", "آلاف", "ألاف"))
+                               "dalaf", "dalaaf", "dlalaf", "ألف", "آلاف", "ألاف", "ألفا", "دالاف", "دلاف",
+                               "الآلاف", "الألاف"))
 # Pluriels qui ne valent un nombre qu'après un autre nombre (« tlat alaf » = 3000, mais « alaf »
-# seul signifie « des milliers ») ; seuls, ils sont trop vagues pour donner une quantité.
-_PLURAL_SCALE_WORDS = _folded_set(("alaf", "alaaf", "آلاف", "ألاف", "thousands", "millions", "ملايين", "hundreds",
-                                   "cents"))
+# seul signifie « des milliers ») ; seuls, ils sont trop vagues pour donner une quantité. En
+# darija, « d » (de) relie souvent le chiffre au pluriel : « tlata d alaf », « جوج دالاف ».
+_PLURAL_SCALE_WORDS = _folded_set(("alaf", "alaaf", "dalaf", "dalaaf", "dlalaf", "آلاف", "ألاف", "دالاف", "دلاف",
+                                   "الآلاف", "الألاف", "thousands", "millions", "ملايين", "hundreds", "cents"))
 # Mots d'une quantité approximative ou fractionnaire (« un et demi », « quelques milliers »).
 _VAGUE_QUANTITY_WORDS = _folded_set(("demi", "demie", "moitié", "quart", "quelques", "plusieurs", "dizaines",
                                      "centaines", "milliers", "half", "quarter", "several", "few", "dozens",
                                      "نص", "نصف"))
-_TWO_THOUSAND_WORDS = _folded_set(("alfayn", "alfin", "alfine", "alfeen", "alfain", "ألفين", "ألفان"))
-_MILLION_WORDS = _folded_set(("million", "millions", "mlyoun", "melyoun", "mliyon", "مليون", "ملايين"))
+# « Et demi » après un millier, un million ou une centaine ajoute la moitié de cette unité
+# (« alf w nss » = 1500, « jouj alaf w nss » = 2500, « deux millions et demi » = 2 500 000).
+_HALF_WORDS = _folded_set(("demi", "demie", "half", "nss", "nos", "nouss", "nus", "نص", "نصف"))
+# Duels : un seul mot pour « deux mille » ou « deux millions » ; valeur et ordre de grandeur.
+_DUAL_WORDS: dict[str, tuple[float, float]] = {fold(word): value for word, value in {
+    "alfayn": (2000, 1000), "alfin": (2000, 1000), "alfine": (2000, 1000), "alfeen": (2000, 1000),
+    "alfain": (2000, 1000), "ألفين": (2000, 1000), "ألفان": (2000, 1000), "ألفي": (2000, 1000),
+    "mlyounayn": (2_000_000, 1_000_000), "مليونين": (2_000_000, 1_000_000), "مليونان": (2_000_000, 1_000_000),
+}.items()}
+_MILLION_WORDS = _folded_set(("million", "millions", "mlyoun", "melyoun", "mliyon", "malyoun", "مليون", "ملايين",
+                              "مليونا"))
+# Noms collectifs d'une quantité approximative, au singulier après un article (« une centaine de
+# sachets » = 100, « un millier » = 1000) : une quantité approximative donne le nombre cité.
+_COLLECTIVE_NUMBERS = _folded_mapping({
+    "dizaine": 10, "douzaine": 12, "quinzaine": 15, "vingtaine": 20, "trentaine": 30, "quarantaine": 40,
+    "cinquantaine": 50, "soixantaine": 60, "centaine": 100, "millier": 1000, "dozen": 12,
+})
 # Mots « un » placés devant un nombre : article, et non la quantité 1 (« wa7ed 2000 sachiyat »).
 _ARTICLES = _folded_set(("wahed", "wa7ed", "wahd", "wa7d", "واحد", "un", "une", "one"))
 _CONNECTORS = frozenset({"et", "w", "o", "and", "و", "-"})
+# Particule « d » (de) entre un chiffre et le mot « alaf » en darija : « tlata d alaf », « تلاتة د الاف ».
+_DARIJA_OF = frozenset({"d", "د"})
+# Prépositions et conjonctions collées devant un nombre en écriture arabe : « و » (et), « ب » (avec,
+# par : « تزويدنا بألف »), et leur combinaison « وب ».
+_ARABIC_NUMBER_CLITICS = ("وب", "و", "ب")
+_ARABIC_TEN_WORDS = _folded_set(("عشر", "عشرة"))
+
+
+def _compound_hundred(text: str) -> float | None:
+    """Centaine écrite en un seul mot (« khamsmya », « خمسمائة »), ou ``None``."""
+    for suffix in _HUNDRED_SUFFIXES:
+        if text.endswith(suffix) and len(text) > len(suffix):
+            digit = _HUNDRED_PREFIXES.get(text[: -len(suffix)].rstrip())
+            if digit is not None:
+                return digit * 100
+    return None
 
 
 def _number_word(text: str) -> tuple[str, float] | None:
@@ -517,24 +587,36 @@ def _number_word(text: str) -> tuple[str, float] | None:
         return "hundreds", _HUNDREDS[text]
     if text in _THOUSAND_WORDS:
         return "thousand", 1000
-    if text in _TWO_THOUSAND_WORDS:
-        return "thousands", 2000
+    if text in _DUAL_WORDS:
+        return ("thousands" if _DUAL_WORDS[text][1] == 1000 else "millions"), _DUAL_WORDS[text][0]
     if text in _MILLION_WORDS:
         return "million", 1_000_000
+    if text in _COLLECTIVE_NUMBERS:
+        return "collective", _COLLECTIVE_NUMBERS[text]
+    if text in _HALF_WORDS:
+        return "half", 0.5
+    compound = _compound_hundred(text)
+    if compound is not None:
+        return "hundreds", compound
     return None
 
 
 def _word_number(token: _Token) -> tuple[str, float, bool] | None:
-    """Nombre écrit en lettres : (nature, valeur, conjonction « و » collée) ou ``None``."""
+    """Nombre écrit en lettres : (nature, valeur, conjonction « و » collée) ou ``None``.
+
+    Un mot de l'écriture arabe peut porter une conjonction ou une préposition collée
+    (« وخمسمائة », « بألف ») : elle est retirée avant la lecture.
+    """
     if token.kind != "word":
         return None
     entry = _number_word(token.text)
     if entry is not None:
         return entry[0], entry[1], False
-    if token.text.startswith("و") and len(token.text) > 2:
-        entry = _number_word(token.text[1:])
-        if entry is not None:
-            return entry[0], entry[1], True
+    for clitic in _ARABIC_NUMBER_CLITICS:
+        if token.text.startswith(clitic) and len(token.text) > len(clitic) + 1:
+            entry = _number_word(token.text[len(clitic):])
+            if entry is not None:
+                return entry[0], entry[1], clitic.startswith("و")
     return None
 
 
@@ -555,6 +637,8 @@ class _NumberState:
     last_small: float | None = None
     last_word: str = ""
     scale: float = math.inf
+    last_unit: float | None = None
+    closed: bool = False
 
     @property
     def value(self) -> float:
@@ -563,7 +647,7 @@ class _NumberState:
     def add(self, kind: str, value: float, glued_connector: bool, word: str) -> bool:
         """Ajoute un mot-nombre ; renvoie ``False`` quand le mot commence un autre nombre."""
         connector = self.connector or glued_connector
-        if self.count == 0 and word in _PLURAL_SCALE_WORDS:
+        if self.closed or (self.count == 0 and word in _PLURAL_SCALE_WORDS):
             return False
         if kind == "small":
             if not self._add_small(value, connector, word):
@@ -572,11 +656,18 @@ class _NumberState:
             if self.current >= 100:  # « 2000 cent » : deux nombres distincts
                 return False
             self.current = (self.current or 1) * 100
-            self.after_multiplier, self.last_small = True, None
+            self.after_multiplier, self.last_small, self.last_unit = True, None, 100
         elif kind == "hundreds":
             if self.current:
                 return False
-            self.current, self.after_multiplier, self.last_small = value, True, None
+            self.current, self.after_multiplier, self.last_small, self.last_unit = value, True, None, 100
+        elif kind == "collective":
+            if self.count:
+                return False
+            self.current, self.closed = value, True
+        elif kind == "half":
+            if not self._add_half(connector):
+                return False
         elif not self._add_scale(kind, value):
             return False
         self.count += 1
@@ -591,6 +682,12 @@ class _NumberState:
             self.current += 76  # « quatre-vingt » = 80
             self.last_small = 80
             return True
+        if (word in _ARABIC_TEN_WORDS and not connector and self.last_small is not None
+                and 1 <= self.last_small <= 9 and not self.after_multiplier):
+            # Arabe : le chiffre précède la dizaine (« ثلاثة عشر » = 13, « أحد عشر ألف » = 11 000).
+            self.current += value
+            self.last_small = self.last_small + value
+            return True
         follows_ten = (self.last_small is not None and self.last_small >= 10 and self.last_small % 10 == 0
                        and value < self.last_small)
         if self.count and not (connector or self.after_multiplier or follows_ten):
@@ -600,17 +697,29 @@ class _NumberState:
         self.after_multiplier = False
         return True
 
+    def _add_half(self, connector: bool) -> bool:
+        """« et demi » juste après un millier, un million ou une centaine : moitié de cette unité."""
+        if not (connector and self.after_multiplier and self.last_unit):
+            return False
+        if self.last_unit >= 1000:
+            self.total += self.last_unit / 2
+        else:
+            self.current += self.last_unit / 2
+        self.closed = True
+        return True
+
     def _add_scale(self, kind: str, value: float) -> bool:
-        scale = 1_000_000 if kind == "million" else 1000
+        scale = 1_000_000 if kind in ("million", "millions") else 1000
         if scale >= self.scale or self.current >= 1000:  # « 2000 mille » : deux nombres distincts
             return False
-        if kind == "thousands":
+        if kind in ("thousands", "millions"):
             if self.current:
                 return False
             self.total += value
         else:
             self.total += (self.current or 1) * scale
         self.current, self.scale, self.after_multiplier, self.last_small = 0.0, scale, True, None
+        self.last_unit = scale
         return True
 
 
@@ -637,6 +746,52 @@ def _is_connector(tokens: Sequence[_Token], position: int) -> bool:
     return True
 
 
+def _of_particle_end(tokens: Sequence[_Token], position: int) -> int | None:
+    """Fin de la particule darija « d » (ou « d' ») suivie de « alaf » / « alf » : « tlata d alaf »."""
+    if tokens[position].text not in _DARIJA_OF:
+        return None
+    following = position + 1
+    if following < len(tokens) and tokens[following].text == "'" and _glued(tokens[position], tokens[following]):
+        following += 1
+    if following < len(tokens) and tokens[following].text in _THOUSAND_WORDS:
+        return following
+    return None
+
+
+def _repeats_start(tokens: Sequence[_Token], start: int, position: int) -> bool:
+    """Vrai quand les mots qui suivent répètent le nombre déjà lu (« trois mille trois mille sachets »).
+
+    Une note vocale dictée reprend souvent la quantité : la répétition commence un autre nombre
+    au lieu d'ajouter des unités (« trois mille trois » ne vaut pas 3003 ici).
+    """
+    size = position - start
+    if size < 2 or position + size > len(tokens):
+        return False
+    return all(tokens[start + offset].text == tokens[position + offset].text for offset in range(size))
+
+
+def _digits_after_scale(tokens: Sequence[_Token], position: int, state: _NumberState) -> int | None:
+    """Fin d'un nombre en chiffres qui complète un millier ou un million écrit en lettres, ou ``None``.
+
+    Écriture mixte courante : « 2 mille 500 » (2500), « alf w 200 » (1200), « 3 alaf w 500 »
+    (3500), « ألف و 500 » (1500). Le nombre en chiffres doit être inférieur à l'unité qu'il
+    complète et au moins égal à 10, pour ne pas lier deux nombres distincts (« mille 2 cartons »).
+    """
+    if not (state.after_multiplier and state.last_unit and state.last_unit >= 1000) or state.closed:
+        return None
+    index = position
+    if tokens[index].text in _CONNECTORS and tokens[index].text != "-":
+        index += 1
+    if index >= len(tokens):
+        return None
+    token = tokens[index]
+    if token.kind != "num" or token.suffix or token.leading_zero or token.value is None:
+        return None
+    if not (10 <= token.value < state.last_unit and token.value.is_integer()):
+        return None
+    return index + 1
+
+
 def _read_number(tokens: Sequence[_Token], index: int) -> _NumberRun | None:
     """Lit le nombre (chiffres ou lettres) qui commence au jeton ``index``, ou renvoie ``None``."""
     start = index
@@ -652,10 +807,23 @@ def _read_number(tokens: Sequence[_Token], index: int) -> _NumberRun | None:
             return _NumberRun(state.current * 1000, start, position, digits=True, lone_one=False)
     while position < len(tokens):
         token = tokens[position]
+        if state.after_multiplier and _repeats_start(tokens, start, position):
+            break
         if state.count and _is_connector(tokens, position):
             state.connector = True
             position += 1
             continue
+        particle_end = _of_particle_end(tokens, position) if state.count and not state.total else None
+        if particle_end is not None:
+            position = particle_end
+            continue
+        digits_end = _digits_after_scale(tokens, position, state)
+        if digits_end is not None:
+            state.current += tokens[digits_end - 1].value or 0.0
+            state.count += 1
+            state.closed, state.after_multiplier = True, False
+            position = digits_end
+            break
         if state.digits and state.count == 1 and token.text == "k":
             entry: tuple[str, float, bool] | None = ("thousand", 1000, False)
         else:
@@ -744,9 +912,10 @@ def parse_quantity(value: Any) -> float | None:
         number = float(text)
         return number if math.isfinite(number) else None
     tokens = _masked_tokens(text)
-    if any(token.text in _VAGUE_QUANTITY_WORDS for token in tokens):
-        return None
     runs = list(_number_runs(tokens))
+    inside = {position for run in runs for position in range(run.start, run.end)}
+    if any(token.text in _VAGUE_QUANTITY_WORDS and index not in inside for index, token in enumerate(tokens)):
+        return None
     if any(_is_hyphenated(tokens, run) or tokens[run.end - 1].suffix in _ORDINAL_SUFFIXES for run in runs):
         return None
     if any(not run.lone_one for run in runs):
@@ -761,9 +930,68 @@ def parse_quantity(value: Any) -> float | None:
 _PRODUCT_PRECEDENCE = ("SFCPT", "SFCPP", "SFCSP", "SFP")
 # Mots-clés du sac sans poignées qui ne disent rien des poignées : ils ne suffisent pas quand le
 # texte parle de poignées (« sac fond carré avec poignées » sans préciser lesquelles).
-_GENERIC_SQUARE_BOTTOM = ("fond carré", "square bottom", "square bottom bag")
+_GENERIC_SQUARE_BOTTOM = ("fond carré", "square bottom", "square bottom bag", "قاع مربع", "قعر مربع")
+# Mots-clés d'usage, de gamme ou de taille (« premium », « sac shopping », « petit sac ») : ils ne
+# décrivent pas la construction du sac et cèdent devant un mot-clé de construction (« sachets
+# premium » reste un sachet, « sac shopping à poignées torsadées » un sac à poignées torsadées).
+_USAGE_KEYWORDS = ("premium", "luxe", "luxury", "haut de gamme", "sac shopping", "shopping bag", "petit sac",
+                   "small bag", "small paper bag", "sac à pain", "sac pain", "bread bag", "كيس صغير", "أكياس صغيرة",
+                   "كيس الخبز")
 _HANDLE_STEMS = frozenset(_stem(fold(word)) for word in (
-    "poignée", "poignées", "anse", "anses", "handle", "handles", "yddin", "yeddin", "مقبض", "مقابض", "يد",
+    "poignée", "poignées", "anse", "anses", "handle", "handles", "yddin", "yeddin", "yedd", "mqabed", "lyddin",
+    "lyeddin", "lmqabed", "مقبض", "مقابض", "يد", "أيدي",
+))
+# Négation placée devant les poignées (« sacs qui n'ont pas de poignées », « li ma fihomch lyddin »,
+# « ما فيهش اليدين », « bags with no handles ») : le sac sans poignées. Entre la négation et le mot
+# « poignée », seuls des mots de liaison ou les verbes « avoir » / « fih » (il y a) sont admis.
+_HANDLE_NEGATIONS = frozenset(_stem(fold(word)) for word in (
+    "sans", "pas", "aucun", "aucune", "without", "no", "not", "bla", "bila", "ma", "machi", "mafihch",
+    "mafihomch", "mafihach", "بلا", "بدون", "ما", "ماشي", "غير", "ليس", "مافيهش", "مافيهمش", "مافيهاش",
+))
+_HANDLE_PRIVATIVES = frozenset({_stem("free")})
+_NEGATION_GAP_WORDS = frozenset(_stem(fold(word)) for word in (
+    "de", "d", "des", "les", "la", "le", "of", "any", "the", "a", "have", "has", "had", "with", "avoir", "ont",
+    "a", "y", "b", "fih", "fiha", "fihom", "fihoum", "fihch", "fihach", "fihomch", "fihoumch", "3ndo", "3ndha",
+    "3endhom", "فيه", "فيها", "فيهم", "فيهش", "فيهاش", "فيهمش", "عندو", "عندها", "عندهم", "ب", "مع",
+))
+
+
+def _negated_handle(stems: Sequence[str]) -> bool:
+    """Vrai quand une négation précède le mot « poignée » (au plus trois mots de liaison entre les deux)."""
+    for index, stem in enumerate(stems):
+        if stem not in _HANDLE_STEMS:
+            continue
+        position = index - 1
+        while position >= 0 and index - position <= 4 and stems[position] in _NEGATION_GAP_WORDS:
+            position -= 1
+        if position >= 0 and index - position <= 4 and stems[position] in _HANDLE_NEGATIONS:
+            return True
+        if index + 1 < len(stems) and stems[index + 1] in _HANDLE_PRIVATIVES:  # « handle-free »
+            return True
+    return False
+# Mots qui peuvent s'intercaler dans un mot-clé sans en changer le sens : articles, prépositions,
+# hésitations d'une note vocale, matière ou couleur du papier (« sans les poignées », « poignées en
+# papier torsadées », « كيس ورقي صغير »). Au plus deux mots intercalés.
+_KEYWORD_FILLERS = frozenset(_stem(fold(word)) for word in (
+    "le", "la", "les", "l", "un", "une", "des", "de", "du", "d", "en", "à", "the", "a", "an", "any", "of", "là",
+    "euh", "heu", "dyal", "dial", "ديال", "اه", "ذي", "ذات", "kraft", "papier", "paper", "ورقي", "ورق", "كرافت",
+    "brun", "marron", "blanc", "blanche", "white", "brown", "naturel",
+))
+_MAX_KEYWORD_GAP = 2
+# Usage alimentaire d'un sac sans mot-clé de construction (« sacs pour les croissants », « أكياس
+# للخبز ») : le catalogue réserve cet usage aux sachets fond plat (sandwichs, tacos, viennoiseries).
+_BAG_STEMS = frozenset(_stem(fold(word)) for word in (
+    "sac", "sacs", "bag", "bags", "sachet", "pochon", "emballage", "emballages", "كيس", "أكياس", "ساك", "صاك",
+    "ساكات", "شكارة", "chkara",
+))
+_FOOD_USAGE_STEMS = frozenset(_stem(fold(word)) for word in (
+    "sandwich", "sandwichs", "sandwiches", "tacos", "viennoiserie", "viennoiseries", "croissant", "croissants",
+    "pain", "pains", "baguette", "baguettes", "khobz", "lkhobz", "msemen", "harcha", "beignet", "beignets",
+    "frites", "fries", "gâteau", "gâteaux", "biscuit", "biscuits", "bonbon", "bonbons", "confiserie", "crêpe",
+    "crêpes", "panini", "shawarma", "chawarma", "bread", "pastries", "pastry", "cookies", "سندويتش", "سندويش",
+    "ساندويتش", "طاكوس", "خبز", "حلويات", "حلوى", "كرواسون", "مسمن", "حرشة", "فطائر", "بريوش", "شاورما",
+    # darija en lettres latines, avec ou sans l'article collé « l »
+    "7lwa", "l7lwa", "7elwa", "l7elwa", "7alwa", "l7alwa", "gato", "lgato", "frit", "lfrit", "croissa",
 ))
 
 
@@ -771,10 +999,12 @@ _HANDLE_STEMS = frozenset(_stem(fold(word)) for word in (
 class _Keyword:
     stems: tuple[str, ...]
     generic: bool
+    usage: bool = False
 
 
 def _build_keyword_index() -> dict[str, tuple[_Keyword, ...]]:
     generic = {tuple(_stems(keyword)) for keyword in _GENERIC_SQUARE_BOTTOM}
+    usage = {tuple(_stems(keyword)) for keyword in _USAGE_KEYWORDS}
     index: dict[str, tuple[_Keyword, ...]] = {}
     for product in PRODUCTS:
         keywords = []
@@ -782,12 +1012,13 @@ def _build_keyword_index() -> dict[str, tuple[_Keyword, ...]]:
             for keyword in words:
                 stems = tuple(_stems(keyword))
                 if stems:
-                    keywords.append(_Keyword(stems, stems in generic))
+                    keywords.append(_Keyword(stems, stems in generic, stems in usage))
         index[product["code"]] = tuple(keywords)
     return index
 
 
 _KEYWORDS = _build_keyword_index()
+_KEYWORD_STEMS = frozenset(stem for keywords in _KEYWORDS.values() for keyword in keywords for stem in keyword.stems)
 _PRODUCT_BY_CODE = {product["code"]: product["type"] for product in PRODUCTS}
 _PRODUCT_BY_STEMS = {tuple(_stems(product["type"])): product["type"] for product in PRODUCTS}
 
@@ -800,8 +1031,59 @@ def _stem_positions(stems: Sequence[str]) -> dict[str, list[int]]:
 
 
 def _contains(stems: Sequence[str], positions: Mapping[str, list[int]], keyword: Sequence[str]) -> bool:
-    size = len(keyword)
-    return any(tuple(stems[index:index + size]) == tuple(keyword) for index in positions.get(keyword[0], ()))
+    """Vrai quand les mots du mot-clé se suivent dans le texte, séparés au plus par deux mots de liaison."""
+    for index in positions.get(keyword[0], ()):
+        position = index
+        for word in keyword[1:]:
+            position += 1
+            skipped = 0
+            while (position < len(stems) and stems[position] != word and stems[position] in _KEYWORD_FILLERS
+                   and skipped < _MAX_KEYWORD_GAP):
+                position += 1
+                skipped += 1
+            if position >= len(stems) or stems[position] != word:
+                break
+        else:
+            return True
+    return False
+
+
+# Aliments dont le nom désigne aussi le commerce qui les vend (« Pâtisserie Nour ») : ils ne comptent
+# comme usage que écrits en minuscules (« des sacs pour mes pâtisseries »).
+_LOWERCASE_FOOD_STEMS = frozenset(_stem(fold(word)) for word in ("pâtisserie", "pâtisseries", "patisserie"))
+
+
+def _usage_product(stems: Sequence[str], lowercase_stems: Iterable[str] = ()) -> str | None:
+    """Produit déduit de l'usage quand aucun mot-clé ne désigne la construction du sac."""
+    present = set(stems)
+    food = present & _FOOD_USAGE_STEMS or set(lowercase_stems) & _LOWERCASE_FOOD_STEMS
+    if present & _BAG_STEMS and food and not present & _HANDLE_STEMS:
+        return _PRODUCT_BY_CODE["SFP"]
+    return None
+
+
+def _lowercase_stems(text: str) -> list[str]:
+    """Racines des mots écrits sans majuscule initiale (tous les mots d'une écriture sans casse)."""
+    return [_stem(fold(word)) for word in _WORD_RE.findall(prepare_text(text)) if not word[0].isupper()]
+
+
+_SUN_LETTERS = "tdrzsn"
+
+
+def _without_darija_article(stem: str) -> str:
+    """Mot darija précédé de l'article collé « l » (« lyddin » → « yddin », « lmsat7in » → « msat7in »).
+
+    Devant une « lettre solaire » (t, d, r, z, s, n), le « l » de l'article s'assimile à la lettre
+    suivante, qui se double : « ssandwich » = « l » + « sandwich », « ttacos » = « l » + « tacos ».
+    """
+    if stem in _KEYWORD_STEMS or len(stem) < 4 or _has_arabic(stem):
+        return stem
+    known = _KEYWORD_STEMS | _HANDLE_STEMS | _FOOD_USAGE_STEMS | _BAG_STEMS
+    if stem.startswith("l") and stem[1:] in known:
+        return stem[1:]
+    if stem[0] == stem[1] and stem[0] in _SUN_LETTERS and stem[1:] in known:
+        return stem[1:]
+    return stem
 
 
 def normalize_product_type(text: Any) -> str | None:
@@ -810,9 +1092,17 @@ def normalize_product_type(text: Any) -> str | None:
     Le texte peut être un nom de produit (« Sachets fond plat »), un code (« SFCPT ») ou un
     message entier. Les mots-clés du catalogue sont cherchés en forme de comparaison
     (:func:`fold`) et par racine légère, donc sans tenir compte des accents, de la casse, du
-    singulier ou du pluriel. Quand plusieurs produits sont cités, le plus spécifique l'emporte :
-    poignées torsadées, puis poignées plates, puis sans poignées, puis fond plat. « Fond carré »
-    seul ne désigne le sac sans poignées que si le texte ne parle pas de poignées.
+    singulier ou du pluriel (pluriels internes de l'arabe compris : « أيدي » pour « يد »). Deux
+    mots de liaison au plus peuvent s'intercaler dans un mot-clé (« sans les poignées »). Un code
+    de produit écrit en majuscules dans le message (« SFCPT ») désigne son produit. Quand
+    plusieurs produits sont cités, le plus spécifique l'emporte : poignées torsadées, puis poignées
+    plates, puis sans poignées, puis fond plat. Les mots-clés d'usage ou de gamme (« premium »,
+    « sac shopping », « petit sac ») cèdent devant un mot-clé de construction. « Fond carré » seul
+    ne désigne le sac sans poignées que si le texte ne parle pas de poignées. Une négation devant
+    les poignées (« qui n'ont pas de poignées », « li ma fihomch lyddin ») désigne le sac sans
+    poignées. Sans aucun mot-clé,
+    un sac destiné à un usage alimentaire (« sacs pour les croissants ») désigne les sachets fond
+    plat, sauf si le texte parle de poignées.
     """
     if not isinstance(text, str) or not text.strip():
         return None
@@ -820,31 +1110,50 @@ def normalize_product_type(text: Any) -> str | None:
     code = text.strip().upper()
     if code in _PRODUCT_BY_CODE:
         return _PRODUCT_BY_CODE[code]
-    stems = _stems(text)
+    listed = {_PRODUCT_BY_CODE[word] for word in _WORD_RE.findall(text) if word.isupper() and word in _PRODUCT_BY_CODE}
+    if len(listed) == 1:
+        return listed.pop()
+    stems = [_without_darija_article(stem) for stem in _stems(text)]
     exact = _PRODUCT_BY_STEMS.get(tuple(stems))
     if exact:
         return exact
     positions = _stem_positions(stems)
+    usage_choice: str | None = None
     for product_code in _PRODUCT_PRECEDENCE:
         matched = [keyword for keyword in _KEYWORDS.get(product_code, ())
                    if _contains(stems, positions, keyword.stems)]
+        if product_code == "SFCSP" and _negated_handle(stems):
+            matched.append(_Keyword(("sans", "poigne"), generic=False))
         if not matched:
             continue
-        if all(keyword.generic for keyword in matched) and _HANDLE_STEMS.intersection(stems):
-            return None
+        if all(keyword.usage for keyword in matched):
+            usage_choice = usage_choice or product_code
+            continue
+        if all(keyword.generic or keyword.usage for keyword in matched):
+            if usage_choice:
+                return _PRODUCT_BY_CODE[usage_choice]
+            if _HANDLE_STEMS.intersection(stems):
+                return None
         return _PRODUCT_BY_CODE[product_code]
-    return None
+    if usage_choice:
+        return _PRODUCT_BY_CODE[usage_choice]
+    return _usage_product(stems, _lowercase_stems(text))
 
 
 # ---------------------------------------------------------------- unités et devises
 
+# Darija en lettres latines : « 7 » note la lettre ح (« 7ba » = حبة, pièce), « k » ou « c » la lettre ك.
 _UNIT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "pièces": ("pièce", "pièces", "piece", "pieces", "pcs", "pc", "pce", "pces", "unité", "unités", "u",
-               "unit", "units", "hba", "hbat", "حبة", "حبات", "قطعة", "قطع", "وحدة", "وحدات"),
+               "unit", "units", "hba", "hbat", "7ba", "7bat", "7abba", "7abbat", "7aba", "7abat", "habba", "habbat",
+               "حبة", "حبات", "قطعة", "قطع", "وحدة", "وحدات"),
     "kg": ("kg", "kgs", "kilo", "kilos", "kilogramme", "kilogrammes", "kilogram", "kilograms", "كيلو", "كلغ",
-           "كغ"),
-    "carton": ("carton", "cartons", "ctn", "ctns", "كرتون", "كارطون", "قرطون", "كراطن"),
-    "paquet": ("paquet", "paquets", "pqt", "pack", "packs", "باكية", "باكيات", "باكو"),
+           "كغ", "كيلوغرام", "كيلوغرامات", "كيلوات"),
+    "carton": ("carton", "cartons", "ctn", "ctns", "cartonat", "kartona", "kartonat", "kartouna", "cartona",
+               "كرتون", "كارطون", "قرطون", "كراطن", "كرتونة", "كرطونة", "كارطونة", "كرتونات", "كرطونات",
+               "كارطونات", "كراتين"),
+    "paquet": ("paquet", "paquets", "pqt", "pack", "packs", "paket", "pakiya", "bakiya", "pakiyat", "bakiyat",
+               "باكية", "باكيات", "باكو", "بواكي", "رزمة", "رزم"),
     "US": ("us",),
 }
 _UNIT_LOOKUP = {fold(word): unit for unit, words in _UNIT_SYNONYMS.items() for word in words}
@@ -872,7 +1181,23 @@ def normalize_unit(value: Any) -> str | None:
     if text is None:
         return None
     key = fold(text).strip(" .").replace("(s)", "s")
-    return _UNIT_LOOKUP.get(key) or _UNIT_LOOKUP.get(key.replace(".", "")) or text
+    found = _UNIT_LOOKUP.get(key) or _UNIT_LOOKUP.get(key.replace(".", "")) or _darija_article_unit(key)
+    return found or text
+
+
+_LATIN_UNIT_PREFIXES = ("dl", "l")
+_ARABIC_UNIT_PREFIXES = ("دال", "بال", "فال", "ال", "د", "ب")
+
+
+def _darija_article_unit(key: str) -> str | None:
+    """Unité précédée d'un article ou d'une préposition collés (« lkartonat » = les cartons, « dlkartonat »
+    = des cartons, « دالكراطن », « بالكرطونة »)."""
+    prefixes = _ARABIC_UNIT_PREFIXES if _has_arabic(key) else _LATIN_UNIT_PREFIXES
+    for prefix in prefixes:
+        rest = key[len(prefix):]
+        if key.startswith(prefix) and len(rest) >= 3 and rest in _UNIT_LOOKUP:
+            return _UNIT_LOOKUP[rest]
+    return None
 
 
 def normalize_currency(value: Any) -> str | None:
@@ -1074,15 +1399,195 @@ def _pattern_regex(pattern: str) -> str:
     return rf"(?<!\w){body}(?!\w)"
 
 
-_REORDER_RE = re.compile("|".join(_pattern_regex(pattern) for pattern in ALL_REORDER_PATTERNS))
+def _alternatives(phrases: Iterable[str]) -> str:
+    """Expression régulière qui reconnaît l'une des expressions (forme de comparaison).
+
+    Entre deux mots, l'espace et l'apostrophe sont facultatifs : « l'mra », « l mra » et « lmra »
+    sont trois écritures du même groupe darija (article collé ou séparé).
+    """
+    bodies = {r"[\s']*".join(re.escape(part) for part in re.split(r"[\s']+", fold(phrase)) if part)
+              for phrase in phrases}
+    return "(?:" + "|".join(sorted(bodies, key=len, reverse=True)) + ")"
+
+
+def _sequence(*groups: Iterable[str]) -> str:
+    """Suite de groupes d'expressions séparés par des espaces (ou des apostrophes)."""
+    return r"[\s']+".join(_alternatives(group) for group in groups)
+
+
+# Familles d'expressions de renouvellement. Chaque famille combine un mot de comparaison (« comme »,
+# « kif », « بحال », « same as ») ou un verbe de répétition (« refaire », « 3awd », « عاود »,
+# « repeat ») avec une référence à l'habitude ou à une commande passée (« la dernière fois »,
+# « l'mra li fatet », « الشهر الماضي », « last month »). Une autre famille qualifie la commande
+# d'habituelle (« notre commande habituelle », « ttalab dyal dima », « طلبيتنا المعتادة »,
+# « our usual order »).
+# « La même commande que », « même livraison que », « les mêmes quantités que » : article, « même », nom, « que ».
+_FR_SAME_NOUNS = ("commande", "chose", "livraison", "envoi", "quantite", "quantites", "produit", "produits",
+                  "article", "articles", "marchandise", "reference", "references")
+_FR_COMPARE = (
+    "comme", "comme pour", "comme lors de", "pareil que", "pareille que", "identique a", "idem que",
+    "la meme que", "le meme que", "exactement comme", "tout comme",
+    *(f"{article}{noun} que" for article in ("la meme ", "le meme ", "les memes ", "meme ", "memes ")
+      for noun in _FR_SAME_NOUNS),
+    # Devant « avant » ou « à », « que » s'élide : « même chose qu'avant ».
+    "meme chose qu", "la meme chose qu", "pareil qu", "pareille qu", "idem qu", "la meme commande qu",
+    "meme commande qu", "meme livraison qu", "la meme livraison qu",
+)
+_FR_PAST = (
+    "d'habitude", "d'hab", "dhab", "d'ordinaire", "l'habitude", "precedemment", "d'avant", "a l'accoutumee",
+    "de coutume", "avant", "a l'habitude", "habituellement", "a la derniere fois", "la derniere fois",
+    "la fois derniere", "la fois passee", "la fois precedente", "l'autre fois",
+    "la derniere", "la precedente", "la derniere commande", "la commande precedente", "notre derniere commande",
+    "ma derniere commande", "la derniere livraison", "notre derniere livraison", "la livraison precedente",
+    "le dernier envoi", "l'envoi precedent", "le mois dernier", "le mois passe", "le mois precedent",
+    "la semaine derniere", "la semaine passee", "l'an dernier", "l'annee derniere", "l'annee passee",
+)
+_FR_REPEAT_VERBS = ("refaire", "refaites", "refais", "refaisons", "renouveler", "renouvelez", "renouvelle",
+                    "renouvelons", "reconduire", "reconduisez", "repeter", "repetez", "reproduire", "reproduisez",
+                    "reprendre", "reprenez", "reprenons", "repasser", "repassez", "repassons")
+# « Celle de la commande précédente », « celle du mois dernier » : démonstratif qui reprend « quantité ».
+_FR_DEMONSTRATIVES = ("celle", "celui", "ceux", "celles")
+_FR_LINKS = ("de", "du", "des", "d")
+# « Ce que nous avions commandé » : la commande déjà passée, reprise par un verbe de répétition.
+_FR_ALREADY_ORDERED = ("ce que nous avons commande", "ce que nous avions commande", "ce que nous avons deja commande",
+                       "ce que j'ai commande", "ce que j'avais commande", "ce qu'on a commande",
+                       "ce qu'on avait commande", "ce que je commande d'habitude", "ce que nous commandons d'habitude",
+                       "ce que nous avons pris", "ce que j'ai pris", "ce qu'on avait pris")
+_FR_PRONOUNS = ("nous", "me", "moi", "m", "vous", "lui", "exactement", "svp")
+_FR_REPEAT_OBJECTS = ("la commande", "notre commande", "ma commande", "la meme commande", "la meme chose",
+                      "exactement la commande", "exactement la meme commande", "exactement la meme chose",
+                      "la derniere commande", "notre derniere commande", "ma derniere commande",
+                      "la commande precedente", "nos commandes", "la meme", "commande", "le meme envoi",
+                      "notre dernier envoi", "le dernier envoi", "l'envoi precedent", "la derniere livraison",
+                      "notre derniere livraison", "la livraison precedente")
+# « l'envoi d'octobre », « la livraison du mois dernier » : commande, envoi ou livraison datés du passé.
+_FR_DATED_DELIVERIES = ("la commande", "notre commande", "l'envoi", "notre envoi", "la livraison", "notre livraison")
+_FR_PAST_DATES = (
+    "du mois dernier", "du mois passe", "de la semaine derniere", "de la semaine passee",
+    *(f"de {month}" for month in _MONTHS if len(month) > 3 and not _has_arabic(month)),
+    *(f"d'{month}" for month in _MONTHS if len(month) > 3 and month[0] in "aeiou"),
+)
+_FR_USUAL_NOUNS = ("la commande", "notre commande", "ma commande", "nos commandes", "la livraison",
+                   "notre livraison")
+_FR_USUAL = ("habituelle", "habituelles", "reguliere", "regulieres")
+
+_DARIJA_COMPARE = ("kif", "kima", "b7al", "bhal", "bhel", "b7el", "f7al", "fhal")
+_DARIJA_TIMES = ("mra", "merra", "marra", "khatra", "khetra", "commande", "la commande", "komanda", "talab",
+                 "ttalab", "chhar", "chher", "ch'har", "simana", "ssimana", "3am")
+_DARIJA_PAST_QUALIFIERS = ("li fatet", "lli fatet", "li fat", "lli fat", "lfayta", "lfayt", "fayta", "li dazt",
+                           "li daz", "lakhra", "lekhra", "l'akhira", "dyal qbel", "dyal 9bel", "li qbel", "li 9bel")
+_DARIJA_HABIT = ("dima", "dimma", "dayman", "dayma", "daymen", "l3ada", "3ada", "l'3ada", "kol mra", "koll mra",
+                 "kolla mra", "kol merra", "kol marra")
+_DARIJA_ARTICLES = ("l", "el", "dik")
+_DARIJA_SAME = ("nafs", "nfs", "nefs", "nefss", "nafss")
+_DARIJA_SAME_OBJECTS = ("la commande", "l commande", "commande", "komanda", "l komanda", "talab", "ttalab", "tlab",
+                        "l7aja", "7aja", "chi", "sel3a", "ssel3a")
+_DARIJA_REPEAT = ("3awd", "3awed", "3awdo", "3awdou", "3awdi", "n3awdo", "n3awed", "3iwd", "jedded", "jeddedo",
+                  "jeddedou", "njeddedo", "jdded", "jddedo")
+_DARIJA_TO_US = ("lia", "lina", "li", "lya", "lna", "liya")
+_DARIJA_OF_WORDS = ("dyal", "dial", "d")
+_DARIJA_OF_US = ("dyalna", "dialna", "dyali", "diali")
+
+_AR_COMPARE = ("كيف", "كيما", "بحال", "مثل", "كما", "زي")
+_AR_TIMES = ("المرة", "المره", "الخطرة", "الطلبية", "الطلب", "الكوموند", "الكومند", "الشهر", "السيمانة",
+             "الأسبوع", "العام", "السنة")
+_AR_PAST_QUALIFIERS = ("الفايتة", "الفايت", "اللي فاتت", "اللي فات", "الي فاتت", "الي فات", "اللي دازت",
+                       "الماضية", "الماضي", "السابقة", "السابق", "الأخيرة", "الأخير")
+_AR_HABIT = ("ديما", "العادة", "عادة", "عادتنا", "عادتي", "المعتاد", "المعتادة")
+# Nom de la commande, avec l'article ou un possessif collé (« طلبيتنا », notre commande).
+_AR_ORDER_NOUNS = ("الطلبية", "الطلب", "الكوموند", "الكومند", "طلبية", "طلب", "طلبيتنا", "طلبيتي", "طلبنا", "طلبي",
+                   "طلبياتنا", "الطلبيات", "طلباتنا")
+_AR_SAME_OBJECTS = (*_AR_ORDER_NOUNS, "السلعة", "الشي", "الحاجة")
+_AR_REPEAT = ("عاود", "عاودو", "عاودوا", "عاودي", "نعاودو", "نعاود", "أعد", "أعيدوا", "أعيدو", "إعادة",
+              "تجديد", "جدد", "جددوا", "جددو", "نجدد", "كرر", "كرروا", "تكرار")
+_AR_TO_US = ("ليا", "لينا", "لنا", "لي")
+# Mêmes quantités ou mêmes produits qu'une commande passée (« نفس الكمية ديال الشهر الماضي »).
+_AR_SAME_AMOUNTS = ("الكمية", "الكميات", "السلعة", "المنتوج", "المنتج", "المنتجات", "الأكياس", "الساشيات")
+_AR_PAST_LINKS = ("ديال", "د", "بحال", "كيف", "مثل", "كما في", "ف", "في")
+_DARIJA_SAME_AMOUNTS = ("lkmiya", "lkemmiya", "lkamiya", "l9adr", "lqadr", "sel3a", "ssel3a", "sachiyat")
+_DARIJA_PAST_LINKS = ("dyal", "dial", "d", "kif", "b7al", "bhal", "f")
+_AR_USUAL = ("المعتادة", "المعتاد", "العادية", "العادي", "ديال ديما", "ديال العادة", "ديالنا ديال ديما")
+
+_EN_COMPARE = ("same as", "the same as", "same order as", "the same order as", "same quantities as",
+               "the same quantities as", "same quantity as", "the same quantity as", "same items as",
+               "the same items as", "like", "just like", "exactly like", "as")
+_EN_PAST = ("usual", "last time", "the last time", "the previous time", "last month", "last week", "last year",
+            "last order", "the last order", "our last order", "my last order", "the previous order",
+            "previous order", "our previous order", "previously", "the previous one", "the last one",
+            "last delivery", "the last delivery", "our last delivery", "before", "earlier", "always")
+# « repeat last month's order » : le complément de temps possessif remplace le qualificatif.
+_EN_PAST_POSSESSIVES = ("last month's", "last week's", "last year's", "last time's")
+_EN_LINKS = ("in", "from", "on", "with", "for")
+# « the same as my previous order », « like the last one » : déterminant, qualificatif du passé, nom.
+_EN_PAST_DETERMINERS = ("our", "my", "your", "the", "that", "this", "last")
+_EN_PAST_QUALIFIERS = ("last", "previous", "prior", "latest", "earlier", "usual", "regular")
+_EN_PAST_NOUNS = ("order", "delivery", "purchase", "shipment", "time", "one", "batch", "month", "week", "year")
+_EN_REPEAT = ("repeat", "renew", "redo", "duplicate", "re-order", "reorder")
+_EN_DETERMINERS = ("our", "my", "the", "that", "a")
+_EN_QUALIFIERS = ("last", "previous", "usual", "same", "latest", "regular", "standing", "most recent")
+_EN_ORDER_NOUNS = ("order", "purchase")
+
+_REORDER_GRAMMAR = (
+    rf"(?<!\w){_sequence(_FR_COMPARE, _FR_PAST)}(?!\w)",
+    rf"(?<!\w){_alternatives(_FR_COMPARE)}[\s']+{_alternatives(_FR_DEMONSTRATIVES)}[\s']+"
+    rf"(?:{_alternatives(_FR_PAST_DATES)}|{_alternatives(_FR_LINKS)}[\s']*{_alternatives(_FR_PAST)})(?!\w)",
+    rf"(?<!\w){_alternatives(_FR_REPEAT_VERBS)}(?:[\s'-]+{_alternatives(_FR_PRONOUNS)})*[\s']+"
+    rf"{_alternatives(_FR_ALREADY_ORDERED)}(?!\w)",
+    rf"(?<!\w){_alternatives(_FR_REPEAT_VERBS)}(?:[\s'-]+{_alternatives(_FR_PRONOUNS)})*[\s']+"
+    rf"{_alternatives(_FR_REPEAT_OBJECTS)}(?!\w)",
+    rf"(?<!\w){_alternatives(_FR_REPEAT_VERBS)}(?:[\s'-]+{_alternatives(_FR_PRONOUNS)})*[\s']+"
+    rf"{_sequence(_FR_DATED_DELIVERIES, _FR_PAST_DATES)}(?!\w)",
+    rf"(?<!\w){_sequence(_FR_USUAL_NOUNS, _FR_USUAL)}(?!\w)",
+    rf"(?<!\w){_alternatives(_DARIJA_COMPARE)}[\s']+(?:{_alternatives(_DARIJA_HABIT)}|"
+    rf"(?:{_alternatives(_DARIJA_ARTICLES)}[\s']*){{0,2}}{_alternatives(_DARIJA_TIMES)}[\s']+"
+    rf"{_alternatives(_DARIJA_PAST_QUALIFIERS)})(?!\w)",
+    rf"(?<!\w){_sequence(_DARIJA_SAME, _DARIJA_SAME_OBJECTS)}(?!\w)",
+    rf"(?<!\w){_alternatives(_DARIJA_REPEAT)}(?:[\s']*{_alternatives(_DARIJA_TO_US)})?[\s']+"
+    rf"(?:{_alternatives(_DARIJA_SAME)}[\s']+)?{_alternatives(_DARIJA_SAME_OBJECTS)}(?!\w)",
+    rf"(?<!\w){_alternatives(_DARIJA_SAME_OBJECTS)}[\s']+(?:{_alternatives(_DARIJA_OF_US)}[\s']+)?"
+    rf"{_alternatives(_DARIJA_OF_WORDS)}[\s']+{_alternatives(_DARIJA_HABIT)}(?!\w)",
+    rf"(?<!\w)[وف]?{_alternatives(_AR_COMPARE)}\s+(?:{_alternatives(_AR_HABIT)}|"
+    rf"{_sequence(_AR_TIMES, _AR_PAST_QUALIFIERS)})(?!\w)",
+    rf"(?<!\w)[وف]?ك{_sequence(_AR_TIMES, _AR_PAST_QUALIFIERS)}(?!\w)",
+    rf"(?<!\w)[وف]?نفس\s+{_alternatives(_AR_SAME_OBJECTS)}(?!\w)",
+    rf"(?<!\w)[وف]?{_alternatives(_AR_REPEAT)}(?:\s+{_alternatives(_AR_TO_US)})?\s+(?:نفس\s+)?"
+    rf"{_alternatives(_AR_SAME_OBJECTS)}(?!\w)",
+    rf"(?<!\w)[وف]?{_sequence(_AR_ORDER_NOUNS, _AR_USUAL)}(?!\w)",
+    rf"(?<!\w)[وفب]?نفس\s+{_alternatives(_AR_SAME_AMOUNTS)}\s+(?:{_alternatives(_AR_PAST_LINKS)}\s+)?"
+    rf"{_sequence(_AR_TIMES, _AR_PAST_QUALIFIERS)}(?!\w)",
+    rf"(?<!\w){_alternatives(_DARIJA_SAME)}[\s']+{_alternatives(_DARIJA_SAME_AMOUNTS)}[\s']+"
+    rf"(?:{_alternatives(_DARIJA_PAST_LINKS)}[\s']+)?(?:{_alternatives(_DARIJA_ARTICLES)}[\s']*){{0,2}}"
+    rf"{_alternatives(_DARIJA_TIMES)}[\s']+{_alternatives(_DARIJA_PAST_QUALIFIERS)}(?!\w)",
+    rf"(?<!\w){_sequence(_EN_COMPARE, _EN_PAST)}(?!\w)",
+    rf"(?<!\w){_alternatives(_EN_COMPARE)}[\s']+{_alternatives(_EN_LINKS)}[\s']+{_alternatives(_EN_PAST)}(?!\w)",
+    rf"(?<!\w){_alternatives(_EN_COMPARE)}[\s']+(?:{_alternatives(_EN_PAST_DETERMINERS)}[\s']+)?"
+    rf"{_alternatives(_EN_PAST_QUALIFIERS)}[\s']+{_alternatives(_EN_PAST_NOUNS)}(?!\w)",
+    rf"(?<!\w){_alternatives(_EN_REPEAT)}(?:[\s']+{_alternatives(_EN_DETERMINERS)})?"
+    rf"(?:[\s']+{_alternatives((*_EN_QUALIFIERS, *_EN_PAST_POSSESSIVES))})?[\s']+"
+    rf"{_alternatives(_EN_ORDER_NOUNS)}(?!\w)",
+    r"(?<!\w)(?:the|our|my)[\s']+usual(?=\s*(?:$|[.!,;]|please|pls|order|thanks))",
+    r"(?<!\w)(?:usual|regular|standing)[\s']+order(?!\w)",
+    r"(?<!\w)same[\s']+again(?!\w)",
+)
+
+_REORDER_RE = re.compile("|".join([*(_pattern_regex(pattern) for pattern in ALL_REORDER_PATTERNS),
+                                   *_REORDER_GRAMMAR]))
 
 
 def detect_reorder(text: Any) -> bool:
     """Vrai quand le texte demande de renouveler une commande (« comme d'habitude », « kif dima »).
 
-    Les expressions viennent de ``catalog.REORDER_PATTERNS`` ; la comparaison ignore la casse,
-    les accents, le type d'apostrophe et le nombre d'espaces. En écriture arabe, la conjonction
-    collée « و » ou « ف » est acceptée devant l'expression.
+    Deux sources : les expressions de ``catalog.REORDER_PATTERNS`` et leurs combinaisons
+    régulières, par famille et par langue : mot de comparaison suivi d'une référence à
+    l'habitude ou à une commande passée (« comme le mois dernier », « même livraison que la
+    semaine dernière », « b7al l'mra li fatet », « بحال الشهر اللي فات », « same as last week »),
+    « même commande » (« nafs la commande », « نفس الكوموند »), verbe de répétition suivi de la
+    commande (« refaire la commande », « 3awdo lina la commande », « عاود نفس الطلبية »,
+    « repeat last month's order »). Un verbe qui peut aussi désigner le renvoi d'une livraison
+    perdue (« renvoyer ») n'est pas une famille : le message reste ambigu. La comparaison
+    ignore la casse, les accents, le type d'apostrophe et le nombre d'espaces. En écriture arabe,
+    la conjonction collée « و » ou « ف » est acceptée devant l'expression. « b7al » seul signifie
+    « environ » ou « comme » et ne suffit pas.
     """
     if not isinstance(text, str) or not text:
         return False
@@ -1094,7 +1599,8 @@ def detect_reorder(text: Any) -> bool:
 _COUNT_STEMS = frozenset(_stem(fold(word)) for word in (
     "sachet", "sac", "sachiyat", "sachiat", "sachyat", "sachiya", "sachia", "bag", "sack", "poche", "pochette",
     "emballage", "pièce", "pcs", "pc", "pce", "u", "unité", "unit", "hba", "carton", "paquet", "pack", "kg",
-    "kilo", "ساشي", "ساشة", "ساك", "كيس", "أكياس", "قطعة", "حبة", "وحدة", "كرتون", "باكية",
+    "kilo", "ساشي", "ساشة", "ساك", "صاك", "كيس", "أكياس", "قطعة", "حبة", "وحدة", "كرتون", "باكية",
+    *(word for words in _UNIT_SYNONYMS.values() for word in words if word != "us"),
 ))
 _NON_COUNT_AFTER = _folded_set((
     "mad", "dh", "dhs", "dirham", "dirhams", "drh", "درهم", "دراهم", "eur", "euro", "euros", "€", "usd", "$",
@@ -1104,6 +1610,10 @@ _NON_COUNT_AFTER = _folded_set((
     "fois", "face", "faces", "côté", "côtés", "day", "days", "week", "weeks", "month", "months", "year",
     "years", "color", "colors", "colour", "colours", "side", "sides", "times", "يوم", "أيام", "ساعة",
     "ساعات", "سنة", "شهر", "أشهر", "rue", "avenue", "av", "bd", "boulevard", "route", "étage", "°",
+    # durées en darija (lettres latines et arabes) : « 3 iyam » (trois jours), « jouj simanat »
+    "iyam", "ayam", "ayyam", "iyyam", "yam", "nhar", "nhara", "simana", "simanat", "sa3a", "sa3at", "chhar",
+    "chhor", "chhour", "chher", "3am", "snin", "d9i9a", "dqiqa", "lyam", "ليام", "نهار", "سيمانة", "سيمانات",
+    "أسبوع", "أسابيع", "دقيقة", "دقائق", "شهور", "سنين", "سنوات", "hours",
 ))
 
 _LABEL_BEFORE_RE = re.compile(
@@ -1122,22 +1632,71 @@ _DELTA_BEFORE_RE = re.compile(
 )
 _INSTEAD_BEFORE_RE = re.compile(r"(?:au lieu de|lieu d '|instead of|بدل|عوض|f blast|blast)$")
 _INSTEAD_AFTER_RE = re.compile(r"^(?:au lieu|instead of|بدل|عوض|f blast|blast)(?!\S)")
+# Négation juste avant le nombre : « machi 3000 » (pas 3000), « not 3000 », « ماشي 3000 ».
+# Reprise d'une quantité dictée ou écrite : le nombre qui suit « non », « plutôt », « pardon », « en
+# fait », « I mean », « لا » ou « la la » remplace celui qui précède (« 3000 sacs, euh non, 3500 sacs »).
+_CORRECTION_BEFORE_RE = re.compile(
+    r"(?<!\S)(?:non|plutot|pardon|enfin|en fait|finalement|oups|je veux dire|je voulais dire|correction|no|"
+    r"sorry|i mean|rather|actually|make it|in fact|la la|smeh lia|smhli|ghalt|khelliha|khalliha|dirha|"
+    r"سمح ليا|عفوا|لا|بل|خليها|في الحقيقة)(?: (?:euh|heu|uh|اه))?$"
+)
+_NEGATION_BEFORE_RE = re.compile(r"(?<!\S)(?:machi|mashi|machy|ماشي|مشي|ليس|pas|not)(?: (?:l|la|le|les|the))?$")
+# Nombre distributif ou contenu d'un conditionnement : « كل ١٠٠ كيس » (par 100 sacs), « chaque 50 »,
+# « en paquets de 100 », « cartons de 500 », « packs of 50 », « باكية فيها 100 ».
+_DISTRIBUTIVE_BEFORE_RE = re.compile(r"(?<!\S)(?:par|per|each|every|chaque|كل|lkol|kol|koll|kul)$")
+_CONTAINER_WORDS = _folded_set(("lot", "lots", "boite", "boites", "boîte", "boîtes", "box", "boxes", "bundle",
+                                "bundles", "ballot", "ballots", "rouleau", "rouleaux", "pack", "packs", "paquet",
+                                "paquets", "carton", "cartons", "sachet", "sachets"))
+_CONTAINER_LINKS = _folded_set(("de", "d", "of", "dyal", "dial", "ديال", "فيه", "فيها", "fih", "fiha", "b", "à"))
+# Quantité minimale demandée dans une question (« le minimum de commande », « minimum order »,
+# « الحد الأدنى للطلب ») : ce n'est pas une quantité commandée.
+_MINIMUM_RE = re.compile(r"(?<!\S)(?:moq|minimum|min|الحد الادني|الادني|ادني)(?!\S)")
+_MINIMUM_CONTEXT_RE = re.compile(r"(?<!\S)(?:commande|commander|order|ordering|achat|طلب|للطلب|الطلب|moq)(?!\S)")
+# Adverbes d'approximation : la quantité approximative donne le nombre cité (« environ 800 »,
+# « b7al 4000 », « about two thousand », « حوالي 500 »).
+_APPROXIMATION_BEFORE_RE = re.compile(
+    r"(?<!\S)(?:environ|approximativement|a peu pres|grosso modo|about|around|approximately|roughly|some|"
+    r"b7al|bhal|ta9riban|taqriban|chi|تقريبا|حوالي|حوالى|نحو|قرابة|شي)$"
+)
+# Fourchette de quantités : « entre 2000 et 3000 », « de 2000 à 3000 », « 2000 à 3000 », « 2000-3000 »,
+# « between 2,000 and 3,000 », « من 2000 حتى 3000 » (bornes lues séparément).
+_RANGE_LINKS = _folded_set(("a", "à", "au", "-", "et", "to", "and", "ou", "or", "l", "hta", "7ta", "حتى", "إلى",
+                            "الى", "ل", "w", "و"))
+_RANGE_OPENERS = _folded_set(("entre", "between", "de", "from", "mn", "men", "بين", "من", "ما بين"))
 _ORDER_INTENT_RE = re.compile(
     r"(?<!\w)(?:"
     r"je voudrais|nous voudrions|on voudrait|je veux|nous voulons|on veut|souhaite commander|"
-    r"souhaitons commander|commander|commandons|passer (?:une )?commande|bon de commande|"
-    r"il (?:me|nous) faut|il (?:me|nous) faudrait|(?:j ?' ?ai|nous avons|on a) besoin|besoin de|"
-    r"livrer|livrez|preparer|preparez|envoyer|envoyez|enregistrer|je prends|nous prenons|on prend|"
-    r"on part sur|confirmons (?:une|la|notre) commande|mettre|"
+    r"souhaitons commander|commander|commandons|(?:je|on) commande|passer (?:une )?commande|bon de commande|"
+    r"il (?:(?:me|nous|m ?'|en) ?){1,2}(?:faut|faudrait|faudra)|"
+    r"(?:j ?' ?(?:en )?(?:ai|aurai)|nous (?:en )?(?:avons|aurons)|on (?:en )?(?:a|aura)) besoin|besoin de|"
+    r"livrer|livrez|preparer|preparez|envoyer|envoyez|enregistrer|fournir|fournissez|expedier|expediez|"
+    r"reserver|reservez|je prends|nous prenons|on prend|on part sur|confirmons (?:une|la|notre) commande|"
+    r"je (?:vous )?confirme (?:la |ma |notre |une )?commande|mettre|"
+    # Acceptation d'un devis reçu : le devis devient un bon de commande.
+    r"(?:je (?:vous )?confirme|nous confirmons|j ?' ?accepte|nous acceptons) (?:le |notre |votre |ce )?devis|"
+    r"bon pour accord|(?:i|we) (?:confirm|accept) (?:the|your|our) (?:quote|quotation|offer)|"
+    # Pronoms compléments entre le sujet et le verbe : « je vous en prends », « j'en veux », « on en prend ».
+    r"(?:je|j ?'|nous|on) ?(?:(?:vous|te|t ?'|en|y|les|le|la|l ?'|lui|leur|me|m ?') ?){1,3}"
+    r"(?:prends|prendrai|prendrais|prenons|prendrons|prend|veux|voudrais|voulons|voudrions|veut|voudrait|"
+    r"commande|commanderai|commanderais|commandons)|"
+    r"(?:vais|va|allons|vas) (?:(?:vous|en) )?(?:prendre|commander)|"
     # « bghit » suivi d'un autre verbe (« bghit n3ref », je veux savoir) n'est pas une commande,
     # sauf les verbes d'achat (« bghit nakhod », « bghit nchri »).
-    r"(?:bghit|bghina|bgheet)(?!\s+n(?!akhod|akhd|chri|commandi)[^\W_])|"
-    r"khassni|khasni|khessni|khassna|khasna|3tini|3tina|sift|siftli|siftlia|siftlina|sifto|siftou|tsiftoli|"
-    r"jib|jibli|nakhod|nchri|"
+    r"(?:bghit|bghina|bgheet|bgit)(?!\s+n(?!akhod|akhd|chri|commandi)[^\W_])|"
+    r"khassni|khasni|khessni|khassna|khasna|5assni|5asni|5assna|3tini|3tina|3tiwni|3tiwna|sift|siftli|"
+    r"siftlia|siftlina|sifto|siftou|tsiftoli|jib|jibli|jibo|jibou|jiboli|nakhod|nakhdo|nchri|nchriw|"
+    r"dir lia|dir lina|diro lia|diro lina|dirou lina|dirli|dirlina|wajjad lia|wajjdo lia|wajdo lina|"
+    r"sejjel|sajjal|sejlo|sajlo|"
     r"would like|want to order|wish to order|to order|please send|send|please deliver|deliver|we need|"
-    r"i need|i want|we want|place an order|order ?:|"
-    r"(?:بغيت|بغينا)(?!\s+ن(?!اخد|شري)\w)|خاصني|خصني|خاصنا|خصنا|عطيني|عطينا|صيفط|صيفطو|صيفطلي|نطلب|نرغب|نود|"
-    r"نريد|اريد|ابغي|جيب"
+    r"(?:can|could|may) (?:i|we) (?:get|have|order)|"
+    r"(?:je|on|nous) (?:peux|peut|pouvons|pourrais|pourrait|pourrions) (?:avoir|recevoir|commander)|"
+    r"i need|i want|we want|place an order|order ?:|please process|please supply|supply|we require|"
+    r"(?:i|we) ?' ?(?:d|ll) (?:like|need|want|take)|(?:i|we) will (?:need|take)|"
+    r"(?:nbghi|nbghiw)(?!\s+n(?!akhod|akhd|chri|commandi)[^\W_])|"
+    r"(?:بغيت|بغينا|نبغي|نبغيو|نبغو)(?!\s+ن(?!اخد|شري)\w)|خاصني|خصني|خاصنا|خصنا|عطيني|عطينا|عطيونا|صيفط|صيفطو|صيفطلي|"
+    r"صيفطولي|صيفطو لينا|نطلب|نرغب|نود|نريد|اريد|ابغي|جيب|جيبو|تزويدنا|زودونا|زودنا|الرجاء ارسال|"
+    r"يرجي ارسال|الرجاء تزويد|يرجي تزويد|ديرو ليا|دير ليا|ديرلي|وجد ليا|وجدو ليا|حضر ليا|حضرو ليا|سجل ليا|"
+    r"سجلو|نحتاج|نحتاجو|محتاجين|محتاج|بحاجة الي"
     r")(?!\w)"
 )
 
@@ -1148,6 +1707,9 @@ class _QuantityCandidate:
     score: int
     position: int
     unit: str | None
+    start: int = 0
+    end: int = 0
+    corrected: bool = False
 
 
 def _window_before(tokens: Sequence[_Token], index: int, size: int) -> list[_Token]:
@@ -1163,6 +1725,21 @@ def _window_before(tokens: Sequence[_Token], index: int, size: int) -> list[_Tok
     return window
 
 
+def _words_before(tokens: Sequence[_Token], index: int, size: int) -> list[_Token]:
+    """Mots qui précèdent ``tokens[index]`` dans la même phrase, virgules et tirets ignorés."""
+    window: list[_Token] = []
+    position = index - 1
+    while position >= 0 and len(window) < size:
+        token = tokens[position]
+        if token.kind == "nl" or (token.kind == "punct" and token.text not in ",-"):
+            break
+        if token.kind != "punct":
+            window.append(token)
+        position -= 1
+    window.reverse()
+    return window
+
+
 def _window_after(tokens: Sequence[_Token], index: int, size: int, *, stop_at_number: bool) -> list[_Token]:
     window: list[_Token] = []
     position = index
@@ -1170,7 +1747,7 @@ def _window_after(tokens: Sequence[_Token], index: int, size: int, *, stop_at_nu
         token = tokens[position]
         if token.kind == "nl" or (token.kind == "punct" and token.text in _BOUNDARY_PUNCT):
             break
-        if stop_at_number and token.kind == "num":
+        if stop_at_number and (token.kind == "num" or _word_number(token) is not None):
             break
         window.append(token)
         position += 1
@@ -1218,8 +1795,102 @@ def _count_noun(after: Sequence[_Token], suffix: str) -> str | None:
     if suffix and (suffix in _COUNT_SUFFIXES or _stem(suffix) in _COUNT_STEMS):
         return suffix
     for token in after:
-        if token.kind == "word" and _stem(token.text) in _COUNT_STEMS:
+        if token.kind == "word" and (_stem(token.text) in _COUNT_STEMS or _darija_article_unit(token.text)):
             return token.text
+    return None
+
+
+_LINK_WORDS = _folded_set(("de", "d", "des", "du", "of", "dyal", "dial", "ديال", "د", "من"))
+
+
+# Nombre placé après la description de l'article, sans verbe de commande ni unité (« sachets fond
+# plat : 5000 », « sac bla yddin 3000 3afak ») : la quantité suit le produit. Mots qui, juste devant
+# le nombre, en font autre chose qu'une quantité : prix (« à 45 »), jour du mois (« pour le 15 »),
+# contenu d'un conditionnement (« de 500 »), numéro de commande ou de devis.
+_NOT_QUANTITY_LINKS = _folded_set((
+    "a", "à", "at", "pour", "for", "de", "d", "of", "par", "per", "en", "in", "sur", "du", "des", "au", "aux",
+    "avec", "with", "le", "la", "les", "l", "the", "avant", "apres", "before", "after", "by", "jusqu", "vers",
+    "f", "fi", "b", "dyal", "dial", "ديال", "ب", "ل", "في", "من", "ف", "commande", "order", "cmd", "devis",
+    "ou", "or", "et", "and", "w", "و", "entre", "between", "from", "to", "mn", "men",
+))
+_ITEM_SEPARATORS = frozenset(",-:=×*" + _MASK_CHAR)
+_ITEM_WINDOW = 8
+# Un article cité parmi les trois mots qui précèdent le nombre suffit ; un article plus éloigné (« des sacs
+# avec cordelette pour mon concept store, 150 ») exige que le nombre termine la phrase, éventuellement
+# suivi d'une formule de politesse.
+_ITEM_NEAR_WORDS = 3
+_CLOSING_FILLERS = _folded_set((
+    "svp", "stp", "merci", "please", "pls", "thanks", "s", "il", "vous", "plait", "3afak", "afak", "عافاك", "من",
+    "فضلكم", "فضلك", "pcs", "'",
+))
+# Racines trop courantes pour dire qu'un nombre qui suit décrit un article (« sans frais », « fond »).
+_GENERIC_ITEM_STEMS = frozenset({_stem(fold(word)) for word in (
+    "sans", "avec", "fond", "pas", "bla", "without", "with", "no", "ma", "sos", "de", "d", "des",
+)})
+_ITEM_STEMS = frozenset(
+    stem for stem in _COUNT_STEMS | _HANDLE_STEMS | _FOOD_USAGE_STEMS | _KEYWORD_STEMS
+    if len(stem) >= 3 and stem not in _GENERIC_ITEM_STEMS and stem not in _KEYWORD_FILLERS
+    and stem not in {_stem(word) for word in _NOT_QUANTITY_LINKS}
+)
+
+
+def _follows_item(tokens: Sequence[_Token], run: _NumberRun) -> bool:
+    """Vrai quand le nombre suit, dans la même phrase, la description d'un article (sac, sachet, poignées…).
+
+    Le nombre doit être entier et ne pas suivre une préposition ou un mot de référence
+    (:data:`_NOT_QUANTITY_LINKS`) : « sachets fond plat : 5000 » donne une quantité, « sacs à 45 » un prix.
+    """
+    if not run.value.is_integer():
+        return False
+    words: list[_Token] = []
+    position = run.start - 1
+    while position >= 0 and len(words) < _ITEM_WINDOW:
+        token = tokens[position]
+        if token.kind == "nl" or (token.kind == "punct" and token.text not in _ITEM_SEPARATORS):
+            break
+        if token.kind != "punct":
+            words.append(token)
+        position -= 1
+    if not words or words[0].text in _NOT_QUANTITY_LINKS or any(word.text in _PRICE_WORDS for word in words):
+        return False
+    is_item = [word.kind == "word" and _stem(word.text) in _ITEM_STEMS for word in words]
+    if any(is_item[:_ITEM_NEAR_WORDS]):
+        return True
+    rest = _window_after(tokens, run.end, 6, stop_at_number=False)
+    return any(is_item) and all(token.text in _CLOSING_FILLERS for token in rest)
+
+
+def _first_content(after: Sequence[_Token]) -> _Token | None:
+    """Premier jeton après le nombre, sans la préposition « de » / « dyal » (« 3 de jours » → « jours »)."""
+    for token in after[:2]:
+        if token.text not in _LINK_WORDS and token.text != "'":
+            return token
+    return None
+
+
+def _is_container_content(before: Sequence[_Token]) -> bool:
+    """Vrai pour le contenu d'un conditionnement (« cartons de 500 », « par paquets de 100 »)."""
+    if len(before) < 2 or before[-1].text not in _CONTAINER_LINKS:
+        return False
+    container = before[-2].text
+    return container in _CONTAINER_WORDS or normalize_unit(container) in ("carton", "paquet")
+
+
+def _is_minimum_question(tokens: Sequence[_Token], run: _NumberRun) -> bool:
+    """Nombre cité avec « minimum de commande », « minimum order », « الحد الأدنى للطلب »."""
+    context = _joined(_window_before(tokens, run.start, 6))
+    return bool(_MINIMUM_RE.search(context)) and bool(_MINIMUM_CONTEXT_RE.search(context))
+
+
+def _parenthesised_unit(tokens: Sequence[_Token], index: int) -> str | None:
+    """Unité entre parenthèses juste après la quantité ou son nom (« 4000 sachets (pièces) », « 500 (cartons) »)."""
+    for position in range(index, min(index + 3, len(tokens) - 2)):
+        token = tokens[position]
+        if token.kind == "nl":
+            break
+        if token.text == "(" and tokens[position + 2].text == ")":
+            unit = normalize_unit(tokens[position + 1].text)
+            return unit if unit in CANONICAL_UNITS and unit != "US" else None
     return None
 
 
@@ -1231,16 +1902,20 @@ def _score_run(tokens: Sequence[_Token], run: _NumberRun) -> _QuantityCandidate 
     if _is_reference(tokens, run) or _is_hyphenated(tokens, run):
         return None
     before = _window_before(tokens, run.start, 4)
-    after = _window_after(tokens, run.end, 4, stop_at_number=True)
+    after = _window_after(tokens, run.end, 6, stop_at_number=True)
     # « un » / « wa7ed » seul est un article, sauf devant une unité de conditionnement (« wa7ed carton »).
     if run.lone_one and not (after and normalize_unit(after[0].text) in _PACKAGING_UNITS):
         return None
     suffix = last.suffix if last.kind == "num" else ""
-    if suffix in _MEASURE_SUFFIXES or (after and after[0].text in _NON_COUNT_AFTER):
+    following = _first_content(after)
+    if suffix in _MEASURE_SUFFIXES or (following is not None and following.text in _NON_COUNT_AFTER):
         return None
     recent = _joined(before[-3:])
-    if _follows_price_label(before) or any(
-            pattern.search(recent) for pattern in (_REFERENCE_BEFORE_RE, _DELTA_BEFORE_RE, _INSTEAD_BEFORE_RE)):
+    excluding = (_REFERENCE_BEFORE_RE, _DELTA_BEFORE_RE, _INSTEAD_BEFORE_RE, _NEGATION_BEFORE_RE,
+                 _DISTRIBUTIVE_BEFORE_RE)
+    if _follows_price_label(before) or any(pattern.search(recent) for pattern in excluding):
+        return None
+    if _is_container_content(before) or _is_minimum_question(tokens, run):
         return None
     if _is_date_part(before, after, run.value):
         return None
@@ -1251,20 +1926,83 @@ def _score_run(tokens: Sequence[_Token], run: _NumberRun) -> _QuantityCandidate 
         score += 3
         canonical = normalize_unit(noun)
         unit = canonical if canonical in CANONICAL_UNITS else None
+    unit = unit or _parenthesised_unit(tokens, run.end)
     if _LABEL_BEFORE_RE.search(_joined(before)):
         score += 3
     if _INSTEAD_AFTER_RE.search(_joined(_window_after(tokens, run.end, 4, stop_at_number=False))):
         score += 3
+    corrected = bool(_CORRECTION_BEFORE_RE.search(_joined(_words_before(tokens, run.start, 3))))
+    if corrected:
+        score += 3
     if _ORDER_INTENT_RE.search(_joined(_window_before(tokens, run.start, 6))):
         score += 1
+    if _APPROXIMATION_BEFORE_RE.search(recent):
+        score += 1
+    if score == 0 and _follows_item(tokens, run):
+        score = 1
     if score == 0:
         return None
-    return _QuantityCandidate(run.value, score, first.start, unit)
+    return _QuantityCandidate(run.value, score, first.start, unit, run.start, run.end, corrected)
+
+
+def _range_partner(tokens: Sequence[_Token], runs: Sequence[_NumberRun], index: int) -> _NumberRun | None:
+    """Autre borne d'une fourchette dont ``runs[index]`` fait partie (« entre 2000 et 3000 »), ou ``None``.
+
+    Deux nombres reliés par « à », « - », « to », « حتى »… forment une fourchette ; « et », « and »,
+    « ou » et « و » ne la forment qu'après « entre », « between » ou « بين », car ils relient aussi
+    deux quantités distinctes. La borne basse doit être inférieure à la borne haute.
+    """
+    run = runs[index]
+    neighbours = (runs[index - 1] if index else None, runs[index + 1] if index + 1 < len(runs) else None)
+    for other in neighbours:
+        if other is None:
+            continue
+        low, high = (other, run) if other.start < run.start else (run, other)
+        between = tokens[low.end:high.start]
+        if len(between) != 1 or between[0].text not in _RANGE_LINKS:
+            continue
+        link = between[0].text
+        opener = tokens[low.start - 1].text if low.start else ""
+        if link in _COORDINATING_LINKS and opener not in _RANGE_OPENERS:
+            continue
+        if link == "-" and not (_glued(tokens[low.end - 1], between[0]) or opener in _RANGE_OPENERS):
+            continue
+        if low.value < high.value:
+            return other
+    return None
+
+
+_COORDINATING_LINKS = _folded_set(("et", "and", "w", "و", "ou", "or", "l", "ل"))
+
+
+def _best_candidate(tokens: Sequence[_Token]) -> tuple[_QuantityCandidate, _NumberRun | None] | None:
+    """Meilleure quantité du message et, quand elle fait partie d'une fourchette, l'autre borne."""
+    runs = list(_number_runs(tokens))
+    scored = [(index, candidate) for index, run in enumerate(runs) if (candidate := _score_run(tokens, run))]
+    if not scored:
+        return None
+    # Une reprise (« pardon 2500 ») remplace la quantité qui précède, quel que soit le score de celle-ci.
+    corrections = [item for item in scored if item[1].corrected]
+    index, best = (corrections[-1] if corrections
+                   else max(scored, key=lambda item: (item[1].score, -item[1].position)))
+    return best, _range_partner(tokens, runs, index)
 
 
 def _quantity_from_tokens(tokens: Sequence[_Token]) -> _QuantityCandidate | None:
-    candidates = [candidate for run in _number_runs(tokens) if (candidate := _score_run(tokens, run))]
-    return max(candidates, key=lambda candidate: (candidate.score, -candidate.position), default=None)
+    """Quantité commandée la plus probable ; ``None`` quand le client donne une fourchette (à confirmer)."""
+    found = _best_candidate(tokens)
+    if found is None or found[1] is not None:
+        return None
+    return found[0]
+
+
+def _quantity_range(tokens: Sequence[_Token]) -> tuple[float, float] | None:
+    """Bornes de la fourchette de quantités du message (« entre 2000 et 3000 sacs »), ou ``None``."""
+    found = _best_candidate(tokens)
+    if found is None or found[1] is None:
+        return None
+    low, high = sorted((found[0].value, found[1].value))
+    return low, high
 
 
 # Tableau à colonnes séparées par « | » (texte extrait d'un bon de commande PDF) : en-têtes reconnus.
@@ -1336,6 +2074,42 @@ def _table_row_values(row: Sequence[str], columns: Mapping[str, int], quantity: 
     return values
 
 
+# ---------------------------------------------------------------- message cité ou transféré
+
+# En-tête d'un message cité dans une réponse : la partie qui suit est un message antérieur, souvent
+# écrit par TECPAP (signature du service commercial), et non la demande du client.
+_REPLY_HEADER_RE = re.compile(
+    r"(?im)^[ \t]*(?:-{2,}[ \t]*(?:message d'origine|message original|original message|الرسالة الأصلية|"
+    r"الرسالة الاصلية)[ \t]*-{2,}|(?:le|on)\b[^\n]{0,150}\b(?:a écrit|a ecrit|wrote)[ \t]*:|"
+    r"(?:de|from)[ \t]*:[^\n]*\n[ \t]*(?:envoyé|envoye|sent)[ \t]*:)"
+)
+# En-tête d'un message transféré : la demande transférée fait partie du message, sauf quand
+# l'expéditeur a écrit sa propre demande au-dessus.
+_FORWARD_HEADER_RE = re.compile(
+    r"(?im)^[ \t]*-{2,}[ \t]*(?:message transféré|message transfere|message transmis|forwarded message|"
+    r"رسالة محولة)[ \t]*-{2,}"
+)
+_QUOTED_LINE_RE = re.compile(r"(?m)^[ \t]*>.*(?:\n|$)")
+_MIN_MAIN_WORDS = 4
+
+
+def _main_message(text: str) -> str:
+    """Partie du message écrite par l'expéditeur, sans le message cité dans une réponse.
+
+    Le texte qui suit un en-tête de réponse (« -----Message d'origine----- », « Le … a écrit : »,
+    « On … wrote: », « De : … Envoyé : ») et les lignes citées commençant par « > » sont
+    retirés ; un message transféré n'est retiré que si l'expéditeur a écrit au moins quelques mots
+    au-dessus. Quand il ne reste presque rien, le texte complet est renvoyé.
+    """
+    main = text
+    for pattern in (_REPLY_HEADER_RE, _FORWARD_HEADER_RE):
+        match = pattern.search(main)
+        if match and len(_WORD_RE.findall(main[:match.start()])) >= _MIN_MAIN_WORDS:
+            main = main[:match.start()]
+    main = _QUOTED_LINE_RE.sub("", main)
+    return main if len(_WORD_RE.findall(main)) >= _MIN_MAIN_WORDS or main.strip() == text.strip() else text
+
+
 # ---------------------------------------------------------------- nom du client
 
 @dataclass(frozen=True)
@@ -1347,11 +2121,14 @@ class _ClientCandidate:
 
 _PRIORITY_LABEL = 100
 _PRIORITY_AFFILIATION = 90
+_PRIORITY_BEHALF = 88
 _PRIORITY_NAMED = 85
 _PRIORITY_COMPANY = 80
 _PRIORITY_BUSINESS_INTRO = 75
+_PRIORITY_APPOSITION = 72
 _PRIORITY_RECIPIENT = 70
 _PRIORITY_SIGNATURE_BUSINESS = 60
+_PRIORITY_BUSINESS_MENTION = 50
 _PRIORITY_SIGNATURE = 40
 _PRIORITY_PERSON = 30
 
@@ -1366,11 +2143,24 @@ _BUSINESS_WORDS = _folded_set((
     "distribution", "industries", "industrie", "trading", "groupe", "group", "société", "sté", "ets",
     "établissements", "douceurs", "délices", "cuisine", "food", "foods", "maison", "atelier", "coopérative",
     "imprimerie", "quincaillerie", "droguerie", "bazar", "bistro", "brasserie", "rôtisserie", "crèmerie",
-    "torréfaction", "sweets", "pastry", "deli",
+    "torréfaction", "sweets", "pastry", "deli", "superette", "minimarket", "supermarket", "grocery", "pharmacy",
+    "hotel", "kiosque", "parfumerie", "bijouterie", "optique", "pressing", "salon", "cosmétiques", "cosmetics",
+    "fleuriste", "florist", "biscuiterie", "chocolatier", "grossiste", "wholesale", "dépôt", "agence", "clinique",
+    "cabinet", "riad", "kissaria", "qissaria", "souk", "mahal", "dukkan", "fast-food", "snack-bar", "drugstore",
+    "concept-store", "crafts", "creations", "créations", "bistrot", "buvette", "cantine", "auberge", "fruiterie",
+    "herboristerie", "torréfacteur", "maroquinerie", "caviste", "shack", "bar", "diner", "lounge",
+    "eatery", "canteen", "bakehouse", "patisserie", "studio", "spa", "inn", "lodge", "hostel", "guesthouse",
+    "gallery", "ferran", "farran", "kiosk", "charcuterie", "primeur", "association", "école", "fondation",
+    "complexe", "résidence", "domaine", "ferme", "fournil",
+    # darija en lettres latines
+    "ma7alba", "mahalba", "m7alba", "mat3am", "mat3em", "9ahwa", "qahwa", "sidaliya", "saydaliya", "mkhbaza",
+    "makhbaza", "7lawiyat", "7alwiyat",
     # écriture arabe
     "شركة", "مؤسسة", "مكتبة", "مطعم", "مقهى", "قهوة", "كافي", "سناك", "محل", "متجر", "حانوت", "دكان", "بوتيك",
     "حلويات", "محلبة", "مخبزة", "مخبز", "فرن", "صيدلية", "فندق", "ريستوران", "مجموعة", "معمل", "مصنع",
-    "سوبرماركت", "مركز", "مقاولة", "تعاونية", "مطبعة", "بيتزيريا", "ممون",
+    "سوبرماركت", "مركز", "مقاولة", "تعاونية", "مطبعة", "بيتزيريا", "ممون", "سوق", "قيسارية", "كشك", "صالون",
+    "عطارة", "مجزرة", "ملبنة", "رياض", "مقشدة", "بازار", "سوبيريت", "محمصة", "عشابة", "مصبنة", "ملحمة", "جمعية",
+    "مدرسة", "عيادة", "وكالة", "مكتب", "مركب", "نادي", "كافيتيريا", "ماركت",
 ))
 _LEGAL_FORMS = _folded_set(("sarl", "sarlau", "sa", "sas", "sasu", "snc", "suarl", "eurl", "llc", "ltd", "inc",
                             "gmbh", "ش.م.م"))
@@ -1379,7 +2169,7 @@ _GENERIC_NOUNS = _folded_set(("magasin", "local", "store", "shop", "commerce", "
                               "entreprise", "company", "client", "cliente", "mahal"))
 _DETERMINERS = _folded_set(("la", "le", "les", "l", "the", "notre", "nos", "our", "my", "mon", "ma", "mes",
                             "votre", "vos", "un", "une", "a", "an"))
-_NAME_LINKS = _folded_set(("de", "du", "des", "d", "la", "le", "les", "el", "al", "ben", "bent", "bin", "ibn",
+_NAME_LINKS = _folded_set(("de", "du", "des", "d", "la", "le", "les", "el", "al", "il", "ben", "bent", "bin", "ibn",
                            "ait", "&", "and", "et", "of", "y", "di", "da", "-"))
 _AFFILIATION_WORDS = _folded_set(("mn", "men", "min", "dyal", "dial", "d", "de", "du", "des", "from", "of",
                                   "chez", "at"))
@@ -1406,14 +2196,22 @@ _CITIES = _folded_set((
     "safi", "mohammedia", "el jadida", "jadida", "béni mellal", "beni mellal", "nador", "taza", "settat",
     "larache", "khouribga", "berrechid", "essaouira", "ifrane", "bouskoura", "témara", "temara", "laâyoune",
     "laayoune", "dakhla", "errachidia", "ouarzazate", "guelmim", "tiznit", "taroudant", "khemisset",
-    "sidi kacem", "berkane", "inezgane", "azrou", "chefchaouen", "al hoceima",
+    "sidi kacem", "berkane", "inezgane", "azrou", "chefchaouen", "al hoceima", "zagora", "tinghir", "midelt",
+    "khenifra", "azilal", "taourirt", "guercif", "ouazzane", "asilah", "martil", "fnideq", "mdiq", "skhirat",
+    "bouznika", "azemmour", "sidi ifni", "tan-tan", "tantan", "smara", "boujdour", "taghazout", "mirleft", "erfoud",
+    "rissani", "merzouga", "sefrou", "taounate", "saidia", "youssoufia", "benguerir", "ben guerir", "tiflet",
+    "sidi slimane", "sidi bennour", "oued zem", "ait melloul", "biougra", "imouzzer", "moulay idriss",
 ))
 _CITY_WORDS = frozenset(word for city in _CITIES for word in city.split())
 _ARABIC_CITIES = _folded_set((
     "تطوان", "طنجة", "الدار", "البيضاء", "كازا", "الرباط", "رباط", "فاس", "مراكش", "أكادير", "اكادير", "مكناس",
     "وجدة", "القنيطرة", "قنيطرة", "سلا", "تمارة", "المحمدية", "محمدية", "الجديدة", "جديدة", "آسفي", "اسفي",
     "الناظور", "ناظور", "تازة", "سطات", "العرائش", "خريبكة", "برشيد", "الصويرة", "إفران", "افران", "العيون",
-    "الداخلة", "الراشيدية", "ورزازات", "كلميم", "تزنيت", "تارودانت", "الخميسات", "بوسكورة",
+    "الداخلة", "الراشيدية", "ورزازات", "كلميم", "تزنيت", "تارودانت", "الخميسات", "بوسكورة", "زاكورة", "تنغير",
+    "ميدلت", "خنيفرة", "أزيلال", "تاوريرت", "جرسيف", "بركان", "وزان", "شفشاون", "الحسيمة", "أصيلة", "مرتيل",
+    "الفنيدق", "المضيق", "الصخيرات", "بوزنيقة", "أزمور", "آزمور", "طانطان", "السمارة", "بوجدور", "تغازوت", "أرفود",
+    "الريصاني", "مرزوكة", "صفرو", "تاونات", "السعيدية", "اليوسفية", "بنجرير", "تيفلت", "إنزكان", "انزكان", "أزرو",
+    "خميسات", "الرشيدية", "تيزنيت",
 ))
 
 _NAME_TOKEN_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*|&|\S")
@@ -1423,11 +2221,43 @@ _LABEL_LINE_RE = re.compile(
     r"(?im)^[ \t>*-]*(?:client|cliente|nom du client|nom client|raison sociale|soci[ée]t[ée]|entreprise|"
     r"customer|company|العميل|الزبون|الشركة|اسم الزبون|اسم العميل)[ \t]*:[ \t]*(?P<value>[^\n|]+)"
 )
-_INTRO_RE = re.compile(
-    r"(?i)(?<![\w'])(?:ana|je suis|nous sommes|c'est|c est|c|ici|this is|i am|i'm|we are|it's|it is)\s+"
+# Paire clé-valeur au milieu d'une ligne : export JSON (« "client": "Superette Select" »), ligne
+# de bon de commande à champs séparés par « | » (« Qty: 6000 pcs | Customer: Green Leaf »).
+_KEY_VALUE_RE = re.compile(
+    r"""(?:^|(?<=[{,;|(\[]))[ \t]*["']?(?P<key>[^\W\d_][^"':=\n|{},;]{0,30}?)["']?[ \t]*[:=][ \t]*"""
+    r"""(?:"(?P<quoted>[^"\n]*)"|'(?P<single>[^'\n]*)'|(?P<value>(?:[^,;|}\n]|,(?=\d{3}(?!\d)))+))""",
+    re.MULTILINE,
 )
+_CLIENT_KEYS = _folded_set(("client", "cliente", "nom du client", "nom client", "nom_client", "raison sociale",
+                            "société", "entreprise", "customer", "customer name", "customer_name", "company",
+                            "company name", "magasin", "enseigne", "العميل", "الزبون", "الشركة", "اسم الزبون",
+                            "اسم العميل"))
+_QUANTITY_KEYS = _folded_set(("quantité", "quantités", "quantite", "qte", "qté", "qty", "quantity", "quantities",
+                              "nombre", "nbre", "الكمية", "كمية", "kmiya", "lkmiya"))
+_UNIT_KEYS = _folded_set(("unité", "unite", "unités", "unit", "units", "uom", "الوحدة", "وحدة"))
+_INTRO_RE = re.compile(
+    r"(?i)(?<![\w'])(?:ana|je suis|nous sommes|c'est|c est|c|ici|this is|i am|i'm|we are|it's|it is|m3ak|m3akom|"
+    r"m3akoum|m3akum)\s+"
+)
+# Fonction de la personne dans le commerce : « manager of Blue Door Café », « gérant de la Brasserie
+# du Port », « propriétaire du Snack Atlas », « moul Snack Najma » (darija : le patron de).
+_ROLE_RE = re.compile(
+    r"(?i)(?<![\w'])(?:"
+    r"(?:manager|owner|co-owner|gérant|gérante|gerant|gerante|propriétaire|proprietaire|directeur|directrice|"
+    r"responsable|patron|patronne|fondateur|fondatrice|founder)\s+(?:of|at|de la|de l'|du|des|de|d'|chez|dyal|dial)\s*"
+    r"|(?:moul|mol|mmoulat|moulat)\s+(?:(?:dyal|dial)\s*)?"
+    r")"
+)
+# « Karim here from Sunset Grill », « Fatima hna mn Snack Lmima » : la personne puis son commerce.
+_HERE_FROM_RE = re.compile(r"(?i)(?<![\w'])(?:here|hna)\s*,?\s+(?:from|at|mn|men|dyal|dial)\s+")
 _RECIPIENT_RE = re.compile(
-    r"(?i)(?<![\w'])(?P<word>pour|for|l|to|chez|de la part de|on behalf of|au nom de|à|a(?=\s+(?:la|le)\s|\s+l'))\s+"
+    r"(?i)(?<![\w'])(?P<word>pour|for|l|to|chez|dyal|dial|à|a(?=\s+(?:la|le)\s|\s+l'))\s+"
+)
+# Commande passée au nom d'un client : « de la part de », « pour le compte de », « au nom de »,
+# « on behalf of », darija « mn jiht » (de la part de).
+_BEHALF_RE = re.compile(
+    r"(?i)(?<![\w'])(?:de la part|pour le compte|au nom)\s+(?:de|du|des|d')\s*|"
+    r"(?<![\w'])(?:on behalf of|mn jiht|men jiht|mn jihat|men jihat|mn 3and|men 3and)\s+"
 )
 _COMPANY_RE = re.compile(r"(?i)(?<![\w'])(?:soci[ée]t[ée]|st[ée]|ets|[ée]tablissements|entreprise|company)\s+")
 _NAMED_RE = re.compile(
@@ -1445,7 +2275,8 @@ _CONTACT_RE = re.compile(r"@|https?://|www\.|\d{6,}|(?:\d[\s.]?){8,}")
 _PART_SPLIT_RE = re.compile(r"\s+[-|•]\s+|,\s*")
 
 _AR_TOKEN_RE = re.compile(r"[^\W_]+|\n|[^\w\s]")
-_AR_INTRO = _folded_set(("أنا", "انا", "نحن", "حنا"))
+# Présentation : « أنا » (je), « نحن » / « حنا » (nous), « معكم » (vous êtes avec : formule d'appel).
+_AR_INTRO = _folded_set(("أنا", "انا", "نحن", "حنا", "معكم", "معك", "معاك", "معاكم"))
 _AR_FROM = _folded_set(("من", "ديال"))
 _AR_NAMED = _folded_set(("سميتو", "سميته", "سميتها", "اسمه", "اسمها", "اسمو", "سميت"))
 _AR_POSSESSIVE_WORDS = _folded_set(("ديالي", "ديالنا", "ديالو", "ديالها", "ديالهم", "ديالكم", "تاعي", "تاعنا"))
@@ -1453,10 +2284,16 @@ _AR_POSSESSIVE_SUFFIXES = ("نا", "ها", "كم", "هم", "ي", "ه")
 _AR_STOP_WORDS = _folded_set((
     "اه", "آه", "ايه", "إيه", "ايوا", "و", "ويلا", "اذا", "إذا", "الا", "إلا", "عافاك", "عفاك", "شكرا", "مع", "في",
     "ف", "قبل", "بعد", "باش", "حتى", "ديال", "ديالي", "ديالنا", "ليا", "لينا", "بغيت", "بغينا", "خاصني", "خصني",
-    "خاصنا", "نطلب", "نرغب", "هذا", "هاد", "هادي", "اليوم", "غدا", "غدوة", "نهار", "من", "على", "عند", "إلى",
-    "الى", "هو", "هي", "أنا", "انا", "نحن", "السلام", "عليكم", "مرحبا", "صيفط", "عطيني", "الله", "إن", "ان",
-    "شاء", "إنشاء",
+    "خاصنا", "نطلب", "نرغب", "نريد", "أريد", "نود", "نحتاج", "نحتاجو", "نبغي", "نبغيو", "محتاج", "محتاجين",
+    "ابغي", "يطلب", "تطلب", "يريد", "تريد", "يحتاج", "تحتاج", "يبغي", "تبغي", "كيبغي", "كيطلب",
+    "هذا", "هاد", "هادي", "اليوم", "غدا", "غدوة", "نهار", "من", "على", "عند", "إلى",
+    "الى", "هو", "هي", "أنا", "انا", "نحن", "عليكم", "عليك", "مرحبا", "صيفط", "عطيني", "الله", "إن", "ان",
+    "شاء", "إنشاء", "غادي", "غادا", "نقول", "ليك", "ليكم", "كاين", "كاينة", "اللي", "الي", "هادشي", "داكشي",
+    "دابا", "بزاف", "شوية", "كذلك", "أيضا", "يرجى", "الرجاء", "او", "أو", "ثم", "لكن", "ولكن", "بلا", "بدون",
+    "نرجو", "منكم", "عن", "طرف",
 ))
+_AR_BEHALF = (("نيابة", "عن"), ("من", "طرف"), ("باسم",), ("لحساب",), ("لفائدة",), ("لصالح",))
+_AR_OF = fold("ديال")
 
 
 def _is_name_word(word: str) -> bool:
@@ -1469,23 +2306,53 @@ def _is_name_word(word: str) -> bool:
     return bool(elided and elided.group(1).isupper())
 
 
+def _bare(word: str) -> str:
+    """Mot sans article élidé en minuscule (« l'épicerie » → « épicerie »)."""
+    return word[2:] if _ELIDED_NAME_RE.match(word) and word[0].islower() else word
+
+
 def _accept_name_word(word: str, *, first: bool) -> bool:
     folded = fold(word)
     if folded in _NAME_STOP_WORDS:
         return False
-    return _is_name_word(word) or (first and folded in _BUSINESS_WORDS)
+    return _is_name_word(word) or (first and fold(_bare(word)) in _BUSINESS_WORDS)
 
 
 def _is_name_link(tokens: Sequence[re.Match[str]], index: int) -> bool:
-    """Particule ou « & » entre deux mots d'un nom (« Douceurs de Fès », « Wrap & Go »)."""
+    """Particule ou « & » entre deux mots d'un nom (« Douceurs de Fès », « Wrap & Go », « Café de la Poste »).
+
+    Une suite de particules (« de la », « de l' ») est admise devant le mot à majuscule.
+    """
     if fold(tokens[index].group()) not in _NAME_LINKS or index + 1 >= len(tokens):
         return False
-    following = tokens[index + 1].group()
+    following_index = index + 1
+    while (following_index + 1 < len(tokens) and following_index - index < 2
+           and fold(tokens[following_index].group()) in _NAME_LINKS
+           and fold(tokens[following_index].group()) not in _NAME_STOP_WORDS):
+        following_index += 1
+    following = tokens[following_index].group()
     if not _is_name_word(following) or fold(following) in _NAME_STOP_WORDS:
         return False
     if tokens[index].group() == "-":
         return tokens[index - 1].end() == tokens[index].start() and tokens[index].end() == tokens[index + 1].start()
     return True
+
+
+_BRAND_ARTICLES = _folded_set(("the", "le", "la", "les"))
+
+
+def _starts_brand_name(tokens: Sequence[re.Match[str]], index: int) -> bool:
+    """Vrai quand le premier mot est un article écrit avec une majuscule devant un mot à majuscule.
+
+    « The Argan Tree Shop » et « Le Fournil » sont des enseignes dont l'article fait partie ; « la
+    boulangerie Nour » et « the Green Leaf » sont des phrases où l'article ne fait pas partie du nom.
+    """
+    if index != 0 or index + 1 >= len(tokens):
+        return False
+    word = tokens[index].group()
+    following = tokens[index + 1].group()
+    return (fold(word) in _BRAND_ARTICLES and word[0].isupper() and word[1:].islower()
+            and following[0].isupper() and fold(following) not in _NAME_STOP_WORDS)
 
 
 def _skip_preamble(tokens: Sequence[re.Match[str]], *, generic: bool) -> int:
@@ -1494,6 +2361,8 @@ def _skip_preamble(tokens: Sequence[re.Match[str]], *, generic: bool) -> int:
     while index < len(tokens) and index < 3:
         word = tokens[index].group()
         folded = fold(word)
+        if _starts_brand_name(tokens, index):
+            break
         if folded in _DETERMINERS or (generic and folded in _GENERIC_NOUNS and not word[0].isupper()):
             index += 1
             continue
@@ -1501,17 +2370,46 @@ def _skip_preamble(tokens: Sequence[re.Match[str]], *, generic: bool) -> int:
     return index
 
 
+_CITY_PREPOSITIONS = frozenset({"de", "du", "a", "au", "in", "at", "f", "fi", "b", "en"})
+
+
 def _strip_trailing_city(name: str) -> str:
     """Retire la ville introduite par une préposition (« Boulangerie Atlas de Fès » → « Boulangerie Atlas »)."""
     words = name.split()
     for index in range(len(words) - 1, 1, -1):
-        if fold(words[index]) in {"de", "du", "a", "in", "f", "fi"} and fold(" ".join(words[index + 1:])) in _CITIES:
+        if fold(words[index]) in _CITY_PREPOSITIONS and fold(" ".join(words[index + 1:])) in _CITIES:
             return " ".join(words[:index])
     return name
 
 
+def _qualifier_end(tokens: Sequence[re.Match[str]], index: int) -> int | None:
+    """Fin d'un qualificatif en minuscules entre le mot de commerce et le nom (« Épicerie fine Zitoun »).
+
+    Un ou deux mots en minuscules (« fine », « artisanale », « orientale ») sont gardés quand un
+    mot à majuscule les suit ; sinon le nom s'arrête au mot de commerce.
+    """
+    end = index
+    while end < len(tokens) and end - index < 2:
+        word = tokens[end].group()
+        folded = fold(word)
+        if not word.isalpha() or _is_name_word(word) or folded in _NAME_STOP_WORDS or folded in _NAME_LINKS \
+                or folded in _DETERMINERS or folded in _CITY_WORDS:
+            break
+        end += 1
+    if end == index or end >= len(tokens):
+        return None
+    following = tokens[end].group()
+    if _is_name_word(following) and fold(following) not in _NAME_STOP_WORDS:
+        return end
+    return None
+
+
 def _capture_name(segment: str, *, skip_generic: bool = True) -> str | None:
-    """Nom propre au début de ``segment`` : mots à majuscule et particules, au plus six mots."""
+    """Nom propre au début de ``segment`` : mots à majuscule et particules, au plus six mots.
+
+    Après un mot de commerce, un qualificatif en minuscules suivi d'un nom propre est gardé
+    (« Épicerie fine Zitoun »).
+    """
     tokens = list(_NAME_TOKEN_RE.finditer(segment))
     index = _skip_preamble(tokens, generic=skip_generic)
     chosen: list[re.Match[str]] = []
@@ -1521,12 +2419,23 @@ def _capture_name(segment: str, *, skip_generic: bool = True) -> str | None:
             chosen.append(tokens[index])
             index += 1
             continue
+        qualifier = _qualifier_end(tokens, index) if chosen and fold(_bare(chosen[-1].group())) in _BUSINESS_WORDS \
+            else None
+        if qualifier is not None:
+            chosen.extend(tokens[index:qualifier])
+            index = qualifier
+            continue
         break
     while chosen and fold(chosen[-1].group()) in _NAME_LINKS:
         chosen.pop()
     if not chosen:
         return None
-    return _strip_trailing_city(" ".join(segment[chosen[0].start():chosen[-1].end()].split()))
+    start = chosen[0].start()
+    # Article élidé en minuscule (« l'Hôtel Atlas », « l'épicerie Nour ») : il ne fait pas partie du nom ;
+    # en majuscule (« L'Atelier du Pain »), il appartient à l'enseigne.
+    if _bare(chosen[0].group()) != chosen[0].group():
+        start += 2
+    return _strip_trailing_city(" ".join(segment[start:chosen[-1].end()].split()))
 
 
 def _valid_client_name(name: str | None) -> bool:
@@ -1559,13 +2468,24 @@ def _line_rest(text: str, start: int, limit: int = 150) -> str:
     return text[start:end if end != -1 else len(text)][:limit]
 
 
+def _key_values(text: str, keys: frozenset[str]) -> Iterator[tuple[int, str]]:
+    """Valeurs des paires « clé : valeur » dont la clé appartient à ``keys`` (JSON, champs séparés par « | »)."""
+    for match in _KEY_VALUE_RE.finditer(text):
+        if " ".join(fold(match.group("key")).replace("_", " ").split()) not in keys:
+            continue
+        value = next((group for group in match.group("quoted", "single", "value") if group is not None), "")
+        if value.strip():
+            yield match.start(), value
+
+
 def _label_candidates(text: str) -> list[_ClientCandidate]:
-    """Ligne « Client : X » (bon de commande structuré) ; un code client (« CL00231 ») est écarté."""
+    """Libellé « Client : X » (bon de commande structuré, export JSON) ; un code client (« CL00231 ») est écarté."""
     candidates = []
-    for match in _LABEL_LINE_RE.finditer(text):
-        value = _tidy_name(match.group("value"))
+    labelled = [(match.start(), match.group("value")) for match in _LABEL_LINE_RE.finditer(text)]
+    for position, raw in [*labelled, *_key_values(text, _CLIENT_KEYS)]:
+        value = _tidy_name(raw)
         if value and not _CODE_VALUE_RE.fullmatch(value):
-            candidates += _candidate(value[:NAME_MAX], _PRIORITY_LABEL, match.start())
+            candidates += _candidate(value[:NAME_MAX], _PRIORITY_LABEL, position)
     return candidates
 
 
@@ -1588,7 +2508,7 @@ def _intro_candidates(text: str) -> list[_ClientCandidate]:
         index = _skip_preamble(tokens, generic=False)
         if index >= len(tokens):
             continue
-        first = fold(tokens[index].group())
+        first = fold(_bare(tokens[index].group()))
         if first in _AFFILIATION_WORDS:
             candidates += _candidate(_capture_name(segment[tokens[index].end():]), _PRIORITY_AFFILIATION,
                                      match.start())
@@ -1599,6 +2519,10 @@ def _intro_candidates(text: str) -> list[_ClientCandidate]:
             continue
         end = _person_end(tokens, index)
         if end == index:
+            continue
+        if end < len(tokens) and tokens[end].group()[0].isupper() and fold(tokens[end].group()) in _BUSINESS_WORDS:
+            business = segment[tokens[index].start():tokens[end].end()]  # « Ocean View Hotel »
+            candidates += _candidate(business, _PRIORITY_BUSINESS_INTRO, match.start())
             continue
         if end < len(tokens) and fold(tokens[end].group()) in _AFFILIATION_WORDS:
             affiliation = _candidate(_capture_name(segment[tokens[end].end():]), _PRIORITY_AFFILIATION,
@@ -1611,14 +2535,137 @@ def _intro_candidates(text: str) -> list[_ClientCandidate]:
     return candidates
 
 
+# Début de phrase, avec une éventuelle formule d'appel : la personne qui écrit peut se présenter par son
+# prénom suivi de son commerce (« Amina from Olive & Co here », « Samir de la Pizzeria Roma »).
+_SENTENCE_START_RE = re.compile(
+    r"(?im)(?:^|(?<=[.!?;:]))[ 	]*(?:(?:hi|hello|hey|bonjour|bonsoir|salut|salam|slt|slm|"
+    r"good (?:morning|afternoon|evening))[ 	,!.]*)?"
+)
+_SENTENCE_AFFILIATIONS = _folded_set(("from", "of", "de", "du", "chez", "mn", "men", "dyal", "dial"))
+# « from », « mn », « chez » désignent sans ambiguïté le commerce ; « de », « du », « of » exigent un mot de commerce.
+_EXPLICIT_AFFILIATIONS = _folded_set(("from", "mn", "men", "chez"))
+
+
+def _sentence_affiliation_candidates(text: str) -> list[_ClientCandidate]:
+    """« Amina from Olive & Co here », « Samir de la Pizzeria Roma » : prénom puis commerce, en début de phrase."""
+    candidates: list[_ClientCandidate] = []
+    for match in _SENTENCE_START_RE.finditer(text):
+        segment = _line_rest(text, match.end())
+        tokens = list(_NAME_TOKEN_RE.finditer(segment))
+        end = _person_end(tokens, 0)
+        if end == 0 or end >= len(tokens) or fold(tokens[end].group()) not in _SENTENCE_AFFILIATIONS:
+            continue
+        name = _capture_name(segment[tokens[end].end():])
+        if name and (fold(tokens[end].group()) in _EXPLICIT_AFFILIATIONS or _has_business_word(name)):
+            candidates += _candidate(name, _PRIORITY_BUSINESS_INTRO, match.start())
+    return candidates
+
+
+def _role_candidates(text: str) -> list[_ClientCandidate]:
+    """« manager of X », « gérant de la X », « moul X » : le commerce dont la personne a la charge."""
+    candidates: list[_ClientCandidate] = []
+    for match in _ROLE_RE.finditer(text):
+        candidates += _candidate(_capture_name(_line_rest(text, match.end()), skip_generic=False),
+                                 _PRIORITY_AFFILIATION, match.start())
+    return candidates
+
+
+# « Order from X », « commande de la X », « طلبية من X » : la commande vient du client nommé.
+_ORDER_FROM_RE = re.compile(
+    r"(?i)(?<![\w'])(?:order|purchase order|commande|bon de commande)\s+(?:from|de la part de|de la|de l'|du|de|d')\s*"
+)
+
+
+def _order_from_candidates(text: str) -> list[_ClientCandidate]:
+    """« Order from Sahara Tea House », « Commande de la Boulangerie Nour » (nom propre qui suit)."""
+    candidates: list[_ClientCandidate] = []
+    for match in _ORDER_FROM_RE.finditer(text):
+        candidates += _candidate(_capture_name(_line_rest(text, match.end()), skip_generic=False),
+                                 _PRIORITY_RECIPIENT, match.start())
+    return candidates
+
+
+def _here_from_candidates(text: str) -> list[_ClientCandidate]:
+    """« Karim here from Sunset Grill », « Fatima hna mn Snack Lmima » : le commerce qui suit."""
+    candidates: list[_ClientCandidate] = []
+    for match in _HERE_FROM_RE.finditer(text):
+        candidates += _candidate(_capture_name(_line_rest(text, match.end())), _PRIORITY_AFFILIATION, match.start())
+    return candidates
+
+
 def _recipient_candidates(text: str) -> list[_ClientCandidate]:
     """« pour X », « for X », « l X » (darija), « to X », « à la X » (avec un mot de commerce)."""
     candidates: list[_ClientCandidate] = []
     for match in _RECIPIENT_RE.finditer(text):
         name = _capture_name(_line_rest(text, match.end()))
-        if name and fold(match.group("word")) == "a" and not _has_business_word(name):
+        if name and fold(match.group("word")) in _BUSINESS_ONLY_LINKS and not _has_business_word(name):
             continue
         candidates += _candidate(name, _PRIORITY_RECIPIENT, match.start())
+    return candidates
+
+
+# Prépositions trop fréquentes pour introduire seules un client : le nom doit contenir un mot de
+# commerce (« à la Fromagerie X », « sac dyal Bazar Nour »).
+_BUSINESS_ONLY_LINKS = frozenset({"a", "dyal", "dial"})
+
+
+def _behalf_candidates(text: str) -> list[_ClientCandidate]:
+    """« de la part de X », « pour le compte de X », « au nom de X », « on behalf of X », « mn jiht X »."""
+    candidates: list[_ClientCandidate] = []
+    for match in _BEHALF_RE.finditer(text):
+        candidates += _candidate(_capture_name(_line_rest(text, match.end())), _PRIORITY_BEHALF, match.start())
+    return candidates
+
+
+_APPOSITION_SEPARATORS_RE = re.compile(r"\s*(?:,|:|\s[–—-])\s+")
+
+
+def _apposition_candidates(text: str) -> list[_ClientCandidate]:
+    """Nom en apposition d'un type de commerce : « for my gift shop, Atlas Treasures », « une boutique de
+    vêtements pour femmes, Lalla Mode ».
+
+    Le type de commerce est un nom commun en minuscules placé dans les six mots qui précèdent la
+    virgule ; le nom qui suit commence par une majuscule. Le mot de commerce n'est pas repris.
+    """
+    candidates: list[_ClientCandidate] = []
+    for separator in _APPOSITION_SEPARATORS_RE.finditer(text):
+        line_start = text.rfind("\n", 0, separator.start()) + 1
+        before = _WORD_TOKEN_RE.findall(text[line_start:separator.start()])[-6:]
+        if not before or not any(word.islower() and fold(word) in _BUSINESS_WORDS for word in before):
+            continue
+        if any(_is_name_word(word) and fold(word) not in _NAME_STOP_WORDS for word in before[-3:]):
+            continue
+        rest = _line_rest(text, separator.end())
+        if rest[:1].isupper():
+            candidates += _candidate(_capture_name(rest, skip_generic=False), _PRIORITY_APPOSITION,
+                                     separator.start())
+    return candidates
+
+
+_WORD_TOKEN_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
+# Déterminants ou prépositions qui font d'un mot de commerce en minuscules le début d'un nom
+# (« la boutique Dar Lhena », « chez pharmacie Al Amal »).
+_MENTION_INTRODUCERS = _DETERMINERS | _folded_set(("chez", "at", "de", "du", "d", "au", "aux"))
+
+
+def _business_mention_candidates(text: str) -> list[_ClientCandidate]:
+    """Mot de commerce suivi d'un nom propre, n'importe où dans le message (« …, 600 7ba, Bazar Atlas »).
+
+    Le mot de commerce doit porter une majuscule ou suivre un déterminant (« la boutique Dar
+    Lhena ») : en minuscules après un nom de produit (« sachet tacos »), il désigne un usage.
+    """
+    candidates: list[_ClientCandidate] = []
+    tokens = list(_NAME_TOKEN_RE.finditer(text))
+    for index, token in enumerate(tokens):
+        word = token.group()
+        if fold(word) not in _BUSINESS_WORDS:
+            continue
+        introduced = index and fold(tokens[index - 1].group()) in _MENTION_INTRODUCERS
+        if not (word[0].isupper() or introduced):
+            continue
+        name = _capture_name(_line_rest(text, token.start()), skip_generic=False)
+        if name and len(name.split()) >= 2:
+            candidates += _candidate(name, _PRIORITY_BUSINESS_MENTION, token.start())
     return candidates
 
 
@@ -1680,12 +2727,32 @@ def _arabic_business(word: str) -> tuple[bool, bool]:
     return False, False
 
 
+_ARABIC_CITY_PREFIXES = ("بال", "فال", "ب", "ف", "ل")
+# Prépositions séparées qui introduisent la ville : « في مراكش », « ف مراكش », « من فاس ».
+_ARABIC_CITY_PREPOSITIONS = _folded_set(("في", "ف", "ب", "من", "بمدينة", "مدينة"))
+
+
 def _is_arabic_city(word: str) -> bool:
-    for prefix in ("بال", "فال", "ب", "ف", "ل"):
+    return _city_with_preposition(word) or word in _ARABIC_CITIES
+
+
+def _city_with_preposition(word: str) -> bool:
+    """Ville précédée d'une préposition attachée (« فمراكش », « بالرباط », « لطنجة »)."""
+    for prefix in _ARABIC_CITY_PREFIXES:
         stripped, removed = _strip_arabic_prefix(word, (prefix,))
         if removed and (stripped in _ARABIC_CITIES or "ال" + stripped in _ARABIC_CITIES):
             return True
-    return word in _ARABIC_CITIES
+    return False
+
+
+def _without_trailing_arabic_city(tokens: Sequence[_ArabicToken]) -> list[_ArabicToken]:
+    """Retire la ville finale introduite par une préposition (« صيدلية الشفاء فمراكش », « … في فاس »)."""
+    words = list(tokens)
+    if len(words) >= 2 and _city_with_preposition(words[-1].folded):
+        return words[:-1]
+    if len(words) >= 3 and words[-2].folded in _ARABIC_CITY_PREPOSITIONS and words[-1].folded in _ARABIC_CITIES:
+        return words[:-2]
+    return words
 
 
 def _drop_letters(word: str, count: int) -> str:
@@ -1699,16 +2766,33 @@ def _drop_letters(word: str, count: int) -> str:
     return word[index:]
 
 
+_AR_PEACE = fold("السلام")
+_AR_GREETING_ANSWER = _folded_set(("عليكم", "عليك"))
+
+
+def _is_greeting(tokens: Sequence[_ArabicToken], index: int) -> bool:
+    """Vrai pour « السلام » suivi de « عليكم » (salutation) ; « السلام » seul peut être un nom de commerce."""
+    return (tokens[index].folded == _AR_PEACE and index + 1 < len(tokens)
+            and tokens[index + 1].folded in _AR_GREETING_ANSWER)
+
+
+def _is_arabic_stop(folded: str) -> bool:
+    """Mot d'arrêt arabe, avec ou sans conjonction collée (« ونريد » = « و » + « نريد »)."""
+    return folded in _AR_STOP_WORDS or (folded[:1] in ("و", "ف") and folded[1:] in _AR_STOP_WORDS)
+
+
 def _arabic_capture(tokens: Sequence[_ArabicToken], start: int, first: str | None = None) -> str | None:
     """Nom en écriture arabe à partir de ``tokens[start]`` : au plus quatre mots, jusqu'à un mot d'arrêt."""
     words: list[str] = []
     index = start
     while index < len(tokens) and len(words) < 4:
         token = tokens[index]
-        if not _has_arabic(token.folded) or not token.folded.isalnum() or token.folded in _AR_STOP_WORDS:
+        if not _has_arabic(token.folded) or not token.folded.isalnum() or _is_arabic_stop(token.folded):
             break
         if words and _is_arabic_city(token.folded):
             break
+        if _is_greeting(tokens, index) and (len(words) != 1 or index == start):
+            break  # « السلام عليكم » : salutation, et non un nom comme « مطعم السلام »
         words.append(first if first is not None and index == start else token.original)
         index += 1
     return " ".join(words) or None
@@ -1722,13 +2806,49 @@ def _arabic_candidates(text: str) -> list[_ClientCandidate]:
     for index, token in enumerate(tokens):
         if not _has_arabic(token.folded):
             continue
-        if token.folded in _AR_INTRO:
-            candidates += _arabic_intro(tokens, index)
+        behalf = _arabic_behalf_end(tokens, index)
+        if behalf is not None:
+            candidates += _candidate(_arabic_capture(tokens, behalf), _PRIORITY_BEHALF, token.position)
+        elif token.folded in _AR_INTRO:
+            if index == 0 or tokens[index - 1].folded not in _AR_INTRO:  # « أنا أنا » : hésitation
+                candidates += _arabic_intro(tokens, index)
         elif token.folded in _AR_NAMED:
             candidates += _candidate(_arabic_capture(tokens, index + 1), _PRIORITY_NAMED, token.position)
+        elif token.folded == _AR_OF:
+            candidates += _arabic_named_business(tokens, index + 1, _PRIORITY_RECIPIENT, token.position)
         else:
             candidates += _arabic_recipient(tokens, index)
+            candidates += _arabic_named_business(tokens, index, _PRIORITY_BUSINESS_MENTION, token.position)
     return candidates
+
+
+def _arabic_behalf_end(tokens: Sequence[_ArabicToken], index: int) -> int | None:
+    """Indice du nom qui suit « نيابة عن », « من طرف », « باسم » (au nom de, de la part de), ou ``None``."""
+    for words in _AR_BEHALF:
+        folded = [fold(word) for word in words]
+        if all(index + offset < len(tokens) and tokens[index + offset].folded == word
+               for offset, word in enumerate(folded)):
+            return index + len(folded)
+    return None
+
+
+def _arabic_named_business(tokens: Sequence[_ArabicToken], index: int, priority: int,
+                           position: int) -> list[_ClientCandidate]:
+    """Commerce nommé : mot de commerce sans article suivi de son nom (« صيدلية الشفاء », « بوتيك نور »).
+
+    Avec l'article (« الحلويات », « المحل »), le mot de commerce est un nom commun et non le début
+    d'un nom de client.
+    """
+    if index >= len(tokens):
+        return []
+    token = tokens[index]
+    if token.folded.startswith("ال") or not _arabic_business(token.folded)[0] or _arabic_business(token.folded)[1]:
+        return []
+    following = tokens[index + 1] if index + 1 < len(tokens) else None
+    if following is None or not _has_arabic(following.folded) or following.folded in _AR_STOP_WORDS \
+            or _is_arabic_city(following.folded) or following.folded in _AR_POSSESSIVE_WORDS:
+        return []
+    return _candidate(_arabic_capture(tokens, index), priority, position)
 
 
 def _arabic_intro(tokens: Sequence[_ArabicToken], index: int) -> list[_ClientCandidate]:
@@ -1743,12 +2863,21 @@ def _arabic_intro(tokens: Sequence[_ArabicToken], index: int) -> list[_ClientCan
         return _candidate(_arabic_capture(tokens, index + 1), _PRIORITY_BUSINESS_INTRO, position)
     if not _has_arabic(following.folded) or following.folded in _AR_STOP_WORDS:
         return []
-    after = tokens[index + 2] if index + 2 < len(tokens) else None
-    if after is not None and after.folded in _AR_FROM:
-        found = _candidate(_arabic_capture(tokens, index + 3), _PRIORITY_AFFILIATION, position)
-        if found:
-            return found
-    return _candidate(following.original, _PRIORITY_PERSON, position)
+    # Prénom simple ou composé (« عبد الرحيم ») avant « من » : au plus trois mots.
+    for offset in range(2, 5):
+        after = tokens[index + offset] if index + offset < len(tokens) else None
+        if after is None or not _has_arabic(after.folded) or after.folded in _AR_STOP_WORDS and \
+                after.folded not in _AR_FROM:
+            break
+        if after.folded in _AR_FROM:
+            found = _candidate(_arabic_capture(tokens, index + offset + 1), _PRIORITY_AFFILIATION, position)
+            if found:
+                return found
+            break
+    person = following.original
+    if following.folded == fold("عبد") and index + 2 < len(tokens) and _has_arabic(tokens[index + 2].folded):
+        person = f"{following.original} {tokens[index + 2].original}"
+    return _candidate(person, _PRIORITY_PERSON, position)
 
 
 def _arabic_recipient(tokens: Sequence[_ArabicToken], index: int) -> list[_ClientCandidate]:
@@ -1788,19 +2917,44 @@ def _trailing_lines(lines: Sequence[tuple[int, str]]) -> list[tuple[int, str]]:
     return block
 
 
+def _supplier_side(line: str) -> bool:
+    """Ligne qui désigne TECPAP (nom, adresse email ou site) : signature du fournisseur, pas du client."""
+    return "tecpap" in fold(line)
+
+
 def _latin_name_like(part: str) -> bool:
     tokens = list(_NAME_TOKEN_RE.finditer(part))
     if not tokens or len(tokens) > _MAX_NAME_WORDS + 2:
         return False
+    qualifier_until = -1
     for index, token in enumerate(tokens):
         word = token.group()
         folded = fold(word)
+        if index < qualifier_until:
+            continue
         if folded in _NAME_STOP_WORDS and folded not in _LEGAL_FORMS:
             return False
-        if not (_is_name_word(word) or folded in _BUSINESS_WORDS or folded in _LEGAL_FORMS
-                or (index and _is_name_link(tokens, index))):
+        if _is_name_word(word) or folded in _BUSINESS_WORDS or folded in _LEGAL_FORMS \
+                or (index and _is_name_link(tokens, index)):
+            continue
+        # Qualificatif en minuscules après le mot de commerce (« Épicerie fine Zitoun »).
+        end = _qualifier_end(tokens, index) if index and fold(tokens[index - 1].group()) in _BUSINESS_WORDS \
+            else None
+        if end is None:
             return False
+        qualifier_until = end
     return True
+
+
+# Lieu en fin de signature : « Surf Shack in Taghazout », « Pâtisserie Nour à Ifrane », « Snack Atlas
+# f Agadir ». Ces prépositions de lieu n'entrent jamais dans un nom de commerce, contrairement à
+# « de » (« Douceurs de Fès »), qui n'est retiré que devant une ville connue.
+_TRAILING_PLACE_RE = re.compile(r"\s+(?:in|at|à|a|f|fi)\s+[A-ZÀ-Ý][\w'-]*(?:\s+[A-ZÀ-Ý][\w'-]*)?$")
+
+
+def _without_trailing_place(part: str) -> str:
+    stripped = _TRAILING_PLACE_RE.sub("", part)
+    return stripped if stripped.strip() else part
 
 
 def _signature_part_candidates(part: str, position: int, after_closing: bool) -> list[_ClientCandidate]:
@@ -1814,9 +2968,14 @@ def _signature_part_candidates(part: str, position: int, after_closing: bool) ->
         tokens = _arabic_tokens(part)
         if len(tokens) > _MAX_NAME_WORDS or not all(token.folded.isalnum() for token in tokens):
             return []
-        if _arabic_business(_strip_arabic_prefix(tokens[0].folded, ("ال",))[0])[0]:
+        if any(_is_arabic_stop(token.folded) for token in tokens):
+            return []  # phrase (verbe, pronom, préposition) et non une signature
+        tokens = _without_trailing_arabic_city(tokens)
+        part = " ".join(token.original for token in tokens)
+        if tokens and _arabic_business(_strip_arabic_prefix(tokens[0].folded, ("ال",))[0])[0]:
             return _candidate(part, _PRIORITY_SIGNATURE_BUSINESS, position)
         return _candidate(part, _PRIORITY_SIGNATURE, position) if after_closing and len(tokens) <= 3 else []
+    part = _without_trailing_place(part)
     if not _latin_name_like(part):
         return []
     if _has_business_word(part):
@@ -1824,9 +2983,13 @@ def _signature_part_candidates(part: str, position: int, after_closing: bool) ->
     return _candidate(part, _PRIORITY_SIGNATURE, position) if after_closing else []
 
 
+_TRAILING_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\s+[–—-]\s+|\s*,\s+|\s*،\s*")
+
+
 def _last_sentence(line: str) -> str | None:
-    sentences = re.split(r"(?<=[.!?])\s+", line)
-    return sentences[-1] if len(sentences) > 1 else None
+    """Dernier segment d'une ligne : après un point, une virgule ou un tiret (« …, 600 7ba, Bazar Atlas »)."""
+    segments = [segment for segment in _TRAILING_SPLIT_RE.split(line) if segment.strip()]
+    return segments[-1] if len(segments) > 1 else None
 
 
 def _signature_candidates(text: str) -> list[_ClientCandidate]:
@@ -1844,6 +3007,8 @@ def _signature_candidates(text: str) -> list[_ClientCandidate]:
         block, after_closing = lines[closings[-1] + 1:closings[-1] + 5], True
     else:
         block, after_closing = _trailing_lines(lines), False
+    if any(_supplier_side(line) for _, line in block):
+        block = []
     candidates: list[_ClientCandidate] = []
     for position, line in block:
         for part in _PART_SPLIT_RE.split(line):
@@ -1872,14 +3037,22 @@ def extract_client_name(text: Any) -> str | None:
     if not isinstance(text, str) or not text.strip():
         return None
     prepared = prepare_text(text[:MAX_TEXT_CHARS])
-    candidates = [
-        *_label_candidates(prepared), *_intro_candidates(prepared), *_named_candidates(prepared),
-        *_company_candidates(prepared), *_recipient_candidates(prepared), *_arabic_candidates(prepared),
-        *_signature_candidates(prepared),
+    main = _main_message(prepared)
+    for part in dict.fromkeys((main, prepared)):
+        candidates = _client_candidates(part)
+        if candidates:
+            return max(candidates, key=lambda candidate: (candidate.priority, -candidate.position)).name
+    return None
+
+
+def _client_candidates(text: str) -> list[_ClientCandidate]:
+    return [
+        *_label_candidates(text), *_intro_candidates(text), *_sentence_affiliation_candidates(text),
+        *_here_from_candidates(text), *_role_candidates(text),
+        *_order_from_candidates(text), *_behalf_candidates(text), *_named_candidates(text),
+        *_company_candidates(text), *_apposition_candidates(text), *_recipient_candidates(text),
+        *_arabic_candidates(text), *_business_mention_candidates(text), *_signature_candidates(text),
     ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda candidate: (candidate.priority, -candidate.position)).name
 
 
 # ---------------------------------------------------------------- autres champs du message
@@ -2026,11 +3199,76 @@ _STATUS_RE = re.compile(
 )
 
 
+_SENTENCE_RE = re.compile(r"[^.!?؟\n]+[.!?؟]*")
+# Question sur le prix : la quantité citée y est hypothétique (« combien pour 5000 sacs ? »).
+_PRICE_QUESTION_RE = re.compile(
+    r"(?<!\w)(?:prix|tarif|tarifs|combien|cout|couts|price|prices|cost|how much|ch7al|chhal|bch7al|"
+    r"b ch7al|taman|tamane|بشحال|شحال|ثمن|السعر|سعر|بكم|كم)(?!\w)"
+)
+
+
+# Mot interrogatif sur la quantité ou le prix placé au milieu de la phrase, souvent sans point
+# d'interrogation dans un message court (« bghit n3ref ch7al 2000 sachet », « c'est combien 500 sacs »).
+_INTERROGATIVE_RE = re.compile(r"(?<!\w)(?:combien|ch7al|chhal|bch7al|how much|بشحال|شحال|بكم)(?!\w)")
+# Demande de devis (« un devis pour 3000 sacs », « please quote for », « عرض سعر ») : la quantité
+# citée sert au calcul du prix, ce n'est pas encore une commande. « Le devis » ou « votre devis »
+# renvoie à un devis déjà reçu, souvent accepté : ce n'est pas une demande.
+_QUOTE_REQUEST_RE = re.compile(
+    r"(?<!\w)(?:(?:un|une|demande de|demander un|d ?' ?un|nouveau) devis|devis pour|cotation|proforma|pro forma|"
+    r"offre de prix|(?:a|an|price) (?:quote|quotation)|quote for|quotation for|please quote|price list|"
+    r"عرض سعر|عرض ثمن|عرض الاسعار)(?!\w)"
+)
+# Verbes d'envoi : « envoyez-nous un devis » demande un document, pas une marchandise.
+_SEND_VERBS_RE = re.compile(
+    r"(?<!\w)(?:please send|send|envoyer|envoyez|envoie|sift|siftli|siftlia|siftlina|sifto|siftou|صيفط|صيفطو|"
+    r"صيفطلي|صيفطولي)(?!\w)"
+)
+
+
+def _is_question(sentence: str) -> bool:
+    stripped = sentence.strip()
+    return (stripped.endswith(("?", "؟")) or bool(_QUESTION_RE.match(stripped))
+            or bool(_INTERROGATIVE_RE.search(stripped)))
+
+
+def _declarative_quantity(folded: str) -> bool:
+    """Vrai quand une phrase affirmative du message porte une quantité commandée.
+
+    « Pouvez-vous traduire le devis ? Logo en vert sur les 4 000 sacs. » : la question porte
+    sur un autre sujet, la commande est dans la phrase affirmative.
+    """
+    sentences = [match.group() for match in _SENTENCE_RE.finditer(folded)]
+    if any(_is_question(sentence) and _PRICE_QUESTION_RE.search(sentence) for sentence in sentences):
+        return False
+    return any(not _is_question(sentence) and _quantity_from_tokens(_masked_tokens(sentence)) is not None
+               for sentence in sentences)
+
+
+# Accusé de réception d'une livraison (« bien reçu les 2000 sacs », « wslatna », « توصلنا ») : la
+# quantité citée est celle d'une commande passée.
+_RECEIPT_RE = re.compile(
+    r"(?<!\w)(?:bien recu|bien recus|avons recu|ai recu|on a recu|received|we got|wslatna|wslatni|wslouna|"
+    r"wsalna|tsallamna|tsalemna|توصلنا|توصلت|وصلتنا|وصلاتنا|وصلوني|وصلني|استلمنا|استلمت)"
+    r"(?:\W+\w+){0,3}?\W+(?:sacs?|sachets?|commande|livraison|marchandise|colis|cartons?|bags?|order|delivery|"
+    r"goods|parcel|sachiyat|sel3a|sl3a|lcommande|السلعة|بالسلعة|الطلبية|بالطلبية|الطلب|الاكياس|الساشي|الكوموند|"
+    r"\d+)(?!\w)"
+)
+
+
+_ARRIVAL_RE = re.compile(
+    r"(?<!\w)(?:bien (?:arrivee?s?|recue?s?|livree?s?)|(?:est|sont) arrivee?s?|(?:has|have) (?:arrived|been delivered)|"
+    r"arrived safely|well received)(?!\w)"
+)
+
+
 def _looks_like_order(folded: str, *, is_reorder: bool, product: str | None, quantity: float | None) -> bool:
     """Heuristique « est un bon de commande » : renouvellement, ou quantité, ou produit avec verbe de commande.
 
-    Une annulation, un suivi de commande ou une question sans verbe de commande ne sont pas des
-    commandes, même s'ils citent un produit.
+    Une annulation, un suivi de commande, un accusé de réception sans verbe de commande ou une
+    question sans verbe de commande ne sont pas des commandes, même s'ils citent un produit. Une
+    question sur un autre sujet que le prix n'empêche pas la commande portée par une phrase
+    affirmative du même message. Une demande de devis n'est une commande qu'avec un verbe de
+    commande autre qu'un verbe d'envoi (« envoyez-nous un devis » demande un document).
     """
     if is_reorder:
         return True
@@ -2040,7 +3278,13 @@ def _looks_like_order(folded: str, *, is_reorder: bool, product: str | None, qua
         return False
     if _CANCEL_RE.search(folded) or _STATUS_RE.search(folded):
         return False
-    return not (_QUESTION_RE.search(folded) and not order_intent)
+    if not order_intent and (_RECEIPT_RE.search(folded) or _ARRIVAL_RE.search(folded)):
+        return False
+    if _QUOTE_REQUEST_RE.search(folded):
+        return bool(_ORDER_INTENT_RE.search(_SEND_VERBS_RE.sub(" ", folded)))
+    if order_intent or not (_QUESTION_RE.search(folded) or _INTERROGATIVE_RE.search(folded)):
+        return True
+    return quantity is not None and _declarative_quantity(folded)
 
 
 # ---------------------------------------------------------------- extraction par règles
@@ -2062,13 +3306,16 @@ def rule_based_extract(text: Any, *, today: date | None = None) -> dict[str, Any
     text = text[:MAX_TEXT_CHARS]
     today = today or date.today()
     prepared = prepare_text(text)
-    folded = fold(text)
-    tokens = _masked_tokens(text)
+    # La demande du client est lue dans son propre texte, sans le message cité d'une réponse ; le
+    # message complet ne sert qu'à défaut (réponse « je confirme » à une offre citée).
+    main = _main_message(prepared)
+    folded = fold(main)
+    tokens = _masked_tokens(main)
 
-    is_reorder = detect_reorder(text)
-    product = normalize_product_type(text)
+    is_reorder = detect_reorder(main)
+    product = normalize_product_type(main) or normalize_product_type(text)
     fields: dict[str, Any] = {"type_produit": product, "entreprise_cliente": extract_client_name(text)}
-    fields.update(_quantity_fields(prepared, tokens))
+    fields.update(_quantity_fields(main, tokens) or _quantity_fields(prepared, _masked_tokens(text)))
     fields.update(_price_fields(tokens, fields))
     fields.update({
         "numero_commande": _order_number(prepared),
@@ -2088,12 +3335,43 @@ def rule_based_extract(text: Any, *, today: date | None = None) -> dict[str, Any
     return result
 
 
+def _unit_after_first_number(raw: str) -> str | None:
+    """Unité écrite après le premier nombre d'une valeur (« 2500 pcs », « 4000 sachets (pièces) »), ou ``None``."""
+    tokens = _masked_tokens(raw)
+    run = next(_number_runs(tokens), None)
+    if run is None:
+        return None
+    last = tokens[run.end - 1]
+    suffix = last.suffix if last.kind == "num" else ""
+    noun = _count_noun(_window_after(tokens, run.end, 6, stop_at_number=True), suffix)
+    unit = normalize_unit(noun) if noun else None
+    return unit if unit in CANONICAL_UNITS else _parenthesised_unit(tokens, run.end)
+
+
+def _keyed_quantity(prepared: str) -> dict[str, Any]:
+    """Quantité et unité écrites en paires clé-valeur (« "quantite": 2500, "unite": "pcs" »)."""
+    for _, raw in _key_values(prepared, _QUANTITY_KEYS):
+        quantity = parse_quantity(raw)
+        if quantity is None or quantity <= 0:
+            continue
+        values: dict[str, Any] = {"quantite": _integral(quantity)}
+        unit = next((normalize_unit(value) for _, value in _key_values(prepared, _UNIT_KEYS)), None)
+        if unit not in CANONICAL_UNITS:
+            unit = _unit_after_first_number(raw)
+        values["unite"] = unit or "US"
+        return values
+    return {}
+
+
 def _quantity_fields(prepared: str, tokens: Sequence[_Token]) -> dict[str, Any]:
     table = _table_values(prepared)
     if table:
         table.setdefault("unite", "US")
         table["quantite"] = _integral(table["quantite"])
         return table
+    keyed = _keyed_quantity(prepared)
+    if keyed:
+        return keyed
     candidate = _quantity_from_tokens(tokens)
     if candidate is None:
         return {}

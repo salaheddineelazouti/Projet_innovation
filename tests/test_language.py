@@ -1,12 +1,13 @@
 """Tests de la détection de langue et d'écriture (tecpap.nlp.language).
 
 Les exemples des tests unitaires sont rédigés pour ces tests et ne reprennent pas les messages
-du jeu d'évaluation : la classe :class:`TestEvaluationDataset` mesure l'exactitude sur ce jeu
-séparément.
+du jeu d'évaluation : la classe :class:`TestEvaluationDataset` mesure l'exactitude sur les deux
+fichiers du jeu de développement séparément ; le jeu de test tenu à l'écart n'est jamais lu.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -18,12 +19,176 @@ import pytest
 
 from tecpap.nlp import LanguageResult, detect_language, language, reply_language
 
-DATASET = Path(__file__).resolve().parent.parent / "evaluation" / "dataset" / "messages.jsonl"
+DATASET_DIR = Path(__file__).resolve().parent.parent / "evaluation" / "dataset"
+DEVELOPMENT_FILES = (DATASET_DIR / "messages.jsonl", DATASET_DIR / "messages_dev_complement.jsonl")
 
 ZERO_WIDTH_SPACE = chr(0x200B)
 RIGHT_TO_LEFT_MARK = chr(0x200F)
 SOFT_HYPHEN = chr(0x00AD)
 BYTE_ORDER_MARK = chr(0xFEFF)
+
+
+# Phrases rédigées pour ces tests, par langue attendue : messages courts, dictés, mixtes ou télégraphiques.
+LANGUAGE_PHRASES: dict[str, list[str]] = {
+    "fr": [
+        "Bonjour, je voudrais passer une commande de sachets pour ma boulangerie",
+        "Pouvez-vous me confirmer la date de livraison ?",
+        "Parfait",
+        "slt, vous avez des sacs kraft svp",
+        "Veuillez agréer, Madame, Monsieur, l'expression de mes salutations distinguées",
+        "Bonsoir, est-ce que vous livrez à Marrakech",
+        "MERCI DE NOUS LIVRER AVANT VENDREDI",
+        "Je ne suis pas satisfait de la dernière livraison, les sacs étaient abîmés",
+        "Tout est correct",
+        "Pas pour l'instant",
+        "Je vous rappelle demain pour la quantité",
+        "Hello, bonjour, je voudrais des informations",
+        "Est-ce possible d'avoir un logo imprimé en deux couleurs ?",
+        "ok merci pour tout",
+        "Merci de ne pas livrer le week-end",
+        "jvoudrai 3000 sachet pr mon snack stp",
+        "boulangerie la marina 2000 sachets fond plat urgent",
+        "Bonjour Salah, c'est Karim de Café Lila. Je voudrais renouveler ma commande",
+        "Quand est-ce que vous ouvrez le lundi ?",
+        "Je vous remercie",
+        "Vous êtes ouverts le samedi ?",
+        "Salam, je voudrais 2000 sacs fond carré pour le restaurant Dar Zitoun",
+        "Le colis est bien arrivé",
+        "Pouvez vous me rappeler",
+        "c'est 2000",
+        "bonjour je voudrais cinq mille sachets",
+        "c'est lui",
+        "desole, c'est ma faute",
+    ],
+    "en": [
+        "Please send me 2000 bags with flat handles",
+        "Thank you for your quick reply",
+        "No thanks",
+        "Hello, I would like to order paper bags for my bakery",
+        "Can you deliver to Casablanca next week?",
+        "Where is my order?",
+        "Good morning, we need 5000 kraft bags",
+        "Could someone call me back?",
+        "That's correct",
+        "We are a small cafe and we need packaging for takeaway",
+        "ok sounds good",
+        "I will confirm tomorrow",
+        "Please cancel the order, we found another supplier",
+        "Best regards",
+        "hey, are you open today?",
+        "Two thousand bags with twisted handles, please",
+        "bags for my coffee shop, 2000 pcs",
+        "Is delivery free?",
+        "ok thanks bye",
+        "Cafe Lila here, we want to reorder",
+        "sorry for the late reply",
+        "Are you open on Saturdays?",
+        "Thanks, see you tomorrow",
+        "We'd like 3 pallets of the large bags",
+        "thanks bro",
+        "hello i would like five thousand bags",
+        "do you have sachets? how much?",
+        "Delivery tomorrow at 10",
+    ],
+    "ar": [
+        "أرغب في طلب ألفي كيس بمقابض مسطحة",
+        "شكرا جزيلا على ردكم السريع",
+        "لا شكرا",
+        "ما هو الحد الأدنى للطلب؟",
+        "متى سيتم تسليم الطلبية؟",
+        "السلام عليكم ورحمة الله وبركاته",
+        "أؤكد الطلب",
+        "كم يستغرق التوصيل إلى مدينة فاس؟",
+        "لم نستلم الطلبية حتى الآن",
+        "الرجاء الاتصال بي على الرقم التالي",
+        "نحن شركة لتوزيع المواد الغذائية ونبحث عن مورد للأكياس",
+        "يرجى تأكيد استلام هذه الرسالة",
+        "شكرا",
+        "ليس هذا ما طلبته",
+        "أود معرفة أسعار الأكياس الكبيرة",
+        "مخبزة النور، 3000 كيس",
+        "نرجو إفادتنا بموعد التسليم",
+        "أود الاستفسار عن أسعار الأكياس الورقية المطبوعة",
+        "هل تتوفر لديكم أكياس بحجم كبير؟",
+        "لقد قمنا بتحويل المبلغ إلى حسابكم",
+        "نشكركم على حسن تعاونكم",
+        "هل يمكنني زيارة المصنع؟",
+        "نَعَمْ",
+        "أنا بحاجة إلى عشرة آلاف كيس قبل نهاية الشهر",
+        "الكمية المطلوبة: ٥٠٠٠ كيس",
+        "أريد خمسة آلاف كيس",
+        "عيد مبارك سعيد",
+        "لا لا لا",
+    ],
+    "darija_ar": [
+        "بغيت ألفين ساشي لمخبزة ديالي",
+        "لا ماشي هكا",
+        "فين وصلات الطلبية ديالي؟",
+        "مزيان بزاف",
+        "بغيت نلغي الكوموند",
+        "كيف ديما عافاك",
+        "دابا بغيت غير خمسميات ساشي",
+        "عيطو ليا من بعد عافاك",
+        "نسيت نقول ليك الكمية",
+        "مرحبا بيك أخويا، كيداير؟",
+        "البارح طلبت منكم ساشيات وما وصلوش",
+        "صافي واخا صيفطوها",
+        "ما بقيتش بغيت الطلبية",
+        "أنا محمد من مقهى الأمل وبغيت 500 ساك",
+        "زيدو ليا ألف ساشي أخرين",
+        "إلا كان ممكن بغيت نعرف الثمن",
+        "هاد الشهر عندي عرس كبير وخاصني بزاف ديال الساكات",
+        "واش الثمن ديال 5000 ساشي كيف كيف؟",
+        "حيت خاصني كراتن",
+        "شريت منكم البارح والجودة مزيانة",
+        "هاد الساشي ديالكم زوين بزاف",
+        "ماشي مشكل، غدا غادي ندير التحويل",
+        "واخااااا",
+        "شوف ليا شحال كتكلف الطباعة",
+        "مرحبا، واش عندكم ساشيات صغار؟",
+        "هادي هي المرة التانية لي كنطلب منكم",
+        "salam, واش كاين sachets kraft?",
+        "أنا في الدار البيضاء وكنقلب على مورد ديال الساشيات",
+    ],
+    "darija_latin": [
+        "salam, bghit 2000 sachet l boulangerie dyali",
+        "ch7al taman dyal sac b yddin plates?",
+        "mzyan bzaf",
+        "wach kayn l'livraison l Marrakech?",
+        "khassni alf sac b yddin mfetlin",
+        "nsit n9ol lik l quantité",
+        "wach momkin nzid logo dyali f sachet?",
+        "safi wakha sifto",
+        "salam khouya, 3endi hanout f Casa w bghit sac kraft",
+        "nafs chi dyal chhar li fat",
+        "n9der nconfirmi ghda?",
+        "tbarkellah 3lik, mercii",
+        "rah 3ndi talab kbir l shar jay",
+        "3tini ghir 200 d sachet bach njarreb",
+        "yak labas 3lik a khoya",
+        "chrit mnkom lbar7 w l'jawda mzyana",
+        "mazal ma tsiftat lcommande",
+        "salam, ana mn Casa, bghit n3ref les conditions",
+        "had sachet dyalkom zwin bzaf",
+        "BGHIT 2000 SACHET 3AFAK",
+        "walo ma wslouni",
+        "3andkom kraft abyad wla ghir lbni?",
+        "hdiya l3id? 3tini 500 sac plates",
+        "lbare7 sifto lia devis w ma fhemtch chno 9asdkom",
+        "2000 bghit",
+        "wach 3ndkom sachiyat? ch7al taman?",
+        "chouf",
+        "Wakha d'accord",
+    ],
+    "unknown": [
+        "👍",
+        "5000",
+        "12/11/2026",
+        "🙏🙏",
+        "BC-2026-0417",
+        "ok ok",
+    ],
+}
 
 
 def code_of(text: str) -> str:
@@ -598,24 +763,33 @@ class TestLexicons:
 
 
 def _load_dataset() -> list[dict]:
-    lines = DATASET.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip()]
+    rows = []
+    for path in DEVELOPMENT_FILES:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        rows.extend(json.loads(line) for line in lines if line.strip())
+    return rows
+
+
+def _half(identifier: str) -> str:
+    """Moitié A ou B du jeu de développement : dernier chiffre hexadécimal pair ou impair de sha1(identifiant)."""
+    return "A" if int(hashlib.sha1(identifier.encode()).hexdigest()[-1], 16) % 2 == 0 else "B"
 
 
 class TestEvaluationDataset:
-    """Exactitude mesurée sur le jeu d'évaluation (evaluation/dataset/messages.jsonl).
+    """Exactitude mesurée sur le jeu de développement (messages.jsonl et messages_dev_complement.jsonl).
 
-    Exactitude mesurée lors de la mise au point : 89 messages sur 89 (100 %) pour la langue
-    comme pour la langue de réponse. Les seuils laissent une petite marge pour l'ajout de messages
-    plus difficiles au jeu.
+    Exactitude mesurée lors de la mise au point : 198 messages sur 198 (100 %) pour la langue comme
+    pour la langue de réponse. Les seuils laissent une petite marge pour l'ajout de messages plus
+    difficiles au jeu.
     """
 
     MIN_ACCURACY = 0.97
     MIN_ACCURACY_PER_LANGUAGE = 0.9
+    MIN_ACCURACY_PER_HALF = 0.95
 
     def test_language_accuracy(self):
         rows = _load_dataset()
-        assert len(rows) >= 80
+        assert len(rows) >= 190
         totals: Counter[str] = Counter()
         correct: Counter[str] = Counter()
         errors = []
@@ -632,6 +806,13 @@ class TestEvaluationDataset:
         for code, total in totals.items():
             assert correct[code] / total >= self.MIN_ACCURACY_PER_LANGUAGE, (code, errors)
 
+    @pytest.mark.parametrize("half", ["A", "B"])
+    def test_language_accuracy_on_each_half(self, half):
+        rows = [row for row in _load_dataset() if _half(row["id"]) == half]
+        assert len(rows) >= 80
+        correct = sum(detect_language(row["text"]).code == row["expected"]["language"] for row in rows)
+        assert correct / len(rows) >= self.MIN_ACCURACY_PER_HALF
+
     def test_reply_language_accuracy(self):
         rows = _load_dataset()
         correct = sum(
@@ -643,3 +824,150 @@ class TestEvaluationDataset:
         for row in _load_dataset():
             assert row["expected"]["language"] in language.LANGUAGE_CODES
             assert row["expected"]["reply_language"] in language.REPLY_LANGUAGES
+        assert reply_language(detect_language("I need bags")) == "fr"
+
+
+class TestFreshSentences:
+    """Phrases rédigées pour ces tests, par langue attendue (messages courts, dictés ou mixtes)."""
+
+    CASES = [(expected, text) for expected, texts in LANGUAGE_PHRASES.items() for text in texts]
+
+    @pytest.mark.parametrize(
+        ("expected", "text"), CASES, ids=[f"{expected}-{index}" for index, (expected, _) in enumerate(CASES)]
+    )
+    def test_language_of_the_sentence(self, expected, text):
+        assert code_of(text) == expected
+
+    def test_reply_language_follows_the_detected_language(self):
+        expected = {"fr": "fr", "en": "fr", "ar": "ar", "darija_ar": "darija", "darija_latin": "darija",
+                    "unknown": "fr"}
+        for code, texts in LANGUAGE_PHRASES.items():
+            for text in texts:
+                assert reply_language(detect_language(text)) == expected[code], text
+
+    def test_every_language_is_covered(self):
+        assert set(LANGUAGE_PHRASES) == set(language.LANGUAGE_CODES)
+        assert all(len(texts) >= 5 for texts in LANGUAGE_PHRASES.values())
+
+
+class TestTimeAndNumberWords:
+    """Repères de temps et nombres écrits en toutes lettres : ils reconnaissent un message dicté sans mot outil."""
+
+    @pytest.mark.parametrize(("text", "expected"), [
+        ("cinq mille sachets jeudi", "fr"), ("deux cents sacs demain", "fr"), ("livraison lundi prochain", "fr"),
+        ("five thousand bags friday", "en"), ("two pallets next week", "en"), ("A demain", "fr"),
+        ("regarding invoice 4411", "en"),
+    ])
+    def test_dictated_message_without_function_word(self, text, expected):
+        assert code_of(text) == expected
+
+    def test_darija_numbers_are_not_french(self):
+        assert code_of("khamsa alaf sachet jeudi") == "darija_latin"
+
+    def test_time_words_alone_stay_weak(self):
+        result = detect_language("demain")
+        assert result.code == "fr" and result.scores["fr"] == language.WEAK
+
+
+class TestFrenchVerbEnding:
+    """Deuxième personne du pluriel (« envoyez », « validez ») : terminaison propre au français."""
+
+    @pytest.mark.parametrize("text", ["envoyez", "validez", "annulez svp", "confirmez"])
+    def test_second_person_plural(self, text):
+        assert code_of(text) == "fr"
+
+    def test_capitalized_noun_inside_a_sentence_is_not_counted(self):
+        assert detect_language("Hello Lopez").scores["fr"] == 0
+        assert code_of("Hello Lopez") == "en"
+
+    def test_darija_wins_over_a_french_verb_form(self):
+        assert code_of("wakha, envoyez 3afak") == "darija_latin"
+
+
+class TestVerbPrefixes:
+    """Futur « gha- » et présent « ka- » de la darija, noms français avec l'article « l » collé."""
+
+    @pytest.mark.parametrize("text", ["ghansift", "ghatwsel", "ghanji ghda", "ghadi nsift"])
+    def test_future_prefix_is_strong(self, text):
+        assert code_of(text) == "darija_latin"
+
+    @pytest.mark.parametrize("text", ["katsifto", "kaydir", "kanbghi", "katkhdem"])
+    def test_present_prefix_is_a_marker(self, text):
+        assert code_of(text) == "darija_latin"
+
+    def test_present_prefix_is_weak(self):
+        assert detect_language("katsifto").scores["darija_latin"] == language.WEAK * language.DARIJA_WEIGHT
+
+    @pytest.mark.parametrize("text", ["katana", "kanban", "kangourou", "kayaks"])
+    def test_borrowed_words_with_the_prefix_are_not_darija(self, text):
+        assert detect_language(text).scores["darija_latin"] == 0
+
+    @pytest.mark.parametrize("text", ["lcommande", "lsachet", "lprix", "lfacture", "lquantité"])
+    def test_article_attached_to_a_french_noun(self, text):
+        assert detect_language(text).scores["darija_latin"] >= language.STRONG
+
+    def test_french_article_with_apostrophe_is_not_darija(self):
+        assert code_of("l'emballage et la commande") == "fr"
+
+    @pytest.mark.parametrize("text", ["غانصيفط ليكم", "غاتوصل الطلبية", "غايجيب"])
+    def test_future_prefix_in_arabic_script(self, text):
+        assert code_of(text) == "darija_ar"
+
+    def test_goal_nouns_are_not_a_future(self):
+        assert code_of("غايتنا خدمة الزبون") == "ar"
+
+    def test_french_nouns_with_attached_la_in_arabic_script(self):
+        assert code_of("لافريزون غدا") == "darija_ar"
+
+
+class TestDarijaNegationHelper:
+    """Fonction publique is_darija_negation, utilisée par la détection d'intention."""
+
+    @pytest.mark.parametrize("word", ["mabghitch", "matsiftch", "makaynch", "مابغيتش"])
+    def test_negated_verb(self, word):
+        assert language.is_darija_negation(word)
+
+    @pytest.mark.parametrize(("word", "previous"), [("tsiftohach", "ma"), ("تصيفطش", "ما"), ("بقيتش", "ما")])
+    def test_particle_written_apart(self, word, previous):
+        assert language.is_darija_negation(word, previous)
+
+    @pytest.mark.parametrize(("word", "previous"), [("sandwich", "ma"), ("wach", ""), ("match", "ma"), ("sift", "ma")])
+    def test_words_in_ch_that_are_not_negations(self, word, previous):
+        assert not language.is_darija_negation(word, previous)
+
+    def test_case_is_ignored(self):
+        assert language.is_darija_negation("MaBghitch")
+
+
+class TestMessageBody:
+    """Fonction publique message_body : partie écrite par l'expéditeur."""
+
+    def test_plain_text_is_unchanged(self):
+        assert language.message_body("Bonjour, 3000 sachets") == "Bonjour, 3000 sachets"
+
+    def test_quoted_lines_are_removed(self):
+        body = language.message_body("Oui, c'est bon\n> Récapitulatif : 3000 sachets\n> Confirmez-vous ?")
+        assert "Récapitulatif" not in body and "Oui" in body
+
+    def test_original_message_is_cut(self):
+        text = "Merci\n\n-----Original Message-----\nFrom: TECPAP\nSent: Monday\nCommande : 3000 sachets"
+        assert "3000" not in language.message_body(text)
+
+    def test_signature_is_removed(self):
+        body = language.message_body("Annulez ma commande\n-- \nService commercial - Atlas")
+        assert "Service commercial" not in body and "Annulez" in body
+
+    def test_forward_without_comment_keeps_the_text(self):
+        text = "-----Original Message-----\nCommande : 3000 sachets fond plat"
+        assert "3000" in language.message_body(text)
+
+    def test_case_accents_and_digits_are_kept(self):
+        assert language.message_body("Où en est ma commande n° 45 ?") == "Où en est ma commande n° 45 ?"
+
+    def test_typographic_apostrophes_are_unified(self):
+        assert language.message_body("c’est bon") == "c'est bon"
+
+    @pytest.mark.parametrize("value", [None, 42, b"oui"])
+    def test_non_string_is_rejected(self, value):
+        with pytest.raises(TypeError):
+            language.message_body(value)

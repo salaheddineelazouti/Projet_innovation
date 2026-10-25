@@ -9,10 +9,12 @@ une commande légitime ne doit jamais être bloquée par ces contrôles.
 
 1. Contrôle des entrées (:func:`inspect_input`). Le texte est normalisé (voir
    :mod:`tecpap.security.text` : NFKC, homoglyphes, accents, signes diacritiques arabes,
-   lettres espacées, leetspeak), puis comparé à des signaux pondérés en français, anglais,
-   arabe et darija (voir :mod:`tecpap.security.signals`). Le score est la somme des poids des
-   signaux trouvés, plafonnée à 100 ; le message est suspect à partir de
-   :data:`SUSPICION_THRESHOLD`. Les contenus encodés (base64, hexadécimal, encodage d'URL,
+   lettres espacées, leetspeak, abréviations de messagerie, lettre collée en tête des mots
+   arabes), puis comparé à des signaux pondérés en français, anglais, arabe et darija (voir
+   :mod:`tecpap.security.signals`). Le score est la somme des poids des signaux trouvés et des
+   associations de signaux (une demande et le texte interne qu'elle vise, une identité
+   revendiquée et une demande hors commande…), plafonnée à 100 ; le message est suspect à partir
+   de :data:`SUSPICION_THRESHOLD`. Les contenus encodés (base64, hexadécimal, encodage d'URL,
    séquences « \\x41 » ou « \\u0041 ») et le texte caché en caractères d'étiquette Unicode sont
    décodés et analysés à leur tour, sur deux niveaux au plus. Un texte qui contient une marque
    d'inversion du sens d'affichage (U+202E…) est aussi analysé à l'envers, et un texte qui cite
@@ -57,15 +59,20 @@ from functools import lru_cache
 from tecpap.catalog import COMPANY_INFO
 from tecpap.security.redaction import redact_contacts
 from tecpap.security.signals import (
+    BONUSES,
     ENCODED_PAYLOAD,
     HIDDEN_UNICODE_TAGS,
     INVISIBLE_CHARACTERS,
     LOWERED,
+    MARKER_NAMES,
+    MARKERS,
     MIXED_SCRIPTS,
     RAW,
     SIGNALS,
     SPACED_LETTERS,
     SQL_PATTERNS,
+    WORDS,
+    Bonus,
     Signal,
 )
 from tecpap.security.text import (
@@ -174,7 +181,10 @@ def _candidates(view: str, views: MatchingViews) -> tuple[str, ...]:
         pair = (views.raw, views.raw_joined)
     else:
         pair = (views.words, views.leet)
-    return pair[:1] if pair[0] == pair[1] or not pair[1] else pair
+    candidates = pair[:1] if pair[0] == pair[1] or not pair[1] else pair
+    if view == WORDS and views.split_words:
+        candidates += (views.split_words,)
+    return candidates
 
 
 def _match_signal(signal: Signal, views: MatchingViews) -> str | None:
@@ -197,6 +207,50 @@ def _hit(signal: Signal, excerpt: str | None, prefix: str) -> _Hit:
     if excerpt:
         reason = f"{reason} : « {_excerpt(excerpt)} »"
     return _Hit(signal.name, signal.weight, reason)
+
+
+# Signaux et marqueurs cherchés par motifs ; les marqueurs ont un poids nul et ne servent qu'aux associations.
+_PATTERN_SIGNALS: tuple[Signal, ...] = SIGNALS + MARKERS
+_SIGNALS_BY_NAME: dict[str, Signal] = {signal.name: signal for signal in _PATTERN_SIGNALS}
+# Fin de phrase : ponctuation finale suivie d'une espace, ou retour à la ligne.
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?;؟؛])\s+|\n+")
+
+
+def _sentences(text: str) -> list[str]:
+    return [sentence for sentence in _SENTENCE_BREAK.split(text) if sentence.strip()]
+
+
+def _found_in(names: frozenset[str], views: MatchingViews) -> bool:
+    return any(
+        name in _SIGNALS_BY_NAME and _match_signal(_SIGNALS_BY_NAME[name], views) is not None for name in names
+    )
+
+
+def _close_together(bonus: Bonus, sentences: list[str], found: set[str]) -> bool:
+    """Vrai si ``bonus.max_sentences`` phrases consécutives contiennent un indice de chacune des deux familles."""
+    first, second = bonus.first & found, bonus.second & found
+    span = max(1, bonus.max_sentences or 1)
+    for start in range(len(sentences)):
+        views = build_views(" ".join(sentences[start:start + span]))
+        if _found_in(first, views) and _found_in(second, views):
+            return True
+    return False
+
+
+def _bonus_hits(text: str, found: set[str]) -> list[_Hit]:
+    """Associations de :data:`tecpap.security.signals.BONUSES` présentes parmi les indices ``found``."""
+    sentences: list[str] | None = None
+    hits = []
+    for bonus in BONUSES:
+        if not bonus.applies(found):
+            continue
+        if bonus.max_sentences is not None:
+            if sentences is None:
+                sentences = _sentences(text)
+            if not _close_together(bonus, sentences, found):
+                continue
+        hits.append(_Hit(bonus.name, bonus.weight, bonus.reason))
+    return hits
 
 
 # Contenus encodés : base64 (alphabets standard et « URL »), hexadécimal, encodage d'URL,
@@ -272,7 +326,7 @@ def _collect_hits(text: str, depth: int = 0, prefix: str = "") -> dict[str, _Hit
     """Signaux trouvés dans ``text`` et dans les contenus qu'il cache (encodés ou invisibles)."""
     views = build_views(text)
     hits: dict[str, _Hit] = {}
-    for signal in SIGNALS:
+    for signal in _PATTERN_SIGNALS:
         excerpt = _match_signal(signal, views)
         if excerpt is not None:
             hits[signal.name] = _hit(signal, excerpt, prefix)
@@ -332,9 +386,12 @@ def inspect_input(text: str | None, *, max_chars: int | None = DEFAULT_MAX_CHARS
     cleaned = sanitize_text(text, max_chars=max_chars)
     if not text:
         return InputCheck(False, 0, [], cleaned, ())
-    hits = _collect_hits(str(text)[:INSPECTION_MAX_CHARS])
-    score = min(100, sum(hit.weight for hit in hits.values()))
-    ordered = sorted(hits.values(), key=lambda hit: -hit.weight)
+    analysed = str(text)[:INSPECTION_MAX_CHARS]
+    hits = _collect_hits(analysed)
+    evidence = [hit for name, hit in hits.items() if name not in MARKER_NAMES]
+    evidence += _bonus_hits(analysed, set(hits))
+    score = min(100, sum(hit.weight for hit in evidence))
+    ordered = sorted(evidence, key=lambda hit: -hit.weight)
     check = InputCheck(
         is_suspicious=score >= threshold,
         score=score,

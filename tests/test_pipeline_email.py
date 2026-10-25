@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from tecpap.channels.email_receiver import GmailReceiver
+from tecpap.channels.email_receiver import GmailReceiver, MailboxBatch
 from tecpap.config import Settings
 from tecpap.db.database import DatabaseManager
 from tecpap.extraction.extractor import INJECTION_ANOMALY, RULES_FALLBACK_ANOMALY, DataExtractor
@@ -34,9 +34,13 @@ def _email(email_id="12", message_id="<CAF-commande-1@mail.gmail.com>", body="Bo
 
 
 def _gmail(emails, downloaded=None):
+    """Boîte simulée : les emails donnés forment le lot à examiner (UID 1, 2, …)."""
+    emails = [{"uid": index, **email} for index, email in enumerate(emails, 1)]
     gmail = Mock()
     gmail.connect.return_value = True
-    gmail.get_recent_emails.return_value = emails
+    gmail.mailbox_key.return_value = "commandes@tecpap.ma/INBOX"
+    gmail.get_unprocessed_emails.return_value = MailboxBatch(
+        7, emails, last_uid=emails[-1]["uid"] if emails else None)
     gmail.download_attachments.return_value = downloaded or []
     return gmail
 
@@ -136,8 +140,10 @@ class TestGmailMessageId:
         message.set_content("2000 sachets")
         receiver = GmailReceiver(Settings.for_tests(tmp_path))
         receiver.connection = MagicMock()
-        receiver.connection.fetch.return_value = ("OK", [(b"3 (RFC822)", message.as_bytes())])
-        assert receiver._fetch_email(b"3")["message_id"] == "<id-unique@mail.gmail.com>"
+        receiver.connection.uid.return_value = ("OK", [(b"3 (UID 41 RFC822)", message.as_bytes())])
+        email_data = receiver._fetch_email(41, 7)
+        assert email_data["message_id"] == "<id-unique@mail.gmail.com>"
+        assert (email_data["id"], email_data["uid"]) == ("7:41", 41)
 
     def test_missing_message_id(self, tmp_path):
         message = EmailMessage()
@@ -145,5 +151,5 @@ class TestGmailMessageId:
         message.set_content("2000 sachets")
         receiver = GmailReceiver(Settings.for_tests(tmp_path))
         receiver.connection = MagicMock()
-        receiver.connection.fetch.return_value = ("OK", [(b"3 (RFC822)", message.as_bytes())])
-        assert receiver._fetch_email(b"3")["message_id"] is None
+        receiver.connection.uid.return_value = ("OK", [(b"3 (UID 41 RFC822)", message.as_bytes())])
+        assert receiver._fetch_email(41, 7)["message_id"] is None

@@ -2,14 +2,20 @@
 
 Le corpus annoté est réparti en deux partitions (« split dev/test ») : le jeu de développement (`dev`) et le jeu de test tenu à l'écart (`test`). Les erreurs du jeu de développement servent à écrire et à ajuster les règles, les listes de mots-clés et les seuils : ses scores surestiment donc la qualité réelle des composants. Le jeu de test ne sert jamais au réglage : ses scores estiment la qualité des composants sur des messages qui n'ont pas servi à les mettre au point (`evaluation/README.md`, section 9).
 
-Les résultats par langue, les matrices de confusion et les éléments mal classés de chaque partition sont dans `rapport_hors_ligne_dev.md` et `rapport_hors_ligne_test.md`.
+Les résultats par langue et les matrices de confusion de chaque partition sont dans `rapport_hors_ligne_dev.md` et `rapport_hors_ligne_test.md`. Les éléments mal classés ne sont listés que dans `rapport_hors_ligne_dev.md`.
 
 ## 1. Partitions évaluées
 
-| Partition | Nom | Usage | Fichier | Éléments | Commandes | Injections | Date de l'exécution | Empreinte SHA-256 |
-| --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |
-| `dev` | jeu de développement | Réglage des composants | `evaluation/dataset/messages.jsonl` | 89 | 41 | 18 | 2026-10-25 | `96fa89491ab4acded5276a5a68919a4ad53d0fc1d75c66758a4e8df2655f6e60` |
-| `test` | jeu de test tenu à l'écart | Mesure seule, jamais de réglage | `evaluation/dataset/messages_test.jsonl` | 109 | 57 | 21 | 2026-10-25 | `16d47e68bfa48fd96e7fabe1b75c0e83e090ac320f46eaff658ea9f897f7857e` |
+| Partition | Nom | Usage | Fichiers | Éléments | Commandes | Injections | Date de l'exécution |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| `dev` | jeu de développement | Réglage des composants | 2 | 198 | 98 | 39 | 2026-10-25 |
+| `test` | jeu de test tenu à l'écart | Mesure seule, jamais de réglage | 1 | 134 | 63 | 28 | 2026-10-25 |
+
+| Partition | Fichier | Éléments | Empreinte SHA-256 |
+| --- | --- | ---: | --- |
+| `dev` | `evaluation/dataset/messages.jsonl` | 89 | `96fa89491ab4acded5276a5a68919a4ad53d0fc1d75c66758a4e8df2655f6e60` |
+| `dev` | `evaluation/dataset/messages_dev_complement.jsonl` | 109 | `1f05e48593d0e3c7265fdf18b980a7650bcb901bdd6d6ac58e96dc1b5766fcd1` |
+| `test` | `evaluation/dataset/messages_test.jsonl` | 134 | `a34eb5d0a335097bfbb6edec55a43bbb48f42658bbedd73bb28e24216d8ce6f7` |
 
 L'empreinte SHA-256 est une somme de contrôle du fichier : deux rapports qui portent la même empreinte ont été calculés sur exactement les mêmes données.
 
@@ -37,28 +43,28 @@ L'empreinte SHA-256 est une somme de contrôle du fichier : deux rapports qui po
 
 | Composant | Mesure | Effectifs (dev) | Valeur (dev) | Intervalle de confiance à 95 % (dev) | Effectifs (test) | Valeur (test) | Intervalle de confiance à 95 % (test) | Écart (points) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Détection de la langue | Exactitude du code de langue | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 108/109 | 99,1 % | [95,0 % ; 99,8 %] | −0,9 |
-| Détection de la langue | Exactitude de la langue de réponse | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 109/109 | 100,0 % | [96,6 % ; 100,0 %] | 0,0 |
-| Extraction par règles | Exactitude de `type_produit` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 50/57 | 87,7 % | [76,8 % ; 93,9 %] | −12,3 |
-| Extraction par règles | Exactitude de `quantite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 44/57 | 77,2 % | [64,8 % ; 86,2 %] | −22,8 |
-| Extraction par règles | Exactitude de `unite` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 49/57 | 86,0 % | [74,7 % ; 92,7 %] | −14,0 |
-| Extraction par règles | Exactitude de `entreprise_cliente` | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 33/57 | 57,9 % | [45,0 % ; 69,8 %] | −42,1 |
-| Extraction par règles | Exactitude des champs obligatoires | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 26/57 | 45,6 % | [33,4 % ; 58,4 %] | −54,4 |
-| Détection des commandes | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 95/109 | 87,2 % | [79,6 % ; 92,2 %] | −12,8 |
-| Détection des commandes | Précision | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 43/43 | 100,0 % | [91,8 % ; 100,0 %] | 0,0 |
-| Détection des commandes | Rappel | 41/41 | 100,0 % | [91,4 % ; 100,0 %] | 43/57 | 75,4 % | [62,9 % ; 84,8 %] | −24,6 |
-| Détection des commandes | F1 | — | 100,0 % | — | — | 86,0 % | — | −14,0 |
-| Détection des renouvellements | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 102/109 | 93,6 % | [87,3 % ; 96,9 %] | −6,4 |
-| Détection des renouvellements | Précision | 7/7 | 100,0 % | [64,6 % ; 100,0 %] | 0/0 | n.d. | — | — |
-| Détection des renouvellements | Rappel | 7/7 | 100,0 % | [64,6 % ; 100,0 %] | 0/7 | 0,0 % | [0,0 % ; 35,4 %] | −100,0 |
-| Détection des renouvellements | F1 | — | 100,0 % | — | — | 0,0 % | — | −100,0 |
-| Détection des injections | Précision | 18/18 | 100,0 % | [82,4 % ; 100,0 %] | 4/4 | 100,0 % | [51,0 % ; 100,0 %] | 0,0 |
-| Détection des injections | Rappel | 18/18 | 100,0 % | [82,4 % ; 100,0 %] | 4/21 | 19,0 % | [7,7 % ; 40,0 %] | −81,0 |
-| Détection des injections | F1 | — | 100,0 % | — | — | 32,0 % | — | −68,0 |
-| Détection des injections | Taux de faux positifs | 0/71 | 0,0 % | [0,0 % ; 5,1 %] | 0/88 | 0,0 % | [0,0 % ; 4,2 %] | 0,0 |
-| Détection des injections | Fausses alertes sur les pièges | 0/10 | 0,0 % | [0,0 % ; 27,8 %] | 0/13 | 0,0 % | [0,0 % ; 22,8 %] | 0,0 |
-| Détection des intentions | Exactitude | 89/89 | 100,0 % | [95,9 % ; 100,0 %] | 82/109 | 75,2 % | [66,4 % ; 82,4 %] | −24,8 |
-| Détection des intentions | Macro-F1 | — | 100,0 % | — | — | 65,9 % | — | −34,1 |
+| Détection de la langue | Exactitude du code de langue | 198/198 | 100,0 % | [98,1 % ; 100,0 %] | 133/134 | 99,3 % | [95,9 % ; 99,9 %] | −0,7 |
+| Détection de la langue | Exactitude de la langue de réponse | 198/198 | 100,0 % | [98,1 % ; 100,0 %] | 133/134 | 99,3 % | [95,9 % ; 99,9 %] | −0,7 |
+| Extraction par règles | Exactitude de `type_produit` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 62/63 | 98,4 % | [91,5 % ; 99,7 %] | −1,6 |
+| Extraction par règles | Exactitude de `quantite` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 60/63 | 95,2 % | [86,9 % ; 98,4 %] | −4,8 |
+| Extraction par règles | Exactitude de `unite` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 58/63 | 92,1 % | [82,7 % ; 96,6 %] | −7,9 |
+| Extraction par règles | Exactitude de `entreprise_cliente` | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 52/63 | 82,5 % | [71,4 % ; 90,0 %] | −17,5 |
+| Extraction par règles | Exactitude des champs obligatoires | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 48/63 | 76,2 % | [64,4 % ; 85,0 %] | −23,8 |
+| Détection des commandes | Exactitude | 198/198 | 100,0 % | [98,1 % ; 100,0 %] | 129/134 | 96,3 % | [91,6 % ; 98,4 %] | −3,7 |
+| Détection des commandes | Précision | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 58/58 | 100,0 % | [93,8 % ; 100,0 %] | 0,0 |
+| Détection des commandes | Rappel | 98/98 | 100,0 % | [96,2 % ; 100,0 %] | 58/63 | 92,1 % | [82,7 % ; 96,6 %] | −7,9 |
+| Détection des commandes | F1 | — | 100,0 % | — | — | 95,9 % | — | −4,1 |
+| Détection des renouvellements | Exactitude | 198/198 | 100,0 % | [98,1 % ; 100,0 %] | 133/134 | 99,3 % | [95,9 % ; 99,9 %] | −0,7 |
+| Détection des renouvellements | Précision | 14/14 | 100,0 % | [78,5 % ; 100,0 %] | 12/12 | 100,0 % | [75,8 % ; 100,0 %] | 0,0 |
+| Détection des renouvellements | Rappel | 14/14 | 100,0 % | [78,5 % ; 100,0 %] | 12/13 | 92,3 % | [66,7 % ; 98,6 %] | −7,7 |
+| Détection des renouvellements | F1 | — | 100,0 % | — | — | 96,0 % | — | −4,0 |
+| Détection des injections | Précision | 39/39 | 100,0 % | [91,0 % ; 100,0 %] | 23/23 | 100,0 % | [85,7 % ; 100,0 %] | 0,0 |
+| Détection des injections | Rappel | 39/39 | 100,0 % | [91,0 % ; 100,0 %] | 23/28 | 82,1 % | [64,4 % ; 92,1 %] | −17,9 |
+| Détection des injections | F1 | — | 100,0 % | — | — | 90,2 % | — | −9,8 |
+| Détection des injections | Taux de faux positifs | 0/159 | 0,0 % | [0,0 % ; 2,4 %] | 0/106 | 0,0 % | [0,0 % ; 3,5 %] | 0,0 |
+| Détection des injections | Fausses alertes sur les pièges | 0/23 | 0,0 % | [0,0 % ; 14,3 %] | 0/17 | 0,0 % | [0,0 % ; 18,4 %] | 0,0 |
+| Détection des intentions | Exactitude | 198/198 | 100,0 % | [98,1 % ; 100,0 %] | 124/134 | 92,5 % | [86,8 % ; 95,9 %] | −7,5 |
+| Détection des intentions | Macro-F1 | — | 100,0 % | — | — | 91,9 % | — | −8,1 |
 
 ## 4. Écarts entre les partitions
 
@@ -66,11 +72,6 @@ Quand les intervalles de confiance des deux partitions ne se chevauchent pas, l'
 
 Mesures dont les intervalles sont disjoints :
 
-- Extraction par règles — Exactitude de `quantite` (−22,8 points)
-- Extraction par règles — Exactitude de `entreprise_cliente` (−42,1 points)
-- Extraction par règles — Exactitude des champs obligatoires (−54,4 points)
-- Détection des commandes — Exactitude (−12,8 points)
-- Détection des commandes — Rappel (−24,6 points)
-- Détection des renouvellements — Rappel (−100,0 points)
-- Détection des injections — Rappel (−81,0 points)
-- Détection des intentions — Exactitude (−24,8 points)
+- Extraction par règles — Exactitude de `entreprise_cliente` (−17,5 points)
+- Extraction par règles — Exactitude des champs obligatoires (−23,8 points)
+- Détection des intentions — Exactitude (−7,5 points)

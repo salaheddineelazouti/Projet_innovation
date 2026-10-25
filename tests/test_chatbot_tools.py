@@ -141,17 +141,15 @@ class TestScope:
         make_order(db, client="Snack Atlas", whatsapp_from=ALICE, numero_commande="R-1", status="rejetee")
         assert alice.my_order_status("R-1")["status"] == "rejetee"
 
-    def test_client_orders_are_visible_once_the_phone_link_is_confirmed(self, db, alice):
+    def test_client_orders_stay_hidden_even_after_a_validated_whatsapp_order(self, db, alice):
         email_order = make_order(db, client="Snack Atlas", numero_commande="EM-1", email_from="achat@exemple.ma")
         whatsapp_order = make_order(db, client="Snack Atlas", whatsapp_from=ALICE)
-        assert alice.my_order_status("EM-1") is None
-        # Validation par l'équipe commerciale, comme l'API de validation : statut, puis téléphone rattaché.
         db.update_order_status(whatsapp_order, "validee")
-        assert alice.my_order_status("EM-1") is None
         assert db.attach_phone_to_client(db.get_order(whatsapp_order)["client_id"], ALICE) is True
-        assert alice.my_order_status("EM-1")["reference"] == "EM-1"
-        assert alice.my_order_status(f"CMD-{email_order}")["reference"] == "EM-1"
-        assert _references(alice.my_recent_orders(10)) == {"EM-1", f"CMD-{whatsapp_order}"}
+        # Seules les commandes envoyées depuis le numéro de l'expéditeur lui sont visibles.
+        assert alice.my_order_status("EM-1") is None
+        assert alice.my_order_status(f"CMD-{email_order}") is None
+        assert _references(alice.my_recent_orders(10)) == {f"CMD-{whatsapp_order}"}
 
     def test_client_phone_alone_does_not_give_access(self, db, alice):
         db.get_or_create_client("Snack Atlas", telephone="+212600000001")
@@ -302,10 +300,16 @@ class TestSubmitOrder:
         assert "B-200" in order["informations_supplementaires"]
         assert db.get_order(two_clients["bob_pending"])["quantite"] == 9000
 
-    def test_own_order_number_returns_the_existing_order(self, alice, two_clients):
+    def test_reused_own_order_number_creates_a_new_order_flagged_for_review(self, db, alice, two_clients):
         order_id = alice.submit_order({"entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat",
                                        "quantite": 10, "numero_commande": "A-100"})
-        assert order_id == two_clients["alice_pending"]
+        assert order_id != two_clients["alice_pending"]
+        order = db.get_order(order_id)
+        assert (order["numero_commande"], order["quantite"]) == (None, 10)
+        assert "A-100" in order["informations_supplementaires"]
+        assert any("A-100" in item and f"CMD-{two_clients['alice_pending']}" in item
+                   for item in order["anomalies_list"])
+        assert db.get_order(two_clients["alice_pending"])["quantite"] == 3000
 
     def test_metadata_fields_are_passed_through(self, db, alice, monkeypatch):
         received = {}

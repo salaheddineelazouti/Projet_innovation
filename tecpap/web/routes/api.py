@@ -1,25 +1,43 @@
 """API JSON du tableau de bord : traitement des emails, validation et rejet des commandes,
 codes articles, statistiques, notifications et état du service.
 
-La validation ou le rejet d'une commande prévient le client par email et, pour une commande
-reçue par WhatsApp, par un message WhatsApp rédigé à partir des modèles ``order_validated`` et
-``order_rejected`` (:mod:`tecpap.chatbot.messages`), dans la langue de la conversation du
-client ; ce message est enregistré dans la conversation. La validation d'une commande WhatsApp
-vaut vérification du lien entre le numéro de l'expéditeur et le client : le numéro est alors
-enregistré comme téléphone d'un client qui n'en avait pas
-(:meth:`tecpap.db.database.DatabaseManager.attach_phone_to_client`).
+Validation et rejet
+    Seule une commande « en attente » peut être validée ou rejetée : le changement de statut est
+    une seule requête SQL conditionnelle (``WHERE statut = 'en_attente'``). Quand deux
+    commerciaux agissent sur la même commande, ou qu'une page n'est plus à jour, la seconde
+    action reçoit une erreur 409 avec le statut actuel, et le client ne reçoit aucun second
+    message. La validation ne rattache jamais le numéro WhatsApp de l'expéditeur au client :
+    valider le contenu d'une commande ne prouve pas l'identité de celui qui l'a envoyée.
+    L'utilisateur connecté est inscrit dans la trace de la table ``logs`` (colonne ``user_id``),
+    pour la validation, le rejet et chaque modification d'une commande.
 
-Les champs modifiables d'une commande sont limités à
-:data:`tecpap.db.database.ORDER_UPDATABLE_FIELDS` : une requête qui contient un autre champ, ou
-une valeur numérique invalide, est refusée (400) avec la liste des champs refusés
-(``rejected_fields``). En cas d'erreur inattendue, l'exception est consignée dans le journal et la
-réponse ne contient qu'un message générique.
+Notifications
+    La validation ou le rejet prévient le client par email et, pour une commande reçue par
+    WhatsApp, par un message WhatsApp rédigé à partir des modèles ``order_validated`` et
+    ``order_rejected`` (:mod:`tecpap.chatbot.messages`), dans la langue de la conversation du
+    client ; ce message est enregistré dans la conversation. La réponse indique, pour chaque
+    canal, ``sent`` (envoyé), ``failed`` (échec) ou ``not_applicable`` (pas d'adresse ou de
+    numéro), avec un avertissement en français (``warning``) quand le client n'a pas été prévenu ;
+    le résultat est aussi inscrit dans la table ``logs``. La route ``/api/orders/<id>/notify``
+    renvoie la notification d'une commande validée ou rejetée.
+
+Modifications
+    Les champs modifiables d'une commande sont limités à
+    :data:`tecpap.db.database.ORDER_UPDATABLE_FIELDS` : une requête qui contient un autre champ, ou
+    une valeur numérique invalide, est refusée (400) avec la liste des champs refusés
+    (``rejected_fields``). Sur une commande validée ou rejetée, les champs annoncés au client
+    (:data:`DECIDED_ORDER_LOCKED_FIELDS` : produit, quantité, prix, dates) ne peuvent plus changer
+    (409) ; les champs SAGE X3 et de livraison restent modifiables.
+
+En cas d'erreur inattendue, l'exception est consignée dans le journal et la réponse ne contient
+qu'un message générique.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 from datetime import datetime
 from typing import Any
 
@@ -27,9 +45,10 @@ from flask import Blueprint, jsonify, request
 
 from tecpap import __version__
 from tecpap.chatbot.messages import DEFAULT_LANGUAGE, order_lines, reason_line, render
-from tecpap.db.database import OrderUpdateError, clean_order_updates
+from tecpap.db.database import OrderUpdateError, clean_order_updates, is_generic_client_name
 from tecpap.extraction.article_codes import generate_article_code, suggest_article_code_from_description
 from tecpap.extraction.rules import normalize_phone
+from tecpap.processing import order_processor as order_processor_module
 from tecpap.processing.order_processor import OrderProcessor
 from tecpap.reporting.analytics import AIPredictor, AlertSystem, Analytics, ClientHistory
 from tecpap.web.auth import current_user
@@ -48,6 +67,27 @@ SAGE_FIELDS = (
     "impression_client", "commercial",
 )
 
+
+DECIDED_ORDER_LOCKED_FIELDS: tuple[str, ...] = (
+    "numero_commande", "produit_id", "nature_produit", "quantite", "unite",
+    "prix_unitaire", "prix_total", "devise", "date_commande", "date_livraison",
+)
+"""Champs d'une commande validée ou rejetée qui ne peuvent plus changer : ceux annoncés au client."""
+
+STATUS_LABELS: dict[str, str] = {
+    "en_attente": "en attente", "validee": "validée", "rejetee": "rejetée", "supprimee": "supprimée",
+}
+"""Libellés des statuts dans les messages d'erreur."""
+
+MAILBOX_UNREACHABLE_MESSAGE = ("La boîte Gmail n'a pas pu être lue : vérifiez les identifiants Gmail "
+                               "et le journal du serveur.")
+PROCESSING_RUNNING_MESSAGE = "Un traitement des emails est déjà en cours : attendez qu'il se termine puis réessayez."
+
+NOTIFICATION_SENT = "sent"
+NOTIFICATION_FAILED = "failed"
+NOTIFICATION_NOT_APPLICABLE = "not_applicable"
+
+_EMAIL_ADDRESS_RE = re.compile(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+")
 
 # Longueur maximale du nom de l'auteur d'une validation.
 _MAX_VALIDATOR_LENGTH = 100
@@ -76,7 +116,19 @@ def _rejected_fields(exc: OrderUpdateError):
 
 @bp.route("/healthz")
 def healthz():
-    """Sonde de disponibilité (utilisée par le conteneur Docker)."""
+    """Sonde de disponibilité (utilisée par le conteneur Docker).
+
+    La base est lue (table ``sqlite_master``) sur la connexion du fil courant : une base
+    impossible à ouvrir ou illisible donne 503, avec la cause ``database``.
+    """
+    try:
+        connection = get_services().db.connection
+        if connection is None:
+            raise sqlite3.OperationalError("connexion à la base impossible")
+        connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+    except sqlite3.Error:
+        logger.warning("Sonde de disponibilité : base de données indisponible", exc_info=True)
+        return jsonify({"status": "error", "reason": "database", "version": __version__}), 503
     return jsonify({"status": "ok", "version": __version__})
 
 
@@ -114,8 +166,11 @@ def _notification_language(services: Services, number: str) -> tuple[Any, str]:
 
 def _summary_fields(order: dict[str, Any]) -> dict[str, Any]:
     """Champs d'une commande lue en base, sous les noms attendus par :func:`order_lines`."""
+    client_name = order.get("client_nom")
+    if not isinstance(client_name, str) or "@" in client_name or is_generic_client_name(client_name):
+        client_name = None
     return {
-        "entreprise_cliente": order.get("client_nom"),
+        "entreprise_cliente": client_name,
         "type_produit": order.get("produit_type") or order.get("nature_produit"),
         "quantite": order.get("quantite"),
         "unite": order.get("unite"),
@@ -131,15 +186,14 @@ def _send_whatsapp_notification(services: Services, order: dict[str, Any], templ
     ``order_rejected``), dans la langue de la conversation WhatsApp du numéro (français sans
     conversation), puis enregistré comme message envoyé de cette conversation.
     """
-    if order.get("source") != "whatsapp":
-        return False
-    number = _order_whatsapp_number(order)
+    number = _whatsapp_recipient(order)
     if not number:
         return False
     conversation, language = _notification_language(services, number)
     reference = order.get("numero_commande") or f"CMD-{order.get('id')}"
     if template == "order_validated":
-        message = render(template, language, reference=reference, lines=order_lines(_summary_fields(order), language))
+        lines = order_lines(_summary_fields(order), language, omit_unknown_client=True)
+        message = render(template, language, reference=reference, lines=lines)
     else:
         message = render(template, language, reference=reference, reason=reason_line(reason, language))
     try:
@@ -157,32 +211,175 @@ def _send_whatsapp_notification(services: Services, order: dict[str, Any], templ
     return True
 
 
+def _whatsapp_recipient(order: dict[str, Any]) -> str | None:
+    """Numéro à prévenir par WhatsApp : seulement pour une commande reçue par WhatsApp."""
+    return _order_whatsapp_number(order) if order.get("source") == "whatsapp" else None
+
+
+def _has_email_address(order: dict[str, Any]) -> bool:
+    return bool(_EMAIL_ADDRESS_RE.fullmatch(str(order.get("email_from") or "").strip()))
+
+
+def _channel_state(applicable: bool, sent: bool) -> str:
+    if not applicable:
+        return NOTIFICATION_NOT_APPLICABLE
+    return NOTIFICATION_SENT if sent else NOTIFICATION_FAILED
+
+
+def _notification_warning(states: dict[str, str]) -> str | None:
+    """Avertissement à afficher quand le client n'a pas été prévenu, sinon ``None``."""
+    failed = [label for channel, label in (("email", "email"), ("whatsapp", "WhatsApp"))
+              if states[channel] == NOTIFICATION_FAILED]
+    if failed:
+        return (f"Le client n'a pas été prévenu par {' ni par '.join(failed)} : l'envoi a échoué (détail dans le "
+                "journal du serveur). Prévenez-le autrement ou renvoyez la notification.")
+    if all(state == NOTIFICATION_NOT_APPLICABLE for state in states.values()):
+        return "Le client n'a pas été prévenu : la commande n'a ni adresse email ni numéro WhatsApp."
+    return None
+
+
+def _record_notification(services: Services, order_id: int, template: str, states: dict[str, str]) -> None:
+    """Inscrit le résultat d'une notification dans la table ``logs`` (avec l'utilisateur connecté)."""
+    details = f"Notification {template}: email={states['email']}, whatsapp={states['whatsapp']}"
+    try:
+        connection = services.db.connection
+        connection.execute(
+            "INSERT INTO logs (action, table_name, record_id, details, user_id) "
+            "VALUES ('NOTIFY', 'commandes', ?, ?, ?)",
+            (order_id, details, current_user()),
+        )
+        connection.commit()
+    except sqlite3.Error:
+        logger.warning("Résultat de la notification de la commande %s non enregistré", order_id, exc_info=True)
+
+
+def _notify_client(services: Services, order: dict[str, Any], template: str, reason: str = "") -> dict[str, Any]:
+    """Prévient le client d'une décision (email et WhatsApp) ; renvoie les champs de la réponse JSON."""
+    order_id = order.get("id")
+    email_sent = False
+    email_applicable = _has_email_address(order)
+    if email_applicable:
+        try:
+            if template == "order_validated":
+                email_sent = services.email_sender.send_validation_email(order)
+            else:
+                email_sent = services.email_sender.send_rejection_email(order, reason)
+        except Exception:
+            logger.warning("Email de notification impossible pour la commande %s", order_id, exc_info=True)
+    whatsapp_applicable = _whatsapp_recipient(order) is not None
+    whatsapp_sent = (_send_whatsapp_notification(services, order, template, reason=reason)
+                     if whatsapp_applicable else False)
+    states = {"email": _channel_state(email_applicable, bool(email_sent)),
+              "whatsapp": _channel_state(whatsapp_applicable, whatsapp_sent)}
+    if NOTIFICATION_FAILED in states.values():
+        logger.warning("Notification incomplète pour la commande %s : %s", order_id, states)
+    _record_notification(services, order_id, template, states)
+    return {"email_sent": bool(email_sent), "whatsapp_sent": whatsapp_sent, "notifications": states,
+            "warning": _notification_warning(states)}
+
+
+def _already_decided(order: dict[str, Any] | None):
+    """Réponse 409 pour une commande qui n'est plus en attente (statut actuel dans ``status``)."""
+    status = (order or {}).get("statut") or ""
+    label = STATUS_LABELS.get(status, status or "inconnu")
+    return json_error(f"Commande déjà traitée (statut : {label}) : rechargez la page pour voir son état actuel.",
+                      409, status=status)
+
+
+def _decide(services: Services, order_id: int, status: str, *, validated_by: str | None = None,
+            reason: str = "") -> bool:
+    """Fait passer une commande en attente au statut ``status`` ; faux si elle n'est plus en attente.
+
+    Le changement est une seule requête conditionnelle : de deux décisions simultanées, une
+    seule aboutit. Le motif d'un rejet est écrit dans la même requête. La date et l'auteur de la
+    validation, et la trace de la table ``logs``, sont ensuite enregistrés par
+    :meth:`tecpap.db.database.DatabaseManager.update_order_status`.
+    """
+    connection = services.db.connection
+    if status == "rejetee":
+        cursor = connection.execute(
+            "UPDATE commandes SET statut = 'rejetee', motif_rejet = ? WHERE id = ? AND statut = 'en_attente'",
+            (reason or None, order_id),
+        )
+    else:
+        cursor = connection.execute(
+            "UPDATE commandes SET statut = 'validee' WHERE id = ? AND statut = 'en_attente'", (order_id,),
+        )
+    connection.commit()
+    if cursor.rowcount != 1:
+        return False
+    services.db.update_order_status(order_id, status, validated_by)
+    _attribute_last_log(services, order_id, current_user() or validated_by)
+    return True
+
+
+def _attribute_last_log(services: Services, order_id: int, user: str | None) -> None:
+    """Inscrit ``user`` sur la dernière ligne de ``logs`` de la commande qui n'a pas encore d'auteur.
+
+    La couche base de données écrit la trace d'une modification sans connaître l'utilisateur
+    connecté ; la route la complète aussitôt après la modification.
+    """
+    if not user:
+        return
+    try:
+        connection = services.db.connection
+        connection.execute(
+            "UPDATE logs SET user_id = ? WHERE id = (SELECT MAX(id) FROM logs WHERE table_name = 'commandes' "
+            "AND record_id = ? AND action = 'UPDATE' AND user_id IS NULL)",
+            (user, order_id),
+        )
+        connection.commit()
+    except sqlite3.Error:
+        logger.warning("Auteur de la modification de la commande %s non enregistré", order_id, exc_info=True)
+
+
 # ---------------------------------------------------------------------- commandes
+
+def _is_processing_already_running(error: Exception) -> bool:
+    """Vrai pour l'erreur « traitement des emails déjà en cours » du processeur de commandes."""
+    running_error = getattr(order_processor_module, "ProcessingAlreadyRunning", None)
+    return isinstance(running_error, type) and isinstance(error, running_error)
+
 
 @bp.route("/api/process-emails", methods=["POST"])
 def api_process_emails():
-    """Lit les emails récents et enregistre les bons de commande détectés."""
+    """Lit les emails récents et enregistre les bons de commande détectés.
+
+    Un seul traitement à la fois : pendant un traitement en cours, la requête reçoit 409.
+    """
     services = get_services()
     try:
         processor = OrderProcessor(settings=services.settings, email_sender=services.email_sender, llm=services.llm)
         orders = processor.process_new_emails(max_emails=10, save_to_db=True)
+        if processor.mailbox_unreachable:
+            return json_error(MAILBOX_UNREACHABLE_MESSAGE, 502)
+        message = f"{len(orders)} bon(s) de commande détecté(s)"
+        if processor.remaining_emails:
+            message += f" ; {processor.remaining_emails} email(s) restent à traiter au prochain passage"
+        if processor.failed_emails:
+            message += f" ; {processor.failed_emails} email(s) n'ont pas pu être traités (voir le journal)"
         return jsonify({
             "success": True,
-            "message": f"{len(orders)} bon(s) de commande détecté(s)",
+            "message": message,
             "orders_count": len(orders),
+            "remaining_emails": processor.remaining_emails,
+            "failed_emails": processor.failed_emails,
         })
-    except Exception:
+    except Exception as exc:
+        if _is_processing_already_running(exc):
+            logger.info("Traitement des emails refusé : un traitement est déjà en cours")
+            return json_error(PROCESSING_RUNNING_MESSAGE, 409)
         logger.exception("Échec du traitement des emails")
         return json_error("Le traitement des emails a échoué. Le détail est consigné dans le journal du serveur.", 500)
 
 
 @bp.route("/api/orders/<int:order_id>/validate", methods=["POST"])
 def api_validate_order(order_id: int):
-    """Valide une commande et prévient le client (email, et WhatsApp si la commande en vient).
+    """Valide une commande en attente et prévient le client (email, et WhatsApp si la commande en vient).
 
-    L'auteur enregistré est ``validated_by`` s'il est fourni, sinon l'utilisateur connecté.
-    Pour une commande WhatsApp dont le client n'a pas encore de téléphone, le numéro de
-    l'expéditeur lui est rattaché. Une commande inexistante donne une erreur 404.
+    L'auteur enregistré est ``validated_by`` s'il est fourni, sinon l'utilisateur connecté. Une
+    commande inexistante donne 404, une commande qui n'est plus en attente 409 (aucun message
+    n'est alors envoyé).
     """
     services = get_services()
     order = services.db.get_order(order_id)
@@ -190,56 +387,57 @@ def api_validate_order(order_id: int):
         return json_error("Commande introuvable", 404)
     validated_by = (_optional_text(_json_body().get("validated_by"), _MAX_VALIDATOR_LENGTH)
                     or current_user() or "Commercial")
-    services.db.update_order_status(order_id, "validee", validated_by)
-    if order.get("source") == "whatsapp" and order.get("whatsapp_from") and not order.get("client_telephone"):
-        services.db.attach_phone_to_client(order.get("client_id"), order["whatsapp_from"])
+    if not _decide(services, order_id, "validee", validated_by=validated_by):
+        return _already_decided(services.db.get_order(order_id))
 
     # Commande relue après la validation : la notification contient le statut et la date enregistrés.
     order = services.db.get_order(order_id)
-    email_sent = False
-    try:
-        email_sent = services.email_sender.send_validation_email(order)
-    except Exception:
-        logger.warning("Email de validation impossible pour la commande %s", order_id, exc_info=True)
-    whatsapp_sent = _send_whatsapp_notification(services, order, "order_validated")
-
-    return jsonify({
-        "success": True,
-        "message": "Commande validée",
-        "whatsapp_sent": whatsapp_sent,
-        "email_sent": email_sent,
-    })
+    return jsonify({"success": True, "message": "Commande validée",
+                    **_notify_client(services, order, "order_validated")})
 
 
 @bp.route("/api/orders/<int:order_id>/reject", methods=["POST"])
 def api_reject_order(order_id: int):
-    """Rejette une commande, enregistre le motif et prévient le client.
+    """Rejette une commande en attente, enregistre le motif et prévient le client.
 
-    Une commande inexistante donne une erreur 404.
+    Une commande inexistante donne 404, un motif absent 400 (le motif est envoyé tel quel au
+    client), une commande qui n'est plus en attente 409 (aucun message n'est alors envoyé).
     """
     services = get_services()
     order = services.db.get_order(order_id)
     if not order:
         return json_error("Commande introuvable", 404)
     reason = _optional_text(_json_body().get("reason")) or ""
+    if not reason:
+        return json_error("Indiquez un motif de rejet : il est communiqué au client.", 400)
+    if not _decide(services, order_id, "rejetee", reason=reason):
+        return _already_decided(services.db.get_order(order_id))
 
-    services.db.update_order_status(order_id, "rejetee")
-    if reason:
-        services.db.update_order(order_id, {"motif_rejet": reason})
+    order = services.db.get_order(order_id)
+    return jsonify({"success": True, "message": "Commande rejetée",
+                    **_notify_client(services, order, "order_rejected", reason)})
 
-    email_sent = False
-    try:
-        email_sent = services.email_sender.send_rejection_email(order, reason)
-    except Exception:
-        logger.warning("Email de rejet impossible pour la commande %s", order_id, exc_info=True)
-    whatsapp_sent = _send_whatsapp_notification(services, order, "order_rejected", reason=reason)
 
-    return jsonify({
-        "success": True,
-        "message": "Commande rejetée",
-        "whatsapp_sent": whatsapp_sent,
-        "email_sent": email_sent,
-    })
+@bp.route("/api/orders/<int:order_id>/notify", methods=["POST"])
+def api_notify_order(order_id: int):
+    """Renvoie au client la notification de la décision (validation, ou rejet avec son motif).
+
+    Une commande en attente ou supprimée donne 409 : il n'y a pas de décision à annoncer.
+    """
+    services = get_services()
+    order = services.db.get_order(order_id)
+    if not order:
+        return json_error("Commande introuvable", 404)
+    status = order.get("statut")
+    if status == "validee":
+        template = "order_validated"
+    elif status == "rejetee":
+        template = "order_rejected"
+    else:
+        label = STATUS_LABELS.get(status or "", status or "inconnu")
+        return json_error(f"Aucune décision à annoncer pour une commande {label}.", 409, status=status)
+    result = _notify_client(services, order, template, order.get("motif_rejet") or "")
+    return jsonify({"success": True, "message": "Notification renvoyée", **result})
 
 
 @bp.route("/api/orders/<int:order_id>/update", methods=["POST"])
@@ -248,7 +446,10 @@ def api_update_order(order_id: int):
 
     Seuls les champs de :data:`~tecpap.db.database.ORDER_UPDATABLE_FIELDS` sont acceptés ; les
     valeurs des champs numériques peuvent être des chaînes (formulaire HTML), une chaîne vide
-    efface la valeur.
+    efface la valeur. Sur une commande validée, rejetée ou supprimée, un changement de
+    :data:`DECIDED_ORDER_LOCKED_FIELDS` est refusé (409, ``rejected_fields``) : le client a été
+    prévenu de ces valeurs ; une valeur identique à l'actuelle est acceptée. L'utilisateur connecté
+    est inscrit dans la trace de la table ``logs``.
     """
     db = get_services().db
     body = _json_body()
@@ -262,6 +463,14 @@ def api_update_order(order_id: int):
     order = db.get_order(order_id)
     if not order:
         return json_error("Commande introuvable", 404)
+    if order.get("statut") != "en_attente":
+        locked = sorted(name for name in DECIDED_ORDER_LOCKED_FIELDS
+                        if name in updates and updates[name] != order.get(name))
+        if locked:
+            label = STATUS_LABELS.get(order.get("statut") or "", order.get("statut") or "")
+            return json_error(f"Commande {label} : produit, quantité, prix et dates ne sont plus modifiables. "
+                              "Champs refusés : " + ", ".join(locked), 409, rejected_fields=locked,
+                              status=order.get("statut"))
     if "quantite" in updates or "quantite_livree" in updates:
         quantite = updates.get("quantite", order.get("quantite")) or 0
         quantite_livree = updates.get("quantite_livree", order.get("quantite_livree")) or 0
@@ -272,6 +481,7 @@ def api_update_order(order_id: int):
     except Exception:
         logger.exception("Échec de la modification de la commande %s", order_id)
         return server_error()
+    _attribute_last_log(get_services(), order_id, current_user())
     return jsonify({"success": True, "message": "Commande mise à jour"})
 
 
@@ -473,6 +683,7 @@ def api_update_sage_fields(order_id: int):
             sage_data["reste_a_livrer"] = quantite - livree
 
         db.update_order(order_id, sage_data)
+        _attribute_last_log(get_services(), order_id, current_user())
         return jsonify({
             "success": True,
             "message": "Champs SAGE X3 mis à jour",
@@ -488,7 +699,8 @@ def api_update_sage_fields(order_id: int):
 @bp.route("/api/analytics")
 def api_analytics():
     """Indicateurs détaillés du tableau de bord."""
-    return jsonify(Analytics(get_services().db).get_dashboard_stats())
+    services = get_services()
+    return jsonify(Analytics(services.db, getattr(services.settings, "timezone", None)).get_dashboard_stats())
 
 
 @bp.route("/api/alerts")
@@ -507,9 +719,9 @@ def api_client_history(client_id: int):
     if not client:
         return json_error("Client introuvable", 404)
 
-    preferences = ClientHistory(services.db).get_client_preferences(client["nom"])
+    preferences = ClientHistory(services.db).get_client_preferences(client_id=client_id)
     predictor = AIPredictor(services.db, settings=services.settings, llm=services.llm)
-    prediction = predictor.predict_client_behavior(client["nom"])
+    prediction = predictor.predict_client_behavior(client_id=client_id)
     return jsonify({"preferences": preferences, "prediction": prediction})
 
 
@@ -566,12 +778,18 @@ def check_notifications():
 
 @bp.route("/api/whatsapp/status")
 def whatsapp_status():
-    """Indique si le client Twilio est configuré (identifiant de compte tronqué)."""
+    """État du client Twilio : identifiants renseignés (``connected``), acceptés par Twilio (``verified``).
+
+    L'identifiant de compte est tronqué et le numéro d'envoi est celui de la configuration.
+    """
     whatsapp = get_services().whatsapp
     try:
         connected = whatsapp.connect()
+        sender = (get_services().settings.twilio_whatsapp_number or "").removeprefix("whatsapp:")
         return jsonify({
             "connected": connected,
+            "verified": bool(connected and whatsapp.verify_credentials()),
+            "phone_number": sender or None,
             "account_sid": whatsapp.account_sid[:10] + "..." if whatsapp.account_sid else None,
         })
     except Exception:

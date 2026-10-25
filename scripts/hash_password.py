@@ -8,6 +8,11 @@ copier dans le fichier .env (variable ADMIN_PASSWORD_HASH) ; le mot de passe lui
 jamais enregistré. L'empreinte est calculée par werkzeug.security.generate_password_hash
 (fonction de dérivation de clé scrypt, avec un sel aléatoire) et vérifiée à la connexion par
 check_password_hash.
+
+La valeur est affichée entre apostrophes : elles empêchent docker compose d'interpréter les
+caractères $ de l'empreinte. L'application retire une paire d'apostrophes qui entoure une
+valeur (tecpap.config.strip_quotes) : la même ligne convient donc aussi à python-dotenv et à
+docker run --env-file, qui transmet les apostrophes telles quelles.
 """
 
 from __future__ import annotations
@@ -42,7 +47,8 @@ def main() -> int:
         return 1
 
     password_hash = generate_password_hash(password)
-    print("Ajoutez cette ligne au fichier .env (les apostrophes protègent les caractères $) :")
+    print("Ajoutez cette ligne au fichier .env. Les apostrophes protègent les caractères $ de docker compose ; "
+          "l'application les retire à la lecture, y compris avec docker run --env-file :")
     print(f"ADMIN_PASSWORD_HASH='{password_hash}'")
     return 0
 

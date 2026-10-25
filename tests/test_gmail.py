@@ -33,6 +33,53 @@ class TestGmailConfiguration:
         imap.assert_not_called()
 
 
+class FakeImap:
+    """Serveur IMAP simulé : messages du dossier INBOX désignés par leur UID.
+
+    Args:
+        messages: contenu brut de chaque message, par UID.
+        uidvalidity: valeur UIDVALIDITY du dossier.
+        unseen: UID des messages non lus (critère ``UNSEEN``).
+    """
+
+    def __init__(self, messages=None, uidvalidity=7, unseen=()):
+        self.messages = dict(messages or {})
+        self.uidvalidity = uidvalidity
+        self.unseen = set(unseen)
+        self.fetched = []
+        self.logged_out = False
+
+    def select(self, folder):
+        return "OK", [str(len(self.messages)).encode()]
+
+    def response(self, code):
+        return code, [str(self.uidvalidity).encode()]
+
+    def status(self, folder, names):
+        return "OK", [f'"{folder}" (UIDVALIDITY {self.uidvalidity})'.encode()]
+
+    def uid(self, command, *args):
+        if command == "SEARCH":
+            uids = sorted(self.messages) if args[-1] == "ALL" else sorted(self.unseen & set(self.messages))
+            return "OK", [" ".join(map(str, uids)).encode()]
+        if command == "FETCH":
+            uid = int(args[0])
+            self.fetched.append(uid)
+            if uid not in self.messages:
+                return "OK", [None]
+            return "OK", [(f"1 (UID {uid} RFC822 {{{len(self.messages[uid])}}}".encode(), self.messages[uid]), b")"]
+        raise AssertionError(f"commande IMAP inattendue : {command}")
+
+    def fetch(self, *args):
+        raise AssertionError("lecture par numéro de séquence interdite : les UID sont seuls utilisés")
+
+    def search(self, *args):
+        raise AssertionError("recherche par numéro de séquence interdite : les UID sont seuls utilisés")
+
+    def logout(self):
+        self.logged_out = True
+
+
 def _raw_email_with_attachment(filename="bon.pdf"):
     msg = EmailMessage()
     msg["Subject"] = "Commande sachets"
@@ -49,24 +96,24 @@ class TestImapReading:
     @pytest.fixture
     def receiver(self, tmp_path):
         receiver = GmailReceiver(Settings.for_tests(tmp_path, gmail_email="a@example.com", gmail_app_password="x"))
-        receiver.connection = MagicMock()
+        receiver.connection = FakeImap()
         return receiver
 
     def test_recent_emails_are_parsed(self, receiver):
-        receiver.connection.search.return_value = ("OK", [b"1 2"])
-        receiver.connection.fetch.return_value = ("OK", [(b"2 (RFC822)", _raw_email_with_attachment())])
+        receiver.connection.messages = {1: _raw_email_with_attachment("ancien.pdf"), 2: _raw_email_with_attachment()}
 
         emails = receiver.get_recent_emails(count=1)
 
         assert len(emails) == 1
+        assert (emails[0]["id"], emails[0]["uid"]) == ("7:2", 2)
         assert emails[0]["subject"] == "Commande sachets"
         assert "3000 sachets" in emails[0]["body"]
         assert emails[0]["attachments"] == ["bon.pdf"]
 
     def test_attachments_are_saved_without_directories(self, receiver, tmp_path):
-        receiver.connection.fetch.return_value = ("OK", [(b"1 (RFC822)", _raw_email_with_attachment("../../evil.pdf"))])
+        receiver.connection.messages = {1: _raw_email_with_attachment("../../evil.pdf")}
 
-        saved = receiver.download_attachments("1", save_dir=str(tmp_path / "pj"))
+        saved = receiver.download_attachments("7:1", save_dir=str(tmp_path / "pj"))
 
         assert len(saved) == 1
         assert saved[0].startswith(str(tmp_path / "pj"))

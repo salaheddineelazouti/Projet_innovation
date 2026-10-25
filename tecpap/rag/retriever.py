@@ -49,8 +49,14 @@ Exemples de commandes (:class:`OrderExampleRetriever`)
     Les commandes validées dont le message d'origine (colonne ``message_brut``) est connu
     servent d'exemples pour l'extraction (« few-shot » : quelques exemples résolus placés dans
     l'instruction du modèle). Les plus proches du message à traiter sont choisies par similarité
-    cosinus ; les noms de clients, numéros de téléphone et adresses email sont remplacés par
-    ``<CLIENT>``, ``<TELEPHONE>`` et ``<EMAIL>``.
+    cosinus ; les informations qui identifient un client sont remplacées par des marqueurs
+    (:func:`anonymize_text`) : nom de l'entreprise (nom complet et mots qui la distinguent) par
+    ``<CLIENT>``, numéros de téléphone par ``<TELEPHONE>``, adresses email par ``<EMAIL>``, noms de
+    personnes précédés d'un titre ou d'une formule de présentation par ``<PERSONNE>``, adresses
+    postales par ``<ADRESSE>``, longs numéros d'identification par ``<NUMERO>``, adresses de sites
+    par ``<URL>`` et ligne « DE : » d'un email par ``<EXPEDITEUR>`` ; la signature, après la formule
+    de politesse, est supprimée. Un exemple ne montre que la façon d'écrire une commande : il ne
+    contient aucune donnée utile à un autre client.
 """
 
 from __future__ import annotations
@@ -67,6 +73,7 @@ from typing import Any
 
 import numpy as np
 
+from tecpap.catalog import PRODUCTS
 from tecpap.rag.bm25 import BM25Index
 from tecpap.rag.documents import Chunk, load_chunks
 from tecpap.rag.embeddings import (
@@ -459,6 +466,11 @@ def build_embedder(settings: Any, llm_client: Any = None) -> Embedder:
 CLIENT_PLACEHOLDER = "<CLIENT>"
 PHONE_PLACEHOLDER = "<TELEPHONE>"
 EMAIL_PLACEHOLDER = "<EMAIL>"
+PERSON_PLACEHOLDER = "<PERSONNE>"
+ADDRESS_PLACEHOLDER = "<ADRESSE>"
+NUMBER_PLACEHOLDER = "<NUMERO>"
+URL_PLACEHOLDER = "<URL>"
+SENDER_PLACEHOLDER = "<EXPEDITEUR>"
 
 ORDER_EXAMPLE_FIELDS: tuple[str, ...] = (
     "type_produit", "quantite", "unite", "type_papier", "grammage", "laize", "format_sac",
@@ -477,6 +489,67 @@ _PHONE_PATTERN = re.compile(
 # Ponctuation qui peut entourer un nom de client dans un message (guillemets, parenthèses,
 # virgule, point-virgule et point d'interrogation arabes…).
 _NAME_PUNCTUATION = ".,;:!?()[]«»\"'“”‘’،؛؟"
+
+# Mot qui commence par une majuscule (nom propre), et mots de liaison des noms et des rues.
+_CAPITALIZED = r"[A-ZÀ-ÖØ-Þ][\wÀ-ÿ'’-]*"
+_LINKING = r"(?:ibn|ben|bin|abou|abu|el|al|de|du|des|la|le|d['’])"
+_PROPER_NAME = rf"{_CAPITALIZED}(?:\s+(?:{_CAPITALIZED}|{_LINKING})){{0,3}}"
+_ARABIC_WORD = r"[\u0600-\u06FF]+"
+
+_URL_PATTERN = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+# Numéro d'au moins huit chiffres : identifiant commun de l'entreprise (ICE, 15 chiffres), registre
+# du commerce… Une quantité reste lisible : au plus sept chiffres (5 000 000 pièces), ou écrite avec
+# des séparateurs.
+_LONG_NUMBER_PATTERN = re.compile(r"(?<![\w.,])\d{8,}(?!\w)")
+_SENDER_LINE_PATTERN = re.compile(r"^(DE|FROM)\s*:.*$", re.MULTILINE)
+_CLOSING_PATTERN = re.compile(
+    r"\b(cordialement|bien cordialement|bien à vous|salutations(?: distinguées| cordiales)?|respectueusement|"
+    r"best regards|kind regards|envoyé de mon|sent from)\b.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_PERSON_TITLES = (r"(?:M\.|MM\.|Mr\.?|Mrs\.?|Ms\.?|Mme\.?|Mlle\.?|Dr\.?|Maître|Si|Sidi|Lalla|Haj|Hajj|Hajja|"
+                  r"(?i:monsieur|madame|mademoiselle|docteur))")
+_TITLED_PERSON_PATTERN = re.compile(
+    rf"(?<!\w)(?:{_PERSON_TITLES}\s+{_PROPER_NAME}"
+    rf"|(?:السيد|السيدة|الأستاذ|الأستاذة|الحاج|الحاجة|سي|لالة)\s+{_ARABIC_WORD}(?:\s+{_ARABIC_WORD})?)"
+)
+_INTRODUCED_PERSON_PATTERN = re.compile(
+    rf"(?<!\w)((?i:je suis|je m'appelle|mon nom est|contact|responsable|gérant|gerant|directeur|directrice|"
+    rf"de la part de|à l'attention de|a l'attention de|ana|smiti|ismi))(\s*:?\s+){_PROPER_NAME}"
+)
+_STREET_KEYWORDS = (r"(?i:rue|avenue|av\.|boulevard|bd\.?|lotissement|quartier|route|résidence|residence|"
+                    r"immeuble|imm\.|derb|hay|zone industrielle|parc industriel)")
+_ADDRESS_PATTERN = re.compile(
+    rf"(?<!\w)(?:\d{{1,4}}\s*(?:bis|ter)?\s*,?\s+)?{_STREET_KEYWORDS}\s+"
+    rf"(?:\d{{1,3}}(?!\d)|(?:{_LINKING}\s+){{0,2}}{_CAPITALIZED}(?:\s+(?:{_CAPITALIZED}|{_LINKING})){{0,4}})"
+    rf"|(?:شارع|زنقة|حي|درب|تجزئة|إقامة)\s+{_ARABIC_WORD}(?:\s+{_ARABIC_WORD})?"
+)
+
+# Mots d'un nom d'entreprise qui ne la distinguent pas : formes juridiques, types de commerce et
+# mots du catalogue ; seuls les autres mots sont aussi remplacés par <CLIENT> dans un message.
+_GENERIC_NAME_WORDS = frozenset(normalize_text(word) for word in (
+    "société", "societe", "entreprise", "établissement", "établissements", "etablissement", "etablissements",
+    "groupe", "maison", "chez", "boutique", "magasin", "atelier", "centre", "marché", "marche", "supermarché",
+    "supermarche", "superette", "boulangerie", "pâtisserie", "patisserie", "boucherie", "épicerie", "epicerie",
+    "restaurant", "café", "cafe", "snack", "hôtel", "hotel", "pharmacie", "traiteur", "pizzeria", "glacier",
+    "laiterie", "fast", "food", "burger", "pour", "dans", "avec", "kraft", "papier", "emballage", "sachet",
+    "sachets", "sacs", "sandwich", "tacos",
+))
+
+
+def _catalog_words() -> frozenset[str]:
+    """Mots des mots-clés et des désignations du catalogue : ils ne désignent jamais un client."""
+    words: set[str] = set()
+    for product in PRODUCTS:
+        texts = [product["type"], *product["usages"]]
+        for keywords in product["keywords"].values():
+            texts.extend(keywords)
+        for text in texts:
+            words.update(normalize_text(text).split())
+    return frozenset(words)
+
+
+_CATALOG_WORDS = _catalog_words()
 
 
 @dataclass(frozen=True)
@@ -499,7 +572,16 @@ class OrderExample:
 
 def anonymize_text(text: str, names: Iterable[str | None] = (), phones: Iterable[str | None] = (),
                    emails: Iterable[str | None] = ()) -> str:
-    """Remplace noms de clients, numéros de téléphone et emails par des marqueurs.
+    """Remplace par des marqueurs ce qui identifie un client dans un texte.
+
+    Sont remplacés, dans cet ordre : emails (``<EMAIL>``), numéros de téléphone
+    (``<TELEPHONE>``), noms de clients (``<CLIENT>`` : nom complet, puis chaque mot qui distingue
+    l'entreprise, voir :func:`_distinctive_words`), adresses de sites (``<URL>``), numéros d'au
+    moins huit chiffres, tels que l'identifiant commun de l'entreprise (``<NUMERO>``), ligne
+    « DE : » d'un email (``<EXPEDITEUR>``), noms de personnes précédés d'un titre (« M. »,
+    « Mme », « السيد »…) ou d'une formule de présentation (« je suis », « ana »…) (``<PERSONNE>``)
+    et adresses postales (rue, avenue, quartier, « شارع »…) (``<ADRESSE>``). Le texte qui suit une
+    formule de politesse (« cordialement »…) est supprimé : c'est la signature.
 
     Args:
         text: texte à anonymiser.
@@ -516,9 +598,33 @@ def anonymize_text(text: str, names: Iterable[str | None] = (), phones: Iterable
     for phone in _clean_values(phones):
         text = text.replace(phone, PHONE_PLACEHOLDER)
     text = _PHONE_PATTERN.sub(PHONE_PLACEHOLDER, text)
-    for name in sorted(_clean_values(names), key=len, reverse=True):
+    clean_names = sorted(_clean_values(names), key=len, reverse=True)
+    for name in clean_names:
         text = _replace_name(text, name)
-    return text
+    for word in sorted({word for name in clean_names for word in _distinctive_words(name)}, key=len, reverse=True):
+        text = _replace_name(text, word)
+    text = _URL_PATTERN.sub(URL_PLACEHOLDER, text)
+    text = _LONG_NUMBER_PATTERN.sub(NUMBER_PLACEHOLDER, text)
+    text = _SENDER_LINE_PATTERN.sub(lambda match: f"{match.group(1)} : {SENDER_PLACEHOLDER}", text)
+    text = _CLOSING_PATTERN.sub(lambda match: match.group(1), text)
+    text = _TITLED_PERSON_PATTERN.sub(PERSON_PLACEHOLDER, text)
+    text = _INTRODUCED_PERSON_PATTERN.sub(lambda match: f"{match.group(1)}{match.group(2)}{PERSON_PLACEHOLDER}", text)
+    return _ADDRESS_PATTERN.sub(ADDRESS_PLACEHOLDER, text)
+
+
+def _distinctive_words(name: str) -> list[str]:
+    """Mots d'un nom d'entreprise qui la distinguent : au moins quatre lettres, ni mot courant ni mot du catalogue.
+
+    « Boulangerie Atlas SARL » donne « atlas » : un message qui écrit seulement « Atlas » ne doit pas
+    révéler le nom du client.
+    """
+    words = []
+    for word in normalize_text(name).split():
+        word = word.strip(_NAME_PUNCTUATION)
+        if len(word) >= 4 and not word.isdigit() and word not in _GENERIC_NAME_WORDS \
+                and word not in _CATALOG_WORDS:
+            words.append(word)
+    return words
 
 
 def _clean_values(values: Iterable[str | None]) -> list[str]:
@@ -669,13 +775,18 @@ class OrderExampleRetriever:
 
 
 __all__ = [
+    "ADDRESS_PLACEHOLDER",
     "CLIENT_PLACEHOLDER",
     "DEFAULT_TOP_K",
     "EMAIL_PLACEHOLDER",
     "LEXICAL_EMBEDDER",
+    "NUMBER_PLACEHOLDER",
     "ORDER_EXAMPLE_FIELDS",
+    "PERSON_PLACEHOLDER",
     "PHONE_PLACEHOLDER",
     "RRF_K",
+    "SENDER_PLACEHOLDER",
+    "URL_PLACEHOLDER",
     "IndexStats",
     "KnowledgeBase",
     "OrderExample",

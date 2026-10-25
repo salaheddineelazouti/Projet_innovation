@@ -3,6 +3,19 @@
 Les messages sont envoyés en HTML avec une version texte de secours, par SMTP avec
 chiffrement STARTTLS. Les valeurs issues de la commande sont échappées avant d'être insérées
 dans le HTML : elles proviennent de messages externes.
+
+Contenu des emails :
+
+- les quantités, les unités, les produits et les dates sont écrits comme dans les messages
+  WhatsApp (« 5 000 pièces », « 15/11/2026 ») : :mod:`tecpap.formatting` et
+  :mod:`tecpap.chatbot.messages` ;
+- un nom de client provisoire (« Client WhatsApp … », « Client Inconnu », adresse de
+  l'expéditeur enregistrée faute de société) n'est jamais écrit : la salutation devient
+  « Bonjour, » ;
+- les coordonnées du pied de page viennent de :data:`tecpap.catalog.COMPANY_INFO` ;
+- les emails n'annoncent que ce que le système fait : aucun délai de traitement, aucune date
+  de livraison garantie, aucun avis d'expédition. La date de livraison montrée est celle
+  souhaitée par le client.
 """
 
 from __future__ import annotations
@@ -10,27 +23,81 @@ from __future__ import annotations
 import html
 import logging
 import smtplib
+from collections.abc import Mapping
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import parseaddr
 from typing import Any
 
+from tecpap.catalog import COMPANY_INFO
+from tecpap.chatbot.messages import product_label, unit_label
+from tecpap.chatbot.tools import order_reference
 from tecpap.config import Settings, load_settings
+from tecpap.db.database import is_generic_client_name
+from tecpap.formatting import format_date, format_quantity
 
 logger = logging.getLogger(__name__)
+
+TO_BE_SPECIFIED = "À préciser"
+"""Texte d'une valeur de commande absente (produit, quantité)."""
+
+NOT_SPECIFIED_DELIVERY = "Non précisée"
+"""Texte d'une date de livraison souhaitée absente."""
+
+_CONTACT_KEYS = ("address", "phone", "email", "website")
 
 
 def _is_valid_address(address: str | None) -> bool:
     return bool(address) and "@" in address
 
 
-def _order_summary(order: dict[str, Any]) -> dict[str, str]:
-    """Valeurs communes aux trois emails, en texte brut."""
+def client_display_name(order: Mapping[str, Any]) -> str | None:
+    """Nom du client à écrire dans la salutation, ou ``None`` quand seul un nom provisoire est connu.
+
+    Le nom du client enregistré (``client_nom``) est lu en premier, puis la société extraite
+    (``entreprise_cliente``). Sont écartés les noms provisoires de la base (« Client WhatsApp … »,
+    « Client Inconnu ») et l'adresse de l'expéditeur enregistrée faute de société : de
+    « Snack Atlas <achat@snack.ma> », seul le nom affiché « Snack Atlas » est gardé ; une
+    adresse seule (« achat@snack.ma ») ne donne aucun nom.
+    """
+    for key in ("client_nom", "entreprise_cliente"):
+        raw = order.get(key)
+        if not isinstance(raw, str):
+            continue
+        name = " ".join(raw.split())
+        if "@" in name:
+            name = " ".join(parseaddr(name)[0].split()).strip('"')
+            if "@" in name:
+                continue
+        if name and not is_generic_client_name(name):
+            return name
+    return None
+
+
+def _quantity_text(order: Mapping[str, Any]) -> str:
+    """Quantité et unité écrites pour le client (« 5 000 pièces ») ; une quantité nulle ou absente est à préciser."""
+    quantity = order.get("quantite")
+    if isinstance(quantity, bool) or not isinstance(quantity, (int, float)) or quantity <= 0:
+        return TO_BE_SPECIFIED
+    return format_quantity(quantity, unit_label(order.get("unite"), "fr", quantity), "fr")
+
+
+def _product_text(order: Mapping[str, Any]) -> str:
+    """Produit du catalogue (nom français), sinon la désignation extraite."""
+    product_type = order.get("produit_type") or order.get("type_produit")
+    if product_type:
+        return product_label(str(product_type), "fr")
+    nature = order.get("nature_produit")
+    return str(nature) if nature else TO_BE_SPECIFIED
+
+
+def _order_summary(order: Mapping[str, Any]) -> dict[str, str]:
+    """Valeurs communes aux trois emails, en texte brut (``client_name`` vide quand le nom est inconnu)."""
     return {
-        "client_name": str(order.get("client_nom") or "Cher client"),
-        "product": str(order.get("produit_type") or order.get("nature_produit") or "N/A"),
-        "quantity": str(order.get("quantite", "N/A")),
-        "unit": str(order.get("unite") or ""),
-        "order_number": str(order.get("numero_commande") or f"CMD-{order.get('id')}"),
+        "client_name": client_display_name(order) or "",
+        "product": _product_text(order),
+        "quantity": _quantity_text(order),
+        "order_number": order_reference(order.get("numero_commande"), order.get("id")),
     }
 
 
@@ -38,15 +105,33 @@ def _escaped(values: dict[str, str]) -> dict[str, str]:
     return {key: html.escape(value) for key, value in values.items()}
 
 
+def _greeting_html(client_name: str) -> str:
+    """Salutation HTML (``client_name`` déjà échappé) : « Bonjour <strong>nom</strong>, » ou « Bonjour, »."""
+    return f"Bonjour <strong>{client_name}</strong>," if client_name else "Bonjour,"
+
+
+def _greeting_text(client_name: str) -> str:
+    return f"Bonjour {client_name}," if client_name else "Bonjour,"
+
+
+def _contact_text() -> str:
+    """Coordonnées de l'entreprise (adresse, téléphone, email, site web), en texte brut."""
+    return " | ".join(COMPANY_INFO[key] for key in _CONTACT_KEYS if COMPANY_INFO.get(key))
+
+
+def _contact_html() -> str:
+    return html.escape(_contact_text())
+
+
 # Gabarits des emails (HTML et texte brut).
 
 
 def _validation_html(
-    *, client_name: str, product: str, quantity: str, unit: str, order_number: str, delivery_date: str,
+    *, client_name: str, product: str, quantity: str, order_number: str, delivery_date: str,
 ) -> str:
     return f"""
 <!DOCTYPE html>
-<html>
+<html lang="fr" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -75,10 +160,10 @@ def _validation_html(
                     <tr>
                         <td style="padding: 40px;">
                             <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 24px;">
-                                Bonjour <strong>{client_name}</strong>,
+                                {_greeting_html(client_name)}
                             </p>
                             <p style="color: #64748b; font-size: 15px; line-height: 1.7; margin: 0 0 32px;">
-                                Nous avons le plaisir de vous confirmer que votre commande a été validée par notre équipe commerciale et est en cours de préparation.
+                                Nous avons le plaisir de vous confirmer que votre commande a été validée par notre équipe commerciale.
                             </p>
 
                             <!-- Récapitulatif de la commande -->
@@ -95,51 +180,11 @@ def _validation_html(
                                     </tr>
                                     <tr>
                                         <td style="padding: 14px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">Quantité</td>
-                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e2e8f0;">{quantity} {unit}</td>
+                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e2e8f0;">{quantity}</td>
                                     </tr>
                                     <tr>
-                                        <td style="padding: 14px 0; color: #64748b; font-size: 14px;">Livraison estimée</td>
+                                        <td style="padding: 14px 0; color: #64748b; font-size: 14px;">Livraison souhaitée</td>
                                         <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{delivery_date}</td>
-                                    </tr>
-                                </table>
-                            </div>
-
-                            <!-- Suivi de commande -->
-                            <div style="margin-bottom: 32px;">
-                                <h3 style="color: #0f172a; margin: 0 0 20px; font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Suivi de commande</h3>
-                                <table style="width: 100%; border-collapse: collapse;">
-                                    <tr>
-                                        <td style="width: 32px; vertical-align: top; padding: 0 16px 24px 0;">
-                                            <div style="width: 32px; height: 32px; background-color: #059669; border-radius: 50%; text-align: center; line-height: 32px;">
-                                                <span style="color: #ffffff; font-size: 14px;">&#10003;</span>
-                                            </div>
-                                        </td>
-                                        <td style="vertical-align: top; padding: 0 0 24px 0;">
-                                            <p style="margin: 0; color: #0f172a; font-size: 14px; font-weight: 600;">Commande validée</p>
-                                            <p style="margin: 4px 0 0; color: #64748b; font-size: 13px;">Votre commande est confirmée</p>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="width: 32px; vertical-align: top; padding: 0 16px 24px 0;">
-                                            <div style="width: 32px; height: 32px; background-color: #e2e8f0; border-radius: 50%; text-align: center; line-height: 32px;">
-                                                <span style="color: #94a3b8; font-size: 14px;">2</span>
-                                            </div>
-                                        </td>
-                                        <td style="vertical-align: top; padding: 0 0 24px 0;">
-                                            <p style="margin: 0; color: #64748b; font-size: 14px; font-weight: 500;">En préparation</p>
-                                            <p style="margin: 4px 0 0; color: #94a3b8; font-size: 13px;">Votre commande sera bientôt prête</p>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="width: 32px; vertical-align: top; padding: 0 16px 0 0;">
-                                            <div style="width: 32px; height: 32px; background-color: #e2e8f0; border-radius: 50%; text-align: center; line-height: 32px;">
-                                                <span style="color: #94a3b8; font-size: 14px;">3</span>
-                                            </div>
-                                        </td>
-                                        <td style="vertical-align: top;">
-                                            <p style="margin: 0; color: #64748b; font-size: 14px; font-weight: 500;">Expédition</p>
-                                            <p style="margin: 4px 0 0; color: #94a3b8; font-size: 13px;">Vous serez notifié lors de l'envoi</p>
-                                        </td>
                                     </tr>
                                 </table>
                             </div>
@@ -163,7 +208,7 @@ def _validation_html(
                                 100% biodégradables - 100% recyclables
                             </p>
                             <p style="color: #94a3b8; font-size: 11px; margin: 8px 0 0;">
-                                Bouskoura, Casablanca | +212 5 22 86 56 83 | www.tecpap.ma
+                                {_contact_html()}
                             </p>
                         </td>
                     </tr>
@@ -178,40 +223,35 @@ def _validation_html(
 
 
 def _validation_text(
-    *, client_name: str, product: str, quantity: str, unit: str, order_number: str, delivery_date: str,
+    *, client_name: str, product: str, quantity: str, order_number: str, delivery_date: str,
 ) -> str:
     return f"""
 COMMANDE CONFIRMÉE - TECPAP
 
-Bonjour {client_name},
+{_greeting_text(client_name)}
 
-Nous avons le plaisir de vous confirmer que votre commande a été validée.
+Nous avons le plaisir de vous confirmer que votre commande a été validée par notre équipe commerciale.
 
-RÉCAPITULATIF:
-• Référence: {order_number}
-• Produit: {product}
-• Quantité: {quantity} {unit}
-• Livraison estimée: {delivery_date}
-
-SUIVI:
-1. Commande validée ✓
-2. En préparation (en cours)
-3. Expédition (prochaine étape)
+RÉCAPITULATIF :
+• Référence : {order_number}
+• Produit : {product}
+• Quantité : {quantity}
+• Livraison souhaitée : {delivery_date}
 
 Pour toute question, notre équipe reste à votre disposition.
 
 Merci pour votre confiance,
 TECPAP - Sacs en Papier Kraft
-www.tecpap.ma | +212 5 22 86 56 83
+{_contact_text()}
 """
 
 
 def _rejection_html(
-    *, client_name: str, product: str, quantity: str, unit: str, order_number: str, reason_text: str,
+    *, client_name: str, product: str, quantity: str, order_number: str, reason_text: str,
 ) -> str:
     return f"""
 <!DOCTYPE html>
-<html>
+<html lang="fr" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -240,7 +280,7 @@ def _rejection_html(
                     <tr>
                         <td style="padding: 40px;">
                             <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 24px;">
-                                Bonjour <strong>{client_name}</strong>,
+                                {_greeting_html(client_name)}
                             </p>
                             <p style="color: #64748b; font-size: 15px; line-height: 1.7; margin: 0 0 32px;">
                                 Nous avons bien reçu votre demande et nous vous remercions de votre intérêt. Après examen par notre équipe commerciale, nous ne sommes pas en mesure de valider cette commande en l'état.
@@ -260,7 +300,7 @@ def _rejection_html(
                                     </tr>
                                     <tr>
                                         <td style="padding: 14px 0; color: #64748b; font-size: 14px;">Quantité</td>
-                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{quantity} {unit}</td>
+                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{quantity}</td>
                                     </tr>
                                 </table>
                             </div>
@@ -299,7 +339,7 @@ def _rejection_html(
                                 TECPAP - Sacs en Papier Kraft
                             </p>
                             <p style="color: #94a3b8; font-size: 11px; margin: 8px 0 0;">
-                                Bouskoura, Casablanca | +212 5 22 86 56 83 | www.tecpap.ma
+                                {_contact_html()}
                             </p>
                         </td>
                     </tr>
@@ -314,24 +354,24 @@ def _rejection_html(
 
 
 def _rejection_text(
-    *, client_name: str, product: str, quantity: str, unit: str, order_number: str, reason_text: str,
+    *, client_name: str, product: str, quantity: str, order_number: str, reason_text: str,
 ) -> str:
     return f"""
 INFORMATION IMPORTANTE - TECPAP
 
-Bonjour {client_name},
+{_greeting_text(client_name)}
 
 Nous avons bien reçu votre demande et nous vous remercions de votre intérêt.
 Après examen, nous ne sommes pas en mesure de valider cette commande en l'état.
 
-DÉTAILS:
-- Référence: {order_number}
-- Produit: {product}
-- Quantité: {quantity} {unit}
+DÉTAILS :
+- Référence : {order_number}
+- Produit : {product}
+- Quantité : {quantity}
 
-MOTIF: {reason_text}
+MOTIF : {reason_text}
 
-COMMENT PROCÉDER:
+COMMENT PROCÉDER :
 - Vérifiez les informations de votre commande
 - Contactez notre équipe pour plus de précisions
 - Soumettez une nouvelle demande si nécessaire
@@ -340,16 +380,16 @@ Notre équipe reste à votre disposition.
 
 Cordialement,
 TECPAP - Sacs en Papier Kraft
-www.tecpap.ma | +212 5 22 86 56 83
+{_contact_text()}
 """
 
 
 def _received_html(
-    *, client_name: str, product: str, quantity: str, unit: str, order_number: str,
+    *, client_name: str, product: str, quantity: str, order_number: str,
 ) -> str:
     return f"""
 <!DOCTYPE html>
-<html>
+<html lang="fr" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -375,10 +415,10 @@ def _received_html(
                     <tr>
                         <td style="padding: 40px;">
                             <p style="color: #1e293b; font-size: 16px; line-height: 1.6; margin: 0 0 24px;">
-                                Bonjour <strong>{client_name}</strong>,
+                                {_greeting_html(client_name)}
                             </p>
                             <p style="color: #64748b; font-size: 15px; line-height: 1.7; margin: 0 0 32px;">
-                                Nous avons bien reçu votre demande de commande. Notre équipe commerciale va l'examiner dans les plus brefs délais et vous tiendra informé de la suite.
+                                Nous avons bien reçu votre demande de commande. Notre équipe commerciale va l'examiner et vous informera de sa décision par email.
                             </p>
 
                             <!-- Récapitulatif de la commande -->
@@ -395,7 +435,7 @@ def _received_html(
                                     </tr>
                                     <tr>
                                         <td style="padding: 14px 0; color: #64748b; font-size: 14px;">Quantité</td>
-                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{quantity} {unit}</td>
+                                        <td style="padding: 14px 0; color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{quantity}</td>
                                     </tr>
                                 </table>
                             </div>
@@ -404,9 +444,8 @@ def _received_html(
                             <div style="background-color: #eff6ff; border-radius: 12px; padding: 24px; margin-bottom: 32px; border: 1px solid #bfdbfe;">
                                 <h4 style="color: #1d4ed8; margin: 0 0 12px; font-size: 14px; font-weight: 600;">Prochaines étapes</h4>
                                 <ul style="color: #1e40af; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
-                                    <li>Examen de votre commande par notre équipe</li>
-                                    <li>Confirmation de validation sous 24-48h</li>
-                                    <li>Notification par email du statut final</li>
+                                    <li>Examen de votre commande par notre équipe commerciale</li>
+                                    <li>Email de notre décision : validation de la commande ou motif du refus</li>
                                 </ul>
                             </div>
 
@@ -429,7 +468,7 @@ def _received_html(
                                 100% biodégradables - 100% recyclables
                             </p>
                             <p style="color: #94a3b8; font-size: 11px; margin: 8px 0 0;">
-                                Bouskoura, Casablanca | +212 5 22 86 56 83 | www.tecpap.ma
+                                {_contact_html()}
                             </p>
                         </td>
                     </tr>
@@ -444,31 +483,30 @@ def _received_html(
 
 
 def _received_text(
-    *, client_name: str, product: str, quantity: str, unit: str, order_number: str,
+    *, client_name: str, product: str, quantity: str, order_number: str,
 ) -> str:
     return f"""
 COMMANDE REÇUE - TECPAP
 
-Bonjour {client_name},
+{_greeting_text(client_name)}
 
 Nous avons bien reçu votre demande de commande.
-Notre équipe commerciale va l'examiner dans les plus brefs délais.
+Notre équipe commerciale va l'examiner et vous informera de sa décision par email.
 
-DÉTAILS:
-• Référence: {order_number}
-• Produit: {product}
-• Quantité: {quantity} {unit}
+DÉTAILS :
+• Référence : {order_number}
+• Produit : {product}
+• Quantité : {quantity}
 
-PROCHAINES ÉTAPES:
-1. Examen de votre commande par notre équipe
-2. Confirmation de validation sous 24-48h
-3. Notification par email du statut final
+PROCHAINES ÉTAPES :
+1. Examen de votre commande par notre équipe commerciale
+2. Email de notre décision : validation de la commande ou motif du refus
 
 Pour toute question, n'hésitez pas à nous contacter.
 
 Merci pour votre confiance,
 TECPAP - Sacs en Papier Kraft
-www.tecpap.ma | +212 5 22 86 56 83
+{_contact_text()}
 """
 
 
@@ -501,7 +539,7 @@ class EmailSender:
 
         try:
             msg = MIMEMultipart("alternative")
-            msg["Subject"] = subject
+            msg["Subject"] = " ".join(subject.split())  # jamais de saut de ligne dans un en-tête
             msg["From"] = f"{self.company_name} <{self.email}>"
             msg["To"] = to_email
             if text_content:
@@ -527,7 +565,9 @@ class EmailSender:
             return False
         values = _order_summary(order)
         delivery = order.get("date_livraison")
-        values["delivery_date"] = "À confirmer" if delivery in (None, "", "None") else str(delivery)
+        values["delivery_date"] = (
+            NOT_SPECIFIED_DELIVERY if delivery in (None, "", "None") else format_date(delivery)
+        )
         subject = f"Confirmation de votre commande {values['order_number']} - TECPAP"
         return self.send_email(to_email, subject, _validation_html(**_escaped(values)), _validation_text(**values))
 

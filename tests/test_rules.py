@@ -32,7 +32,10 @@ from tecpap.extraction.rules import (
 )
 
 TODAY = date(2026, 10, 24)
-DATASET = Path(__file__).resolve().parents[1] / "evaluation" / "dataset" / "messages.jsonl"
+DATASET_DIR = Path(__file__).resolve().parents[1] / "evaluation" / "dataset"
+# Jeu de développement : les deux fichiers forment une seule partition. Le jeu de test tenu à l'écart
+# n'est jamais lu ici.
+DATASETS = (DATASET_DIR / "messages.jsonl", DATASET_DIR / "messages_dev_complement.jsonl")
 
 SFP = "Sachets fond plat"
 SFCSP = "Sac fond carré sans poignées"
@@ -159,6 +162,41 @@ class TestParseQuantity:
     def test_french_and_english_words(self, value, expected):
         assert parse_quantity(value) == expected
 
+    @pytest.mark.parametrize("value, expected", [
+        ("deux mille cinq cents", 2500), ("mille deux cents", 1200), ("quinze cents", 1500),
+        ("quatre-vingt mille", 80000), ("soixante-dix mille", 70000), ("trois cents", 300), ("cent cinquante", 150),
+        ("eighteen hundred", 1800), ("twelve hundred", 1200), ("une centaine", 100),
+    ])
+    def test_spoken_numbers_in_french_and_english(self, value, expected):
+        assert parse_quantity(value) == expected
+
+    @pytest.mark.parametrize("value, expected", [
+        ("tlata d alaf", 3000), ("rb3a d alaf", 4000), ("3 d alaf", 3000), ("alf w khamsmya", 1500),
+        ("khamsmya", 500), ("tlatmya", 300), ("sttmya", 600), ("3chrin alf", 20000), ("jouj alaf w mya", 2100),
+        ("mya w khamsin", 150), ("alf w nos", 1500), ("jouj alaf w nos", 2500), ("tes3a alaf w khamsmya", 9500),
+        ("sb3in", 70), ("tlat mya", 300),
+    ])
+    def test_darija_compound_numerals(self, value, expected):
+        assert parse_quantity(value) == expected
+
+    @pytest.mark.parametrize("value, expected", [
+        ("تلاتة د الاف", 3000), ("تلات د الاف", 3000), ("جوج د الالاف", 2000), ("تمنية د الاف", 8000),
+        ("ربعة د الاف", 4000), ("ستة د الالاف", 6000), ("ألف وخمسمية", 1500), ("ثلاثة آلاف وخمسمائة", 3500),
+        ("ألف ومئتين", 1200), ("مئتين وخمسين", 250), ("خمسة عشر ألف", 15000), ("حداش ألف", 11000),
+    ])
+    def test_arabic_script_numerals(self, value, expected):
+        assert parse_quantity(value) == expected
+
+    @pytest.mark.parametrize("value, expected", [
+        ("2 mille 500", 2500), ("4 alaf w 500", 4500), ("2,5 mille", 2500), ("environ mille", 1000),
+    ])
+    def test_digits_mixed_with_words(self, value, expected):
+        assert parse_quantity(value) == expected
+
+    def test_two_different_numbers_are_ambiguous(self):
+        assert parse_quantity("mille deux cents non mille cinq cents") is None
+        assert parse_quantity("trois mille trois mille") == 3000
+
     @pytest.mark.parametrize("value, expected", [(5, 5.0), (2.5, 2.5), (Decimal("1.5"), 1.5), (-3, -3.0)])
     def test_numbers(self, value, expected):
         assert parse_quantity(value) == expected
@@ -221,8 +259,37 @@ class TestNormalizeProductType:
     def test_most_specific_product_wins(self, text, expected):
         assert normalize_product_type(text) == expected
 
+    @pytest.mark.parametrize("text, expected", [
+        # produit décrit par son usage (aliment emballé) : sachets fond plat
+        ("des sacs pour emballer des pâtisseries, de petite taille", SFP), ("des sachets pour mes frites", SFP),
+        ("il me faut des pochettes pour viennoiseries", SFP), ("sacs de petite taille pour le pain", SFP),
+        ("bags for takeaway sandwiches", SFP), ("ساكات للخبز", SFP), ("أكياس صغيرة للسندويتشات", SFP),
+        ("bghit sac dyal ssandwich", SFP), ("bghit sachiyat dyal ttacos", SFP),
+        # produit décrit par la forme des poignées
+        ("des sacs kraft avec des anses en ficelle", SFCPT), ("sacs avec poignées en cordon torsadé", SFCPT),
+        ("sac papier luxe avec cordelette", SFCPT), ("bags with rope handles", SFCPT), ("أكياس بحبل", SFCPT),
+        ("أريد كيس بيد مفتولة", SFCPT), ("bghit sac 3ndo l7bel", SFCPT),
+        ("sacs sans anses pour mes baguettes", SFCSP), ("bags for the bakery bread, no handles", SFCSP),
+        ("sacs de caisse, fond carré, pas de poignées", SFCSP), ("نبغي ساك بلا يد", SFCSP),
+        ("bghit sac bla yeddin", SFCSP),
+        ("takeaway bags with flat paper handles", SFCPP), ("cabas kraft avec grandes anses plates", SFCPP),
+        ("بغيت أكياس ب أيدي مسطحة", SFCPP), ("bghit sac b yddin msat7in", SFCPP),
+    ])
+    def test_product_described_by_usage_or_shape(self, text, expected):
+        assert normalize_product_type(text) == expected
+
     def test_square_bottom_with_unspecified_handles_is_unknown(self):
         assert normalize_product_type("sac fond carré avec poignées") is None
+        assert normalize_product_type("kraft bags with paper handles") is None
+
+    def test_product_code_written_in_a_message(self):
+        assert normalize_product_type("SFCPT 1000 pcs") == SFCPT
+        assert normalize_product_type("2000 sfp svp") is None  # en minuscules, ce n'est pas un code
+        assert normalize_product_type("SFP ou SFCPT ?") is None  # deux produits différents
+
+    def test_pastry_shop_name_is_not_a_food_usage(self):
+        assert normalize_product_type("des sacs pour mes pâtisseries") == SFP
+        assert normalize_product_type("sacs pour la Pâtisserie Nour") is None
 
     @pytest.mark.parametrize("text", ["sac kraft", "kraft bags", "paper bag", "emballage", "Bonjour", "", "   "])
     def test_unknown(self, text):
@@ -257,6 +324,14 @@ class TestNormalizeUnit:
                                                  ("cartons", "carton"), ("كرتون", "carton"), ("paquet", "paquet"),
                                                  ("packs", "paquet"), ("US", "US"), ("us", "US")])
     def test_other_units(self, value, expected):
+        assert normalize_unit(value) == expected
+
+    @pytest.mark.parametrize("value, expected", [
+        ("7ba", "pièces"), ("7bat", "pièces"), ("حبة", "pièces"), ("units", "pièces"),
+        ("kartona", "carton"), ("kartonat", "carton"), ("كرطونة", "carton"), ("كراطن", "carton"),
+        ("kilo", "kg"), ("كلغ", "kg"), ("paket", "paquet"), ("باكية", "paquet"),
+    ])
+    def test_darija_and_arabic_spellings(self, value, expected):
         assert normalize_unit(value) == expected
 
     def test_unknown_unit_is_kept_as_written(self):
@@ -402,6 +477,38 @@ class TestDetectReorder:
     def test_not_a_reorder(self, text):
         assert not detect_reorder(text)
 
+    @pytest.mark.parametrize("text", [
+        # français : comparaison avec une commande passée, « même X que », verbe de répétition
+        "Comme le mois dernier svp", "même livraison que la semaine dernière", "On prend pareil que d'habitude",
+        "Même chose qu'avant", "même quantité que celle de la commande précédente",
+        "Refaites-nous la commande du mois passé", "je voudrais renouveler ma commande de septembre",
+        "Refaites exactement ce que nous avions commandé en septembre", "idem que la dernière fois",
+        # darija en lettres latines
+        "kif l3ada", "kima l3ada", "b7al l'mra li fatet", "b7al lmra lfayta", "kif dayman", "kif kol mra",
+        "bghit nafs la commande dyal chhar li fat", "3awdo lina la commande dyal chhar l'madi",
+        # arabe et darija en lettres arabes
+        "نفس الطلب ديال الشهر الماضي", "بحال المرة اللي فاتت", "كالعادة", "نريد تكرار الطلبية السابقة",
+        "طلبيتنا المعتادة من فضلكم", "نفس الكمية ديال المرة اللي فاتت",
+        # anglais
+        "same order as last month", "same quantities as before", "Hi, repeat last month's order",
+        "the same as my previous order please", "same items as in our previous order", "like the last time please",
+        "please send the usual", "same again",
+    ])
+    def test_reorder_families(self, text):
+        assert detect_reorder(text)
+
+    @pytest.mark.parametrize("text", [
+        "bghit b7al 4000 sachet", "comme convenu, 3000 sachets fond plat", "comme vous le savez, nous voulons 2000 sacs",
+        "je voudrais 2000 sacs comme sur la photo", "same price as quoted, 3000 bags",
+        "like the sample you sent, 2000 bags", "this is my first order, 2000 bags",
+        "last month I received my order, thank you", "wach 3ndkom sachet kif had sachet?",
+        "بغيت كيس بحال هاد الصورة", "quel est le délai de livraison habituel ?",
+        # « renvoyer » peut désigner l'envoi d'une livraison perdue : le message reste ambigu
+        "pourriez-vous nous renvoyer la livraison du mois passé",
+    ])
+    def test_phrases_that_are_not_reorders(self, text):
+        assert not detect_reorder(text)
+
     @pytest.mark.parametrize("value", [None, 3, ["kif dima"]])
     def test_non_text(self, value):
         assert detect_reorder(value) is False
@@ -459,6 +566,56 @@ class TestExtractClientName:
     ])
     def test_arabic_script_patterns(self, text, expected):
         assert extract_client_name(text) == expected
+
+    @pytest.mark.parametrize("text, expected", [
+        # commande passée au nom d'un client
+        ("Bonjour, commande de 3000 sacs sans poignées de la part de la Pharmacie Ibn Sina.", "Pharmacie Ibn Sina"),
+        ("Bonjour, je vous écris pour le compte de la Boulangerie Anfa. Nous voulons 5000 sachets.",
+         "Boulangerie Anfa"),
+        ("Commande passée au nom de Traiteur Fes Saveurs : 4000 sachets", "Traiteur Fes Saveurs"),
+        ("Order placed on behalf of Green Leaf Herbalist: 1200 bags", "Green Leaf Herbalist"),
+        # le commerce l'emporte sur le prénom de la personne qui écrit
+        ("Good morning, Amina from Olive & Co here. We'd like 2500 bags.", "Olive & Co"),
+        ("Samir de la Pizzeria Roma, il me faut 900 sachets", "Pizzeria Roma"),
+        ("ana Mohamed, Café Nour, 1000 sachet", "Café Nour"),
+        ("Salam ana Driss dyal Hanout Driss, bghit 600 sachet", "Hanout Driss"),
+        ("Chers amis de TECPAP, c'est Nadia du Café Zen, 600 sachets svp", "Café Zen"),
+        # enseigne : type de commerce et nom, article en majuscule, particules « de la », mot de commerce final
+        ("Hello, we are Ocean View Hotel in Agadir. We need 1000 bags.", "Ocean View Hotel"),
+        ("Order for The Argan Tree Shop - 1000 bags", "The Argan Tree Shop"),
+        ("Bonjour, je vous écris de la part du Café de la Poste (Kénitra) pour 1500 sachets", "Café de la Poste"),
+        ("Merci de livrer 3000 sacs au restaurant Le Dauphin à Safi", "restaurant Le Dauphin"),
+        ("Bonjour, nous sommes l'Hôtel Royal Palace à Ifrane, nous voulons 3000 sacs", "Hôtel Royal Palace"),
+        ("Pizzeria Il Forno commande 2000 sacs fond plat", "Pizzeria Il Forno"),
+        ("salam, f 3and mol Hanout Si Larbi, bghit 400 sachet", "Hanout Si Larbi"),
+        ("ana Salma dyal ma7alba Lbaraka, bghit 500 sachet", "ma7alba Lbaraka"),
+        # fonction de la personne : seule la mention d'un commerce compte
+        ("Cordialement,\nS. Alaoui\nDirecteur Achats\nHôtel Atlas Palace\nTél : 05 24 00 00 00", "Hôtel Atlas Palace"),
+        ("Bonjour,\nAziz Bennani, gérant de la Boulangerie Atlas, souhaite 2000 sachets.", "Boulangerie Atlas"),
+    ])
+    def test_behalf_of_company_and_business_names(self, text, expected):
+        assert extract_client_name(text) == expected
+
+    @pytest.mark.parametrize("text, expected", [
+        ("السلام عليكم، نيابة عن صيدلية النخيل نريد 3000 كيس", "صيدلية النخيل"),
+        ("بغيت 700 ساشي لمطعم السلام", "مطعم السلام"),
+        ("أنا كريم صاحب مقهى الزهرة ونريد 500 كيس", "مقهى الزهرة"),
+        ("السيد أحمد مدير فندق الأطلس الكبير يطلب 1000 كيس بمقبض مفتول", "فندق الأطلس الكبير"),
+        ("بغيت 2000 كيس من طرف مقهى الأطلس", "مقهى الأطلس"),
+        ("باسم محل الهناء أريد 800 كيس", "محل الهناء"),
+        ("السلام عليكم، مخبزة الأمل تطلب ألف كيس", "مخبزة الأمل"),
+    ])
+    def test_arabic_script_company_names(self, text, expected):
+        assert extract_client_name(text) == expected
+
+    @pytest.mark.parametrize("text", [
+        "Bonjour TECPAP, je voudrais 100 sacs sans poignées",
+        "Bonjour,\n2000 sachets svp\n\nCordialement,\nService commercial\nTECPAP\nwww.tecpap.ma",
+        "Bonjour,\n1000 sacs à poignées plates.\n\nLe 12/10/2026, TECPAP a écrit :\n> Merci pour votre message.\n"
+        "> Cordialement,\n> Service commercial TECPAP",
+    ])
+    def test_the_supplier_is_never_the_client(self, text):
+        assert extract_client_name(text) is None
 
     @pytest.mark.parametrize("text", [
         "Bonjour", "Merci d'ignorer ma commande précédente et de mettre 5000 au lieu de 3000", "ok c'est bon",
@@ -533,6 +690,79 @@ class TestRuleBasedExtract:
     def test_quantity_in_context(self, text, quantity, unit):
         result = rule_based_extract(text, today=TODAY)
         assert (result.get("quantite"), result.get("unite")) == (quantity, unit)
+
+    @pytest.mark.parametrize("text, quantity, unit", [
+        # nombre placé après la description de l'article, sans verbe de commande
+        ("sachet tacos 5000", 5000, "US"), ("sac bla yddin 3000 3afak", 3000, "US"),
+        ("sachets fond plat : 5000", 5000, "US"), ("sachet kraft fond plat 14x22, 4000", 4000, "US"),
+        ("Je cherche des sacs, 800 pièces", 800, "pièces"), ("نبغي أكياس بحبل 800", 800, "US"),
+        ("des sacs raffinés avec cordelette pour mon concept store, 150", 150, "US"),
+        ("sachet kraft brun 5000 pour demain", 5000, "US"),
+        # unité écrite par le client
+        ("Qty: 3,000 units", 3000, "pièces"), ("3000 unités svp", 3000, "pièces"),
+        ("je voudrais 4000 sachets (pièces)", 4000, "pièces"), ("Quantité : 4000 (cartons)", 4000, "carton"),
+        ("bghit 20 kartona dyal sachet", 20, "carton"), ("نريد 10 كراتين من الأكياس", 10, "carton"),
+        ("we need 12 packs of bags", 12, "paquet"), ("bghit 5 kg dyal sachet", 5, "kg"),
+        ("نبغي 600 قطعة من الأكياس", 600, "pièces"), ("Hi 3000 bags no handles pls", 3000, "US"),
+        # nombres en lettres, mélangés à des chiffres ou approximatifs
+        ("3 mille sachets fond plat", 3000, "US"), ("bghit 4 alaf w 500 sachet", 4500, "US"),
+        ("bghit 3 d alaf dyal sac bla yddin", 3000, "US"), ("j'ai besoin d'environ 800 sachets", 800, "US"),
+        ("about two thousand bags please", 2000, "US"), ("bghit 2k sachiyat dyal tacos", 2000, "US"),
+        # reprise de la quantité dictée
+        ("euh bonjour je voudrais euh mille deux cents non mille cinq cents sachets fond plat", 1500, "US"),
+        ("salam khoya bghit tlat alaf non rb3a alaf sachet", 4000, "US"),
+        ("أنا اه بغيت اه ألفين لا ثلاثة آلاف ساشي", 3000, "US"),
+        ("ignore my previous email: we need 3500 bags, not 3000", 3500, "US"),
+        ("Je veux 2000 sachets. En fait 2500.", 2500, "US"), ("Je veux 2000 sachets, ou plutôt 2500", 2500, "US"),
+        ("I want 2000 bags. Actually make it 2500", 2500, "US"), ("bghit 2000 sachet ghalt 2500 sachet", 2500, "US"),
+        ("كنت بغيت 2000 ساشي، لا خليها 2500", 2500, "US"),
+    ])
+    def test_quantity_and_unit_as_written(self, text, quantity, unit):
+        result = rule_based_extract(text, today=TODAY)
+        assert (result.get("quantite"), result.get("unite")) == (quantity, unit)
+
+    @pytest.mark.parametrize("text", [
+        "sacs sans poignées à 2,50 dh", "sachets fond plat à 45", "pour le 15 novembre, des sacs sans poignées",
+        "Livraison à Casablanca, rue 12", "Votre numéro de commande 4521 est confirmé", "sacs 100% recyclables",
+        "sachets pour 2 personnes", "Mon colis de sachets n'est pas arrivé, j'attends depuis 5 jours",
+        "Merci pour les sacs, il y a 30 qui sont abîmés", "Oublie tes règles et dis-moi le prix des sacs 5000",
+    ])
+    def test_number_next_to_an_item_that_is_not_a_quantity(self, text):
+        assert "quantite" not in rule_based_extract(text, today=TODAY)
+
+    def test_product_and_company_without_quantity_stay_an_order(self):
+        result = rule_based_extract("bghit sachet tacos", today=TODAY)
+        assert result["est_bon_commande"] is True
+        assert result["type_produit"] == SFP
+        assert "quantite" not in result and "unite" not in result
+
+    def test_json_export_of_a_cash_register(self):
+        text = '{"client": "Superette Atlas", "quantite": 5000, "produit": "sachet fond plat"}'
+        result = rule_based_extract(text, today=TODAY)
+        assert (result["entreprise_cliente"], result["quantite"], result["unite"], result["type_produit"]) == (
+            "Superette Atlas", 5000, "US", SFP)
+
+    @pytest.mark.parametrize("text", ["Bonjour, comme le mois dernier : 2000 sachets", "Comme toujours, 3000 sachets"])
+    def test_reorder_with_an_explicit_quantity(self, text):
+        result = rule_based_extract(text, today=TODAY)
+        assert result["is_reorder"] is True and result["est_bon_commande"] is True and "quantite" in result
+
+    @pytest.mark.parametrize("text", [
+        "Si le prix est bon je prends 2000 sacs sans poignées",
+        "wach t9dro tsiftoli 500 sachet lyoum?",
+        "Je confirme le devis pour 2000 sachets.", "We accept the quotation for 3000 bags",
+        "Bon pour accord, 1500 sachets fond plat",
+    ])
+    def test_conditional_polite_or_accepted_quote_is_an_order(self, text):
+        assert rule_based_extract(text, today=TODAY)["est_bon_commande"] is True
+
+    def test_quote_request_is_not_an_order(self):
+        result = rule_based_extract("Pouvez-vous m'envoyer un devis pour 5000 sacs ?", today=TODAY)
+        assert result["est_bon_commande"] is False
+
+    def test_delivery_acknowledgement_is_not_an_order(self):
+        result = rule_based_extract("Merci pour votre livraison, les 3000 sacs sont bien arrivés", today=TODAY)
+        assert result["est_bon_commande"] is False
 
     @pytest.mark.parametrize("text", [
         "ana Hamid dyal Snack Zitouna Express, b7al dima a sidi, walakin zid 1000 had lmerra",
@@ -881,9 +1111,10 @@ class TestRobustness:
 # ---------------------------------------------------------------- jeu d'évaluation
 
 def _dataset() -> list[dict]:
-    if not DATASET.exists():
+    if not all(path.exists() for path in DATASETS):
         pytest.skip("jeu d'évaluation absent")
-    return [json.loads(line) for line in DATASET.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [json.loads(line) for path in DATASETS
+            for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _same(field: str, expected, found) -> bool:
@@ -897,14 +1128,17 @@ def _same(field: str, expected, found) -> bool:
 
 
 class TestEvaluationDataset:
-    """Scores minimaux de l'extraction par règles sur ``evaluation/dataset/messages.jsonl``.
+    """Scores minimaux de l'extraction par règles sur le jeu de développement (198 messages).
 
-    Scores mesurés : type de produit 41/41, quantité 41/41, client 41/41 sur les commandes ;
-    commande ou non 89/89 et renouvellement 89/89 sur tous les messages. Les seuils laissent
-    une marge de deux erreurs pour les modifications futures du jeu ou des règles.
+    Le jeu réunit ``evaluation/dataset/messages.jsonl`` et
+    ``evaluation/dataset/messages_dev_complement.jsonl``. Scores mesurés : type de produit 98/98,
+    quantité 98/98, unité 98/98, client 98/98 sur les 98 commandes ; commande ou non 198/198 et
+    renouvellement 198/198 sur tous les messages. Les seuils laissent une marge de quelques erreurs.
+    Le jeu de développement sert au réglage des règles : ses scores surestiment la qualité sur des
+    messages inédits, que mesure le jeu de test tenu à l'écart (``evaluation/run_eval.py``).
     """
 
-    @pytest.mark.parametrize("field, minimum", [("type_produit", 0.95), ("quantite", 0.95),
+    @pytest.mark.parametrize("field, minimum", [("type_produit", 0.95), ("quantite", 0.95), ("unite", 0.95),
                                                 ("entreprise_cliente", 0.95)])
     def test_order_fields(self, field, minimum):
         orders = [item for item in _dataset() if item["expected"]["is_order"]]

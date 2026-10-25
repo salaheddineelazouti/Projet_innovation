@@ -74,11 +74,12 @@ from tecpap.chatbot.messages import (
     render,
     status_lines,
 )
-from tecpap.chatbot.tools import AssistantTools, ToolResult
+from tecpap.chatbot.tools import AssistantTools, ToolResult, merge_order_fields
 from tecpap.db.database import is_generic_client_name
-from tecpap.extraction.extractor import PROCESSING_ANOMALIES
+from tecpap.extraction.extractor import PROCESSING_ANOMALIES, RULES_FALLBACK_ANOMALY, RULES_MAX_CONFIDENCE
 from tecpap.extraction.rules import (
     ANOMALY_PENALTY,
+    CANONICAL_UNITS,
     ORDER_FIELD_KINDS,
     clean_text,
     extract_client_name,
@@ -148,6 +149,9 @@ _ASK_TEMPLATES = {"type_produit": "ask_product", "quantite": "ask_quantity", "en
 # Traçabilité de l'extraction reprise de l'extracteur et enregistrée avec la commande confirmée.
 _AUDIT_FIELDS = ("modele_llm", "routage_modele")
 _DRAFT_FIELDS = frozenset(name for name in ORDER_FIELD_KINDS if name not in ("est_bon_commande", "confiance"))
+# Champs en texte libre recopiés tels quels dans le récapitulatif envoyé au client.
+_ECHOED_TEXT_FIELDS = ("entreprise_cliente", "numero_commande", "unite")
+_WORD_RE = re.compile(r"[^\W_]+")
 _SIDE_INTENTS = frozenset({"status", "question", "greeting"})
 _NOT_A_NAME_INTENTS = frozenset({"confirm_yes", "confirm_no", "greeting", "status", "question", "cancel", "human",
                                  "reorder"})
@@ -486,7 +490,13 @@ class WhatsAppAssistant:
         draft["messages"] = messages[-MAX_DRAFT_MESSAGES:]
 
     def _extract(self, turn: _Turn) -> dict[str, Any]:
-        """Champs de commande lus dans le message : extracteur configuré, sinon règles, puis normalisation."""
+        """Champs de commande lus dans le message : extracteur configuré, sinon règles, puis normalisation.
+
+        Un nom de client, un numéro de commande ou une unité en texte libre proposé par
+        l'extracteur n'est gardé que si chacun de ses mots figure dans les messages de
+        l'expéditeur (:meth:`_grounded_fields`) : le récapitulatif ne recopie jamais un texte
+        venu d'ailleurs, par exemple d'un exemple de commande placé dans l'instruction du modèle.
+        """
         data: Any = None
         if self.extractor is not None:
             try:
@@ -494,15 +504,42 @@ class WhatsAppAssistant:
             except Exception:
                 logger.exception("Extraction en échec : extraction par règles")
                 data = None
-        if not isinstance(data, Mapping) or not data:
+        from_extractor = isinstance(data, Mapping) and bool(data)
+        if not from_extractor:
             data = rule_based_extract(turn.text)
         else:
             self._remember_audit(turn, data)
         result = normalize_order(data, source_text=turn.text)
         fields = {name: value for name, value in result.data.items() if name in _DRAFT_FIELDS}
+        if from_extractor:
+            self._grounded_fields(turn, fields)
         if is_generic_client_name(fields.get("entreprise_cliente")):
             del fields["entreprise_cliente"]
         return fields
+
+    @staticmethod
+    def _grounded_fields(turn: _Turn, fields: dict[str, Any]) -> None:
+        """Remplace par la valeur des règles (ou retire) chaque texte libre absent des messages de l'expéditeur."""
+        draft = turn.conversation.draft if _valid_draft(turn.conversation.draft) else {}
+        sources = "\n".join([*(draft.get("messages") or []), turn.text])
+        available = set(_WORD_RE.findall(fold(sources)))
+        rules: dict[str, Any] | None = None
+        for name in _ECHOED_TEXT_FIELDS:
+            value = fields.get(name)
+            if value is None or (name == "unite" and value in CANONICAL_UNITS):
+                continue
+            words = _WORD_RE.findall(fold(str(value)))
+            if words and all(word in available for word in words):
+                continue
+            if rules is None:
+                rules = normalize_order(rule_based_extract(turn.text), source_text=turn.text).data
+            replacement = rules.get(name)
+            logger.warning("Valeur du champ %s absente des messages de l'expéditeur : %s", name,
+                           "remplacée par celle des règles" if replacement is not None else "retirée")
+            if replacement is None:
+                del fields[name]
+            else:
+                fields[name] = replacement
 
     @staticmethod
     def _remember_audit(turn: _Turn, data: Mapping[str, Any]) -> None:
@@ -600,7 +637,7 @@ class WhatsAppAssistant:
             if asked == "quantite":
                 return self._turn_reply(turn, "quantity_invalid")
             return self._pending_prompt(turn, draft)
-        draft["order"].update(updates)
+        merge_order_fields(draft["order"], updates)
         self._remember(draft, turn.text)
         return self._advance(turn, draft)
 
@@ -652,7 +689,7 @@ class WhatsAppAssistant:
             return self._side_reply(turn, draft)
         updates = self._modifications(turn, draft)
         if updates:
-            draft["order"].update(updates)
+            merge_order_fields(draft["order"], updates)
             self._remember(draft, turn.text)
             return self._advance(turn, draft)
         field = self._requested_field(turn.text)
@@ -692,9 +729,13 @@ class WhatsAppAssistant:
         order = {name: value for name, value in result.data.items() if name in _DRAFT_FIELDS}
         audit = draft.get("audit") if isinstance(draft.get("audit"), dict) else {}
         processing = [item for item in audit.get("anomalies") or [] if item in PROCESSING_ANOMALIES]
+        # Comme dans l'extracteur, chaque anomalie du traitement retire ANOMALY_PENALTY points, et
+        # une commande lue par règles seules faute de modèle reste sous RULES_MAX_CONFIDENCE.
+        confidence = max(0, result.confidence - ANOMALY_PENALTY * len(processing))
+        if RULES_FALLBACK_ANOMALY in processing:
+            confidence = min(confidence, RULES_MAX_CONFIDENCE)
         order.update({
-            # Comme dans l'extracteur, chaque anomalie du traitement retire ANOMALY_PENALTY points.
-            "confiance": max(0, result.confidence - ANOMALY_PENALTY * len(processing)),
+            "confiance": confidence,
             "message_brut": "\n".join(draft.get("messages", [])),
             "langue": draft.get("language_code") or turn.detected.code,
             "anomalies": [*processing, *(item for item in result.anomalies if item not in processing)],
@@ -730,7 +771,10 @@ class WhatsAppAssistant:
             return self._combine(notice, self._advance(turn, draft))
         draft["reorder_of"] = base.pop("reference")
         draft["order"].update(base)
-        draft["order"].update({name: value for name, value in updates.items() if name != "entreprise_cliente"})
+        # Un autre type de produit que celui de la commande renouvelée retire le code article,
+        # la désignation et les caractéristiques de l'ancien produit.
+        merge_order_fields(draft["order"], {name: value for name, value in updates.items()
+                                            if name != "entreprise_cliente"})
         return self._advance(turn, draft, intro=render("reorder_intro", turn.language))
 
     @staticmethod

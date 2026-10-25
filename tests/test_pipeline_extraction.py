@@ -165,13 +165,17 @@ class TestReorderDetection:
 
     def test_history_fills_only_missing_fields(self, settings, temp_db):
         _validated(temp_db, client="Snack Atlas", message="salam bghit 2000 sachet", quantity=2000,
-                   nature_produit="sachets kraft 28 cm")
+                   nature_produit="sachets kraft 28 cm", whatsapp_from=SENDER)
         llm = FakeLLMClient(chat_json=[{"entreprise_cliente": "Snack Atlas", "quantite": 2500}])
-        result = _extractor(llm, settings, temp_db).extract_text("Snack Atlas, kif dima, 2500 had l3am")
+        result = _extractor(llm, settings, temp_db).extract_text("Snack Atlas, kif dima, 2500 had l3am",
+                                                                 sender=SENDER)
         assert result["quantite"] == 2500
         assert result["type_produit"] == "Sachets fond plat"
         assert result["nature_produit"] == "sachets kraft 28 cm"
         assert result["est_bon_commande"] is True
+        # Prix total de l'ancienne quantité : jamais repris pour une autre quantité.
+        assert result["prix_unitaire"] == 0.42
+        assert result.get("prix_total") is None
 
     def test_assistant_extractor_never_reads_the_history(self, settings, temp_db):
         _validated(temp_db, client="Snack Atlas", message="salam bghit 2000 sachet", nature_produit="secret")

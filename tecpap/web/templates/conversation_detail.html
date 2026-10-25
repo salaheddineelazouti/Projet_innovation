@@ -97,7 +97,7 @@
                         <span>Twilio n'est pas configuré (TWILIO_ACCOUNT_SID et TWILIO_AUTH_TOKEN) : l'envoi échouera.</span>
                     </div>
                     {% endif %}
-                    <textarea name="message" id="replyMessage" rows="4" maxlength="{{ reply_max_chars }}" class="input-pro resize-y" dir="auto" placeholder="Votre réponse au client…" required>{{ reply_text }}</textarea>
+                    <textarea name="message" id="replyMessage" aria-label="Réponse au client" rows="4" maxlength="{{ reply_max_chars }}" class="input-pro resize-y" dir="auto" placeholder="Votre réponse au client…" required>{{ reply_text }}</textarea>
                     <div class="flex items-center justify-between gap-3">
                         <span class="text-xs text-slate-400"><span id="replyCounter">{{ reply_text|length }}</span> / {{ reply_max_chars }} caractères</span>
                         <button type="submit" class="btn-primary"><i class="fab fa-whatsapp"></i>Envoyer par WhatsApp</button>
@@ -161,8 +161,8 @@
                         {% for order in orders %}
                         <a href="/orders/{{ order.id }}" class="flex items-center justify-between gap-2 p-3 rounded-lg border border-slate-100 hover:bg-slate-50 transition">
                             <div class="min-w-0">
-                                <p class="text-sm font-medium text-slate-800 truncate">{{ order.numero_commande or 'CMD-' ~ order.id }}</p>
-                                <p class="text-xs text-slate-400 truncate">{{ order.produit_type or 'Produit non précisé' }} · {{ "{:,.0f}".format(order.quantite or 0) }} {{ order.unite or '' }} · {{ (order.created_at or '')[:10] }}</p>
+                                <p class="text-sm font-medium text-slate-800 truncate">{{ order|order_reference }}</p>
+                                <p class="text-xs text-slate-400 truncate">{{ order.produit_type or 'Produit non précisé' }} · {{ order.quantite|format_quantity(order.unite) }} · {{ (order.created_at or '')[:10] }}</p>
                             </div>
                             {% if order.statut == 'en_attente' %}
                             <span class="badge badge-pending">En attente</span>

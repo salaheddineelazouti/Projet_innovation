@@ -1,14 +1,19 @@
-"""Tests du menu latéral, du rendu des pages de l'assistant et des libellés communs aux gabarits."""
+"""Tests du gabarit commun (menu, en-tête, pied de page), des pages du tableau de bord et des libellés des gabarits."""
 
 from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
+from flask import render_template_string
 
+from tecpap import __version__
 from tecpap.chatbot.conversation import ConversationStore
+from tecpap.config import Settings
 from tecpap.security.events import KIND_PROMPT_INJECTION, log_security_event
+from tecpap.web import create_app
 from tecpap.web.routes import assistant
 
 PHONE = "+212612345678"
@@ -51,7 +56,7 @@ class TestNavigation:
         html = logged_in_client.get("/").get_data(as_text=True)
         nav = re.search(r"<nav class=\"flex-1.*?</nav>", html, flags=re.DOTALL).group(0)
         order = [nav.index(marker) for marker in (
-            'href="/whatsapp"', ">Assistant WhatsApp<", 'href="/conversations"', 'href="/knowledge"', ">Analytics<",
+            'href="/whatsapp"', ">Assistant WhatsApp<", 'href="/conversations"', 'href="/knowledge"', ">Suivi<",
             'href="/backups"', 'href="/security"',
         )]
         assert order == sorted(order)
@@ -191,3 +196,193 @@ class TestLabels:
     ])
     def test_phone_key(self, raw, expected):
         assert assistant.phone_key(raw) == expected
+
+
+# ---------------------------------------------------------------------- gabarit commun et pages du tableau de bord
+
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "tecpap" / "web" / "templates"
+DASHBOARD_TEMPLATES = ("base.html", "index.html", "orders.html", "order_detail.html", "clients.html",
+                       "client_detail.html", "alerts.html", "process.html", "whatsapp.html", "_flash_messages.html")
+
+
+class TestLayout:
+    """En-tête, menus et pied de page de base.html."""
+
+    def test_footer_shows_the_package_version_and_the_current_year(self, logged_in_client):
+        html = logged_in_client.get("/").get_data(as_text=True)
+        footer = re.search(r"<footer.*?</footer>", html, flags=re.DOTALL).group(0)
+        assert f'id="appVersion">v{__version__}<' in footer
+        assert f"© {datetime.now(timezone.utc).year} " in footer or f"© {datetime.now().year} " in footer
+        assert "v2.0" not in footer and "Opérationnel" not in footer
+
+    def test_chart_library_is_pinned_and_loaded_once(self, logged_in_client):
+        for url in ("/", "/analytics"):
+            html = logged_in_client.get(url).get_data(as_text=True)
+            sources = re.findall(r'<script src="([^"]*chart[^"]*)"', html)
+            assert sources == ["https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"], url
+
+    def test_header_search_targets_the_order_list(self, logged_in_client):
+        html = logged_in_client.get("/clients").get_data(as_text=True)
+        form = re.search(r'<form method="get" action="/orders" role="search".*?</form>', html, flags=re.DOTALL)
+        assert form
+        assert 'name="q"' in form.group(0) and '<label for="headerSearchInput"' in form.group(0)
+
+    def test_menus_can_be_opened_from_the_keyboard(self, logged_in_client):
+        html = logged_in_client.get("/orders").get_data(as_text=True)
+        for menu in ("actionsMenu", "exportMenu"):
+            button = re.search(rf'<button[^>]*aria-controls="{menu}"[^>]*>', html).group(0)
+            assert 'type="button"' in button and "data-menu-toggle" in button
+            assert 'aria-haspopup="true"' in button and 'aria-expanded="false"' in button
+        assert ".dropdown.open .dropdown-menu" in html
+        assert "group-hover:visible" not in html
+
+    def test_icon_buttons_have_a_name(self, logged_in_client):
+        html = logged_in_client.get("/").get_data(as_text=True)
+        assert re.search(r'<button[^>]*id="sidebarToggle"[^>]*aria-label="Réduire le menu"', html)
+        assert re.search(r'<button[^>]*id="notificationButton"[^>]*aria-label="Notifications"', html)
+
+    def test_section_titles_are_in_french(self, logged_in_client):
+        html = logged_in_client.get("/").get_data(as_text=True)
+        assert ">Analytics<" not in html and "Top Clients" not in html
+        assert "Meilleurs clients" in html
+
+    @pytest.mark.parametrize("name", DASHBOARD_TEMPLATES)
+    def test_templates_do_not_disable_escaping(self, name):
+        assert "|safe" not in (TEMPLATES_DIR / name).read_text(encoding="utf-8").replace(" ", "")
+
+    def test_email_card_links_to_email_orders(self, logged_in_client):
+        html = logged_in_client.get("/").get_data(as_text=True)
+        link = re.search(r'<a href="([^"]*)"[^>]*id="emailOrdersLink"', html).group(1)
+        assert link == "/orders?source=email"
+        assert logged_in_client.get(link).status_code == 200
+
+
+class TestTemplateFilters:
+    """Filtres Jinja de mise en forme et variables du pied de page."""
+
+    def _render(self, app, source: str, **values) -> str:
+        # render_template_string applique les processeurs de contexte (version et année du pied de page).
+        with app.test_request_context("/"):
+            return render_template_string(source, **values)
+
+    def test_number_filters(self, secure_app):
+        assert self._render(secure_app, "{{ 10000|format_quantity }}") == "10 000"
+        assert self._render(secure_app, "{{ 2.5|format_quantity('kg') }}") == "2,5 kg"
+        assert self._render(secure_app, "{{ 1234.5|format_amount }}") == "1 234,50 MAD"
+        assert self._render(secure_app, "{{ 12|format_amount('EUR') }}") == "12,00 EUR"
+        assert self._render(secure_app, "{{ none|format_amount(none) }}") == "—"
+
+    def test_dates_use_the_configured_time_zone(self, secure_app, tmp_path):
+        assert self._render(secure_app, "{{ '2025-07-15 14:03:00'|format_datetime }}") == "15/07/2025 15:03"
+        assert self._render(secure_app, "{{ '2025-07-15 23:30:00'|format_date }}") == "16/07/2025"
+        utc_app = create_app(Settings.for_tests(tmp_path / "utc", timezone="UTC"))
+        try:
+            assert self._render(utc_app, "{{ '2025-07-15 14:03:00'|format_datetime }}") == "15/07/2025 14:03"
+        finally:
+            utc_app.extensions["tecpap"].close()
+
+    def test_order_reference_filter(self, secure_app):
+        assert self._render(secure_app, "{{ order|order_reference }}", order={"id": 7}) == "CMD-7"
+        assert self._render(secure_app, "{{ order|order_reference }}",
+                            order={"id": 7, "numero_commande": "BC-7"}) == "BC-7"
+
+    def test_footer_values(self, secure_app):
+        assert self._render(secure_app, "{{ app_version }}") == __version__
+        assert int(self._render(secure_app, "{{ current_year }}")) >= 2025
+
+
+class TestStatusPages:
+    """Pages Emails et WhatsApp : l'état affiché vient de la configuration."""
+
+    def test_email_page_without_credentials(self, logged_in_client):
+        html = logged_in_client.get("/process").get_data(as_text=True)
+        assert "Non configurés" in re.search(r'id="gmailStatus".*?</div>', html, flags=re.DOTALL).group(0)
+        assert "Clé absente" in re.search(r'id="llmStatus".*?</div>', html, flags=re.DOTALL).group(0)
+        assert 'id="gmailWarning"' in html
+        assert "Connecté" not in html.split("<main", 1)[1]
+
+    def test_email_page_with_credentials(self, tmp_path):
+        settings = Settings.for_tests(tmp_path, gmail_email="commandes@tecpap.ma", gmail_app_password="abcd")
+        app = create_app(settings)
+        try:
+            html = app.test_client().get("/process").get_data(as_text=True)
+        finally:
+            app.extensions["tecpap"].close()
+        assert "Configurés" in re.search(r'id="gmailStatus".*?</div>', html, flags=re.DOTALL).group(0)
+        assert 'id="gmailWarning"' not in html
+
+    def test_email_page_has_no_simulated_steps(self, logged_in_client):
+        html = logged_in_client.get("/process").get_data(as_text=True)
+        for text in ("Connexion Gmail établie", "Authentification réussie", "simulateProgress",
+                     "Traitement terminé avec succès", "Détection de relances", "Scan emails"):
+            assert text not in html, text
+        assert "Détection des renouvellements de commande" in html
+
+    def test_whatsapp_page_without_credentials(self, logged_in_client):
+        html = logged_in_client.get("/whatsapp").get_data(as_text=True)
+        assert "Non configuré" in re.search(r'id="statusIndicator".*?</span>\s*Non configuré\s*</span>', html,
+                                            flags=re.DOTALL).group(0)
+        assert 'id="whatsappNumber">+14155238886<' in html
+        assert "checkStatus();" not in html
+        assert 'href="/orders?source=whatsapp"' in html
+        assert "Webhook URL" not in html and "Adresse du webhook" in html
+
+    def test_whatsapp_page_does_not_claim_a_verified_connection(self, tmp_path):
+        settings = Settings.for_tests(tmp_path, twilio_account_sid="AC" + "0" * 32, twilio_auth_token="jeton")
+        app = create_app(settings)
+        try:
+            html = app.test_client().get("/whatsapp").get_data(as_text=True)
+        finally:
+            app.extensions["tecpap"].close()
+        assert "if (data.verified)" in html and "Identifiants configurés" in html
+        assert "checkStatus();" in html
+
+
+class TestAlertsPage:
+    """Compteurs et titres des alertes calculées par AlertSystem."""
+
+    def test_counts_titles_and_links(self, logged_in_client, dashboard_services):
+        db = dashboard_services.db
+        urgent = db.create_order({"entreprise_cliente": "Snack Atlas", "email_id": "mail-a1",
+                                  "email_subject": "Commande urgent", "confiance": 90})
+        doubtful = db.create_order({"entreprise_cliente": "Café Rif", "email_id": "mail-a2", "confiance": 10})
+        html = logged_in_client.get("/alerts").get_data(as_text=True)
+        assert re.search(r'id="criticalCount">(\d+)<', html).group(1) == "1"
+        assert re.search(r'id="warningCount">(\d+)<', html).group(1) == "1"
+        assert re.search(r'id="infoCount">(\d+)<', html).group(1) == "0"
+        assert "Commande urgente" in html and "Extraction peu fiable" in html
+        assert f'href="/orders/{urgent}"' in html and f'href="/orders/{doubtful}"' in html
+        assert "fa-times" not in re.search(r'id="alertList".*', html, flags=re.DOTALL).group(0).split("</main>")[0]
+
+
+class TestClientPages:
+    """Fiche et liste des clients."""
+
+    def test_client_page_shows_the_estimate(self, logged_in_client, dashboard_services):
+        db = dashboard_services.db
+        first = db.create_order({"entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat",
+                                 "quantite": 1000, "email_id": "mail-p1"})
+        second = db.create_order({"entreprise_cliente": "Snack Atlas", "type_produit": "Sachets fond plat",
+                                  "quantite": 3000, "email_id": "mail-p2"})
+        db.connection.execute("UPDATE commandes SET created_at = '2025-06-01 10:00:00' WHERE id = ?", (first,))
+        db.connection.execute("UPDATE commandes SET created_at = '2025-06-11 10:00:00' WHERE id = ?", (second,))
+        db.connection.commit()
+        client_id = db.get_order(first)["client_id"]
+        html = logged_in_client.get(f"/clients/{client_id}").get_data(as_text=True)
+        assert "Entreprise non spécifiée" not in html
+        assert re.search(r'id="predictedDate">\s*vers le 21/06/2025\s*<', html)
+        assert re.search(r'id="predictedQuantity">\s*2 000\s*<', html)
+        assert "Sachets fond plat" in re.search(r'id="clientPrediction".*?</div>\s*</div>', html,
+                                                flags=re.DOTALL).group(0)
+
+    def test_client_without_history(self, logged_in_client, dashboard_services):
+        cursor = dashboard_services.db.connection.execute("INSERT INTO clients (nom) VALUES ('Client Sans Commande')")
+        dashboard_services.db.connection.commit()
+        html = logged_in_client.get(f"/clients/{cursor.lastrowid}").get_data(as_text=True)
+        assert "pas d'estimation possible" in html
+
+    def test_client_list_has_no_empty_company_line(self, logged_in_client, dashboard_services):
+        dashboard_services.db.create_order({"entreprise_cliente": "Snack Atlas", "email_id": "mail-p3"})
+        html = logged_in_client.get("/clients").get_data(as_text=True)
+        assert '<p class="text-xs text-slate-500"></p>' not in html
+        assert 'aria-label="Rechercher un client par nom, email ou téléphone"' in html

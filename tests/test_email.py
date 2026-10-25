@@ -296,6 +296,17 @@ class TestEmailContent:
         text_part = [part for part in message.get_payload() if part.get_content_type() == "text/plain"][0]
         assert "Stock insuffisant" in text_part.get_payload(decode=True).decode("utf-8")
 
+    def test_subject_never_contains_a_line_break(self, configured_sender, smtp):
+        _, server = smtp
+        order = {"id": 3, "email_from": "client@example.com", "client_nom": "Atlas",
+                 "numero_commande": "BC-1\r\nBcc: autre@example.com"}
+
+        configured_sender.send_validation_email(order)
+
+        message = server.send_message.call_args.args[0]
+        assert "\n" not in message["Subject"] and "\r" not in message["Subject"]
+        assert message["Bcc"] is None
+
     def test_smtp_failure_returns_false(self, configured_sender):
         import smtplib
 
@@ -305,3 +316,121 @@ class TestEmailContent:
     def test_smtp_settings_come_from_configuration(self, tmp_path):
         sender = EmailSender(Settings.for_tests(tmp_path, smtp_server="smtp.example.com", smtp_port=2525))
         assert (sender.smtp_server, sender.smtp_port) == ("smtp.example.com", 2525)
+
+
+class TestEmailWording:
+    """Texte des emails : mise en forme française, nom du client, promesses tenues, coordonnées."""
+
+    @pytest.fixture
+    def sent(self, tmp_path, monkeypatch):
+        """Emails produits par un expéditeur configuré, sans envoi : (sujet, HTML, texte) par appel."""
+        messages = []
+
+        def record(self, to_email, subject, html_content, text_content=None):
+            messages.append((subject, html_content, text_content))
+            return True
+
+        monkeypatch.setattr(EmailSender, "send_email", record)
+        sender = EmailSender(Settings.for_tests(tmp_path, gmail_email="commandes@example.com",
+                                                gmail_app_password="secret"))
+        return sender, messages
+
+    @staticmethod
+    def _plain(text):
+        return text.replace("\u202f", " ").replace("\xa0", " ")
+
+    def _all_emails(self, sender, messages, order):
+        sender.send_order_received_email(order)
+        sender.send_validation_email(order)
+        sender.send_rejection_email(order, "Produit hors catalogue")
+        return messages
+
+    @pytest.mark.parametrize("quantity, unit, expected", [
+        (5000.0, "US", "Quantité : 5 000 pièces"),
+        (20.0, "paquet", "Quantité : 20 paquets"),
+        (1.0, "carton", "Quantité : 1 carton"),
+        (2.5, "kg", "Quantité : 2,5 kg"),
+        (1500, None, "Quantité : 1 500 pièces"),
+        (0.0, "US", "Quantité : À préciser"),
+        (None, "US", "Quantité : À préciser"),
+    ])
+    def test_quantity_and_unit_are_written_for_the_client(self, sent, quantity, unit, expected):
+        sender, messages = sent
+        order = {"id": 7, "email_from": "client@example.com", "client_nom": "Snack Atlas",
+                 "produit_type": "Sachets fond plat", "quantite": quantity, "unite": unit}
+        for _subject, html_body, text_body in self._all_emails(sender, messages, order):
+            assert expected in self._plain(text_body)
+            assert "5000.0" not in text_body and " US" not in text_body and "None" not in text_body
+            assert expected.split(" : ")[1] in self._plain(html_body)
+
+    def test_delivery_date_is_the_requested_one(self, sent):
+        sender, messages = sent
+        sender.send_validation_email({"id": 3, "email_from": "client@example.com", "client_nom": "Atlas",
+                                      "quantite": 100, "date_livraison": "2026-11-15"})
+        _subject, html_body, text_body = messages[0]
+        assert "Livraison souhaitée : 15/11/2026" in text_body
+        assert "Livraison souhaitée" in html_body and "15/11/2026" in html_body
+        assert "estimée" not in html_body + text_body
+
+    def test_missing_delivery_date(self, sent):
+        sender, messages = sent
+        sender.send_validation_email({"id": 3, "email_from": "client@example.com", "client_nom": "Atlas"})
+        assert "Livraison souhaitée : Non précisée" in messages[0][2]
+
+    def test_no_unkept_promise(self, sent):
+        sender, messages = sent
+        order = {"id": 4, "email_from": "client@example.com", "client_nom": "Atlas", "quantite": 100}
+        for _subject, html_body, text_body in self._all_emails(sender, messages, order):
+            content = (html_body + text_body).lower()
+            for promise in ("24-48", "24h", "48h", "expédition", "lors de l'envoi", "en cours de préparation",
+                            "bientôt prête", "plus brefs délais"):
+                assert promise not in content
+
+    @pytest.mark.parametrize("client_nom", ["Client WhatsApp +212612345678", "Client Inconnu", "achat@snack2.ma",
+                                            "<achat@snack2.ma>", "", None])
+    def test_placeholder_names_are_never_written(self, sent, client_nom):
+        sender, messages = sent
+        order = {"id": 8, "email_from": "achat@snack2.ma", "client_nom": client_nom, "quantite": 100}
+        for _subject, html_body, text_body in self._all_emails(sender, messages, order):
+            assert "\nBonjour,\n" in text_body
+            assert "Bonjour," in html_body
+            for placeholder in ("Client WhatsApp", "Client Inconnu", "Cher client", "Bonjour achat", "@snack2"):
+                assert placeholder not in html_body + text_body
+
+    def test_display_name_of_sender_address_is_kept(self, sent):
+        sender, messages = sent
+        sender.send_validation_email({"id": 9, "email_from": "achat@snack.ma",
+                                      "client_nom": "Snack Atlas <achat@snack.ma>", "quantite": 100})
+        _subject, html_body, text_body = messages[0]
+        assert "Bonjour Snack Atlas," in text_body
+        assert "Bonjour <strong>Snack Atlas</strong>," in html_body
+        assert "achat@snack.ma" not in text_body
+
+    def test_received_email_uses_extracted_fields(self, sent):
+        sender, messages = sent
+        sender.send_order_received_email({"id": 10, "email_from": "client@example.com",
+                                          "entreprise_cliente": "Boulangerie Atlas",
+                                          "type_produit": "Sac fond carré avec poignées plates",
+                                          "quantite": 3000.0, "unite": "pièces"})
+        text_body = self._plain(messages[0][2])
+        assert "Bonjour Boulangerie Atlas," in text_body
+        assert "Produit : Sac fond carré avec poignées plates" in text_body
+        assert "Quantité : 3 000 pièces" in text_body
+        assert "Référence : CMD-10" in text_body
+
+    def test_footer_comes_from_company_info(self, sent):
+        from tecpap.catalog import COMPANY_INFO
+
+        sender, messages = sent
+        order = {"id": 11, "email_from": "client@example.com", "client_nom": "Atlas", "quantite": 100}
+        for _subject, html_body, text_body in self._all_emails(sender, messages, order):
+            for key in ("address", "phone", "email", "website"):
+                assert COMPANY_INFO[key] in text_body
+                assert COMPANY_INFO[key] in html_body.replace("&#x27;", "'")
+            assert "+212 5 22 86 56 83" not in html_body + text_body
+
+    def test_html_declares_french(self, sent):
+        sender, messages = sent
+        order = {"id": 12, "email_from": "client@example.com", "client_nom": "Atlas"}
+        for _subject, html_body, _text_body in self._all_emails(sender, messages, order):
+            assert '<html lang="fr" dir="ltr">' in html_body

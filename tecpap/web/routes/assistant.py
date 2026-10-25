@@ -17,6 +17,9 @@ Conversations (``/conversations``)
       message envoyé d'intention :data:`AGENT_INTENT`. La conversation reste transférée :
       l'assistant n'intervient pas tant que la prise en charge n'est pas terminée.
 
+    La liste signale aussi les messages reçus encore en attente de traitement ou en échec dans la
+    file durable des messages WhatsApp (:mod:`tecpap.chatbot.inbox`).
+
 Base de connaissances (``/knowledge``)
     Documents et sections indexés (table ``rag_chunks``), calcul des plongements (vecteurs
     numériques qui représentent les textes), état de l'index par rapport au dossier des
@@ -384,7 +387,17 @@ def conversations():
         handoff_only=handoff_only,
         handoff_total=len(waiting),
         list_limit=CONVERSATION_LIST_LIMIT,
+        inbox_counts=_inbox_counts(services),
     )
+
+
+def _inbox_counts(services: Services) -> dict[str, int] | None:
+    """Nombre de messages de la file durable par statut, ou ``None`` si la file est illisible."""
+    try:
+        return services.inbox().counts()
+    except (sqlite3.Error, RuntimeError):
+        logger.warning("File des messages WhatsApp reçus illisible", exc_info=True)
+        return None
 
 
 def _draft_fields(draft: Any) -> list[tuple[str, Any]]:

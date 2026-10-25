@@ -11,6 +11,16 @@ analysé (``message_brut``), langue détectée, modèle de langue utilisé et ra
 anomalies et champs obligatoires manquants (listes enregistrées en JSON). Ces colonnes ne sont
 jamais modifiables depuis le tableau de bord.
 
+Dédoublonnage : une commande n'est rattachée à une commande existante que par l'identifiant du
+message reçu (``message_sid``, à défaut ``email_id``), jamais par son numéro de commande ni par
+son client. Un numéro de commande déjà attribué, ou un code client indiqué dans le message qui
+diffère de celui du client, est noté dans les anomalies pour l'équipe commerciale (voir
+:meth:`DatabaseManager.save_order`).
+
+Horodatages : toutes les dates et heures écrites dans la base sont en UTC, au format
+« AAAA-MM-JJ HH:MM:SS » de ``CURRENT_TIMESTAMP`` de SQLite (:data:`SQLITE_TIMESTAMP_FORMAT`) ;
+la conversion en heure de Casablanca se fait à l'affichage.
+
 Fils d'exécution : une connexion SQLite n'est jamais partagée entre deux fils. Chaque fil
 (requête du serveur web, tâche de fond) obtient sa propre connexion, ouverte à la première
 utilisation (voir :class:`DatabaseManager`).
@@ -25,12 +35,14 @@ import sqlite3
 import threading
 import weakref
 from collections.abc import Iterable, Mapping
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from tecpap.catalog import PRODUCTS
 from tecpap.config import load_settings
+from tecpap.formatting import parse_timestamp, resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +100,12 @@ décodées (``anomalies_list``, ``champs_manquants_list``).
 MESSAGE_BRUT_MAX_CHARS = 20_000
 """Longueur maximale du texte analysé conservé avec une commande (colonne ``message_brut``)."""
 
+SQLITE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+"""Format des horodatages de la base (celui de ``CURRENT_TIMESTAMP`` de SQLite), toujours en UTC."""
+
 _MESSAGE_SID_MAX_CHARS = 200
+_REFERENCE_MAX_CHARS = 100
+_CLIENT_CODE_PREFIX = "CL"
 _CREATE_MESSAGE_SID_INDEX = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_commandes_message_sid ON commandes(message_sid) "
     "WHERE message_sid IS NOT NULL"
@@ -177,6 +194,16 @@ _CREATE_LOGS = """
         details TEXT,
         user_id TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+# Position de lecture de chaque boîte IMAP : dernier UID examiné pour une valeur de UIDVALIDITY.
+_CREATE_MAILBOX_STATE = """
+    CREATE TABLE IF NOT EXISTS email_mailbox_state (
+        mailbox TEXT PRIMARY KEY,
+        uidvalidity INTEGER NOT NULL,
+        last_uid INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
 """
 
@@ -379,6 +406,107 @@ def _clean_message_sid(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text[:_MESSAGE_SID_MAX_CHARS] or None
+
+
+def _clean_reference(value: Any) -> str | None:
+    """Numéro de commande ou code client indiqué dans un message : texte sur une ligne, ou ``None``."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = " ".join(str(value).split())
+    return text[:_REFERENCE_MAX_CHARS] or None
+
+
+def default_client_code(client_id: int) -> str:
+    """Code client SAGE X3 attribué par défaut : « CL » suivi de l'identifiant sur 5 chiffres."""
+    return f"{_CLIENT_CODE_PREFIX}{int(client_id):05d}"
+
+
+def utc_timestamp(moment: datetime | None = None) -> str:
+    """Horodatage UTC au format de la base (:data:`SQLITE_TIMESTAMP_FORMAT`).
+
+    Args:
+        moment: instant à écrire ; sans fuseau horaire, il est lu comme une heure locale du
+            serveur. Par défaut, l'instant présent.
+    """
+    moment = moment or datetime.now(timezone.utc)
+    return moment.astimezone(timezone.utc).strftime(SQLITE_TIMESTAMP_FORMAT)
+
+
+class _OrderReview:
+    """Contrôles d'identification d'une commande avant son insertion : numéro de commande et code client.
+
+    Attributes:
+        client_code: code client SAGE X3 enregistré (toujours celui de la base).
+        anomalies: anomalies ajoutées, en français, pour l'équipe commerciale.
+        notes: phrases ajoutées aux informations supplémentaires de la commande.
+    """
+
+    def __init__(self) -> None:
+        self.client_code: str | None = None
+        self.anomalies: list[str] = []
+        self.notes: list[str] = []
+
+    def check_client_code(self, stated: Any, expected: str) -> None:
+        """Retient le code ``expected`` ; un code ``stated`` différent est noté et signalé."""
+        self.client_code = expected
+        code = _clean_reference(stated)
+        if code is None or code.upper() == expected.upper():
+            return
+        self.notes.append(f"Code client indiqué dans le message : {code}.")
+        self.anomalies.append(f"Code client indiqué « {code} » différent du code du client ({expected}) : "
+                              "à vérifier.")
+
+    def check_order_number(self, cursor: sqlite3.Cursor, stated: Any) -> str | None:
+        """Numéro de commande à enregistrer : ``None`` s'il est déjà attribué à une autre commande."""
+        numero = _clean_reference(stated)
+        if numero is None:
+            return None
+        row = cursor.execute("SELECT id FROM commandes WHERE numero_commande = ?", (numero,)).fetchone()
+        if row is None:
+            return numero
+        logger.warning("Numéro de commande déjà attribué à la commande %s : commande créée sans ce numéro", row[0])
+        self.notes.append(f"Numéro de commande indiqué dans le message : {numero} (déjà attribué à une autre "
+                          "commande).")
+        self.anomalies.append(f"Numéro de commande « {numero} » déjà utilisé par la commande CMD-{row[0]} : "
+                              "doublon possible, à vérifier.")
+        return None
+
+    def informations(self, previous: Any) -> Any:
+        """Informations supplémentaires de la commande, suivies des notes des contrôles."""
+        if not self.notes:
+            return previous
+        notes = " ".join(self.notes)
+        return f"{previous}\n{notes}" if previous else notes
+
+    def confidence(self, value: Any) -> Any:
+        """Confiance diminuée de :data:`~tecpap.extraction.rules.ANOMALY_PENALTY` points par anomalie ajoutée."""
+        if not self.anomalies or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return value
+        # Import différé : tecpap.extraction.rules importe ce module.
+        from tecpap.extraction.rules import ANOMALY_PENALTY
+
+        return max(0, int(value) - ANOMALY_PENALTY * len(self.anomalies))
+
+    def encoded_anomalies(self, existing: Any) -> str | None:
+        """Anomalies de la commande (JSON) complétées par celles des contrôles."""
+        if not self.anomalies:
+            return encode_text_list(existing)
+        items = decode_text_list(encode_text_list(existing))
+        return encode_text_list([*items, *(item for item in self.anomalies if item not in items)])
+
+
+@dataclass(frozen=True)
+class MailboxState:
+    """Position de lecture d'une boîte IMAP.
+
+    Attributes:
+        uidvalidity: valeur UIDVALIDITY de la boîte (elle change quand les UID
+            enregistrés ne désignent plus les mêmes messages).
+        last_uid: plus grand UID déjà examiné pour cette valeur de UIDVALIDITY.
+    """
+
+    uidvalidity: int
+    last_uid: int
 
 
 class _ThreadState(threading.local):
@@ -592,8 +720,11 @@ class DatabaseManager:
     def init_database(self) -> None:
         """Crée les tables manquantes, ajoute les colonnes absentes et insère le catalogue produits.
 
-        Crée aussi l'index d'unicité de ``commandes.message_sid`` et les tables du journal de
-        sécurité, de l'index de la base de connaissances et des conversations WhatsApp.
+        Crée aussi l'index d'unicité de ``commandes.message_sid``, la table des positions de
+        lecture des boîtes IMAP et les tables du journal de sécurité, de l'index de la base de
+        connaissances et des conversations WhatsApp. Les dates de validation écrites en heure
+        locale du serveur par les versions antérieures (« AAAA-MM-JJTHH:MM:SS.ffffff ») sont
+        converties en UTC au format de la base.
         """
         # Imports différés : ces modules dépendent indirectement de celui-ci.
         from tecpap.chatbot.conversation import ensure_schema as ensure_conversation_schema
@@ -611,6 +742,8 @@ class DatabaseManager:
         self._add_missing_columns(cursor)
         cursor.execute(_CREATE_MESSAGE_SID_INDEX)
         cursor.execute(_CREATE_LOGS)
+        cursor.execute(_CREATE_MAILBOX_STATE)
+        self._convert_local_validation_dates(cursor)
 
         for product in PRODUCT_CATALOG:
             cursor.execute(
@@ -634,6 +767,26 @@ class DatabaseManager:
                 # Noms et définitions proviennent de la constante _MIGRATION_COLUMNS, jamais d'une saisie.
                 cursor.execute(f"ALTER TABLE commandes ADD COLUMN {column} {definition}")
         self.connection.commit()
+
+    @staticmethod
+    def _convert_local_validation_dates(cursor: sqlite3.Cursor) -> None:
+        """Convertit en UTC les dates de validation écrites en heure locale par ``datetime.now().isoformat()``.
+
+        Ces valeurs se reconnaissent au séparateur « T » ; une valeur sans fuseau horaire est lue
+        comme une heure locale du serveur. Une valeur illisible est laissée telle quelle.
+        """
+        rows = cursor.execute(
+            "SELECT id, validated_at FROM commandes WHERE validated_at LIKE '____-__-__T%'").fetchall()
+        converted = 0
+        for order_id, value in rows:
+            try:
+                moment = datetime.fromisoformat(str(value))
+            except ValueError:
+                continue
+            cursor.execute("UPDATE commandes SET validated_at = ? WHERE id = ?", (utc_timestamp(moment), order_id))
+            converted += 1
+        if converted:
+            logger.info("%d date(s) de validation converties en UTC", converted)
 
     def _log_action(self, action: str, table_name: str | None, record_id: int | None, details: str) -> None:
         """Ajoute une ligne à la table ``logs`` (trace des créations et modifications)."""
@@ -758,7 +911,11 @@ class DatabaseManager:
     # ------------------------------------------------------------------ commandes
 
     def is_email_processed(self, email_id: str | None) -> bool:
-        """Vrai si une commande a déjà été créée à partir de cet email."""
+        """Vrai si une commande porte cet identifiant d'email dans la boîte (« UIDVALIDITY:UID »).
+
+        Cet identifiant désigne un message de la boîte IMAP, pas son contenu : pour savoir si un
+        email a déjà été traité, :meth:`is_message_processed` (en-tête ``Message-ID``) fait foi.
+        """
         if not email_id or not self.connection:
             return False
         cursor = self.connection.cursor()
@@ -783,62 +940,155 @@ class DatabaseManager:
         """Vrai si une commande a déjà été créée à partir du message ``message_sid`` (WhatsApp ou email)."""
         return self.find_order_by_message_sid(message_sid) is not None
 
-    def _existing_order_id(self, cursor: sqlite3.Cursor, order_data: Mapping[str, Any]) -> int | None:
-        """Commande déjà enregistrée pour ce message : même ``message_sid``, ``numero_commande`` ou ``email_id``."""
-        already_processed = "Message %s déjà traité (commande id %s)"
-        checks = (
-            ("message_sid", _clean_message_sid(order_data.get("message_sid")), already_processed),
-            ("numero_commande", order_data.get("numero_commande"), "Commande %s déjà enregistrée (id %s)"),
-            ("email_id", order_data.get("email_id"), already_processed),
+    # ------------------------------------------------------------------ position de lecture des boîtes IMAP
+
+    def get_mailbox_state(self, mailbox: str) -> MailboxState | None:
+        """Position de lecture enregistrée pour la boîte ``mailbox`` (compte et dossier), ou ``None``."""
+        connection = self.connection
+        connection.execute(_CREATE_MAILBOX_STATE)
+        row = connection.execute("SELECT uidvalidity, last_uid FROM email_mailbox_state WHERE mailbox = ?",
+                                 (mailbox,)).fetchone()
+        return MailboxState(int(row[0]), int(row[1])) if row else None
+
+    def set_mailbox_state(self, mailbox: str, uidvalidity: int, last_uid: int) -> None:
+        """Enregistre le dernier UID examiné de la boîte ``mailbox``.
+
+        Pour une même valeur de UIDVALIDITY, la position n'avance que vers des UID plus grands ;
+        une autre valeur de UIDVALIDITY remplace la position.
+        """
+        connection = self.connection
+        connection.execute(_CREATE_MAILBOX_STATE)
+        connection.execute(
+            "INSERT INTO email_mailbox_state (mailbox, uidvalidity, last_uid, updated_at) "
+            "VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(mailbox) DO UPDATE SET "
+            "last_uid = CASE WHEN uidvalidity = excluded.uidvalidity THEN MAX(last_uid, excluded.last_uid) "
+            "ELSE excluded.last_uid END, "
+            "uidvalidity = excluded.uidvalidity, updated_at = CURRENT_TIMESTAMP",
+            (mailbox, int(uidvalidity), int(last_uid)),
         )
-        for column, value, message in checks:
-            if not value:
-                continue
-            # Nom de colonne issu de la constante ci-dessus ; la valeur passe par un paramètre « ? ».
-            cursor.execute(f"SELECT id FROM commandes WHERE {column} = ?", (value,))  # nosec B608
-            existing = cursor.fetchone()
-            if existing:
-                logger.info(message, value, existing[0])
-                return int(existing[0])
-        return None
+        connection.commit()
 
-    def create_order(self, order_data: dict[str, Any]) -> int:
-        """Enregistre une commande extraite et renvoie son identifiant.
+    def _existing_order_id(self, cursor: sqlite3.Cursor, order_data: Mapping[str, Any]) -> int | None:
+        """Commande déjà enregistrée pour ce message : même ``message_sid``, à défaut même ``email_id``.
 
-        Une commande déjà connue (même ``message_sid``, même ``numero_commande`` ou même
-        ``email_id``) n'est pas dupliquée : l'identifiant existant est renvoyé. Le client est
-        retrouvé ou créé, le produit rattaché d'après ``type_produit`` et le reste à livrer
-        calculé. Les champs de traçabilité (:data:`ORDER_AUDIT_FIELDS`) sont enregistrés : listes
-        ``anomalies`` et ``champs_manquants`` en JSON, ``message_brut`` limité à
-        :data:`MESSAGE_BRUT_MAX_CHARS` caractères.
+        Le numéro de commande n'identifie pas un message : deux clients peuvent utiliser le même,
+        et un client peut réutiliser le sien. Quand ``message_sid`` est connu, ``email_id`` n'est pas
+        comparé non plus : un ancien numéro de message IMAP peut avoir été réattribué.
+        """
+        message_sid = _clean_message_sid(order_data.get("message_sid"))
+        column, value = ("message_sid", message_sid) if message_sid else ("email_id", order_data.get("email_id"))
+        if not value:
+            return None
+        # Nom de colonne issu des deux constantes ci-dessus ; la valeur passe par un paramètre « ? ».
+        cursor.execute(f"SELECT id FROM commandes WHERE {column} = ?", (value,))  # nosec B608
+        existing = cursor.fetchone()
+        if existing is None:
+            return None
+        logger.info("Message %s déjà traité (commande id %s)", value, existing[0])
+        return int(existing[0])
+
+    def create_order(self, order_data: Mapping[str, Any]) -> int:
+        """Enregistre une commande extraite et renvoie son identifiant (voir :meth:`save_order`)."""
+        return self.save_order(order_data)[0]
+
+    def save_order(self, order_data: Mapping[str, Any]) -> tuple[int, bool]:
+        """Enregistre une commande extraite ; renvoie son identifiant et ``True`` si elle vient d'être créée.
+
+        Règles :
+
+        - un message déjà enregistré (même ``message_sid``, à défaut même ``email_id``) n'est pas
+          dupliqué : l'identifiant de la commande existante est renvoyé avec ``False`` ;
+        - un numéro de commande (``numero_commande``) déjà attribué à une autre commande n'est
+          jamais une raison de rattacher la commande à celle-ci : la commande est créée sans ce
+          numéro, qui est noté dans les informations supplémentaires, et une anomalie signale
+          un doublon possible ;
+        - le code client SAGE X3 vient toujours de la base : celui de la dernière commande
+          validée du client, à défaut « CL » suivi de l'identifiant du client sur 5 chiffres. Un
+          code indiqué dans le message qui en diffère est noté et signalé par une anomalie ;
+        - chaque anomalie ajoutée ici retire :data:`~tecpap.extraction.rules.ANOMALY_PENALTY`
+          points à la confiance.
+
+        Le client est retrouvé ou créé, le produit rattaché d'après ``type_produit`` et le reste
+        à livrer calculé. Les champs de traçabilité (:data:`ORDER_AUDIT_FIELDS`) sont
+        enregistrés : listes ``anomalies`` et ``champs_manquants`` en JSON, ``message_brut``
+        limité à :data:`MESSAGE_BRUT_MAX_CHARS` caractères.
         """
         connection = self.connection
         cursor = connection.cursor()
 
         existing = self._existing_order_id(cursor, order_data)
         if existing is not None:
-            return existing
+            return existing, False
 
         client = self._client_for_order(order_data)
-
         product = None
         if order_data.get("type_produit"):
             product = self.get_product_by_type(order_data["type_produit"])
 
+        review = _OrderReview()
+        review.check_client_code(order_data.get("code_client"), self._client_code(cursor, client["id"]))
+        numero = review.check_order_number(cursor, order_data.get("numero_commande"))
+
+        for attempt in range(2):
+            try:
+                cursor.execute(
+                    # Colonnes issues de la constante _ORDER_COLUMNS ; les valeurs passent par des paramètres « ? ».
+                    f"INSERT INTO commandes ({', '.join(_ORDER_COLUMNS)}) "  # nosec B608
+                    f"VALUES ({', '.join('?' for _ in _ORDER_COLUMNS)})",
+                    self._order_values(order_data, client, product, numero, review),
+                )
+                break
+            except sqlite3.IntegrityError:
+                # Même message ou même numéro de commande enregistré entre-temps par un autre fil.
+                connection.rollback()
+                existing = self._existing_order_id(cursor, order_data)
+                if existing is not None:
+                    return existing, False
+                if attempt or numero is None:
+                    raise
+                numero = review.check_order_number(cursor, numero)
+        connection.commit()
+        order_id = cursor.lastrowid
+
+        try:
+            connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.Error:
+            logger.debug("Point de contrôle WAL impossible", exc_info=True)
+
+        self._log_action("CREATE", "commandes", order_id, f"Created order: {numero}")
+        if review.anomalies:
+            logger.warning("Commande %s enregistrée avec %d anomalie(s) d'identification à vérifier",
+                           order_id, len(review.anomalies))
+        logger.info("Commande enregistrée (id %s)", order_id)
+        return order_id, True
+
+    @staticmethod
+    def _client_code(cursor: sqlite3.Cursor, client_id: int) -> str:
+        """Code SAGE X3 du client : celui de sa dernière commande validée, à défaut :func:`default_client_code`."""
+        row = cursor.execute(
+            "SELECT code_client FROM commandes WHERE client_id = ? AND statut = 'validee' "
+            "AND code_client IS NOT NULL AND TRIM(code_client) != '' "
+            "ORDER BY validated_at DESC, id DESC LIMIT 1",
+            (client_id,),
+        ).fetchone()
+        return str(row[0]).strip() if row else default_client_code(client_id)
+
+    @staticmethod
+    def _order_values(order_data: Mapping[str, Any], client: Mapping[str, Any], product: Mapping[str, Any] | None,
+                      numero: str | None, review: _OrderReview) -> tuple[Any, ...]:
+        """Valeurs de la ligne ``commandes``, dans l'ordre de :data:`_ORDER_COLUMNS`."""
         quantite = order_data.get("quantite") or 0
         quantite_livree = order_data.get("quantite_livree") or 0
-        # Code client au format SAGE X3 : « CL » suivi de l'identifiant sur 5 chiffres.
-        code_client = order_data.get("code_client") or f"CL{str(client['id']).zfill(5)}"
         message_brut = order_data.get("message_brut")
         if message_brut is not None:
             message_brut = str(message_brut)[:MESSAGE_BRUT_MAX_CHARS]
-
-        values = (
-            order_data.get("numero_commande"),
+        return (
+            numero,
             order_data.get("ligne_commande", 1),
             order_data.get("site_vente", "SXP"),
             client["id"],
-            code_client,
+            review.client_code,
             product["id"] if product else None,
             order_data.get("code_article"),
             order_data.get("nature_produit"),
@@ -859,8 +1109,8 @@ class DatabaseManager:
             order_data.get("grammage"),
             order_data.get("laize"),
             order_data.get("impression_client"),
-            order_data.get("informations_supplementaires"),
-            order_data.get("confiance"),
+            review.informations(order_data.get("informations_supplementaires")),
+            review.confidence(order_data.get("confiance")),
             order_data.get("source", "email"),
             order_data.get("email_id"),
             order_data.get("email_subject"),
@@ -871,34 +1121,9 @@ class DatabaseManager:
             order_data.get("langue"),
             order_data.get("modele_llm"),
             order_data.get("routage_modele"),
-            encode_text_list(order_data.get("anomalies")),
+            review.encoded_anomalies(order_data.get("anomalies")),
             encode_text_list(order_data.get("champs_manquants")),
         )
-        # Colonnes issues de la constante _ORDER_COLUMNS ; les valeurs passent par des paramètres « ? ».
-        placeholders = ", ".join("?" for _ in _ORDER_COLUMNS)
-        try:
-            cursor.execute(
-                f"INSERT INTO commandes ({', '.join(_ORDER_COLUMNS)}) VALUES ({placeholders})",  # nosec B608
-                values,
-            )
-        except sqlite3.IntegrityError:
-            # Même message enregistré entre-temps par un autre fil (index d'unicité de message_sid).
-            connection.rollback()
-            existing = self._existing_order_id(cursor, order_data)
-            if existing is None:
-                raise
-            return existing
-        connection.commit()
-        order_id = cursor.lastrowid
-
-        try:
-            connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        except sqlite3.Error:
-            logger.debug("Point de contrôle WAL impossible", exc_info=True)
-
-        self._log_action("CREATE", "commandes", order_id, f"Created order: {order_data.get('numero_commande')}")
-        logger.info("Commande enregistrée (id %s)", order_id)
-        return order_id
 
     def _client_for_order(self, order_data: dict[str, Any]) -> dict[str, Any]:
         """Retrouve ou crée le client d'une commande (nom extrait, sinon nom provisoire)."""
@@ -959,7 +1184,7 @@ class DatabaseManager:
         return self.get_all_orders(status="en_attente")
 
     def update_order_status(self, order_id: int, status: str, validated_by: str | None = None) -> None:
-        """Change le statut d'une commande ; une validation enregistre aussi la date et l'auteur.
+        """Change le statut d'une commande ; une validation enregistre aussi la date (UTC) et l'auteur.
 
         Raises:
             ValueError: ``status`` ne fait pas partie de :data:`ORDER_STATUSES`.
@@ -972,7 +1197,7 @@ class DatabaseManager:
         if status == "validee":
             cursor.execute(
                 "UPDATE commandes SET statut = ?, validated_at = ?, validated_by = ? WHERE id = ?",
-                (status, datetime.now().isoformat(), validated_by, order_id),
+                (status, utc_timestamp(), validated_by, order_id),
             )
         else:
             cursor.execute("UPDATE commandes SET statut = ? WHERE id = ?", (status, order_id))
@@ -1069,20 +1294,55 @@ class DatabaseManager:
         """, (limit,))
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_orders_trend(self, days: int = 7) -> list[dict[str, Any]]:
-        """Renvoie le nombre de commandes par jour sur les ``days`` derniers jours."""
+    def get_orders_trend(self, days: int = 7, timezone_name: str | None = None) -> list[dict[str, Any]]:
+        """Renvoie le nombre de commandes reçues par jour sur les ``days`` derniers jours.
+
+        Les dates d'enregistrement de la base sont en UTC ; les jours sont ceux du fuseau horaire
+        de l'entreprise (``Africa/Casablanca`` par défaut) : une commande reçue à 00 h 30 à
+        Casablanca compte pour ce jour-là, pas pour la veille. Le résultat, trié par date
+        croissante, ne contient pas les jours sans commande.
+
+        Args:
+            days: nombre de jours en arrière, aujourd'hui compris dans le calcul.
+            timezone_name: nom IANA du fuseau horaire des jours ; par défaut celui de l'entreprise.
+        """
+        zone = resolve_timezone(timezone_name)
+        first_day = datetime.now(timezone.utc).astimezone(zone).date() - timedelta(days=days)
+        # Marge d'un jour de chaque côté du fuseau horaire, affinée ensuite par la conversion.
         cursor = self.connection.cursor()
-        cursor.execute("""
-            SELECT DATE(created_at) as date, COUNT(*) as count
-            FROM commandes
-            WHERE created_at >= DATE('now', ?)
-            GROUP BY DATE(created_at)
-            ORDER BY date ASC
-        """, (f"-{days} days",))
-        return [dict(row) for row in cursor.fetchall()]
+        cursor.execute("SELECT created_at FROM commandes WHERE created_at >= ?",
+                       ((first_day - timedelta(days=1)).isoformat(),))
+        counts: dict[str, int] = {}
+        for (created_at,) in cursor.fetchall():
+            moment = parse_timestamp(created_at)
+            if not isinstance(moment, datetime):
+                continue
+            day = moment.astimezone(zone).date()
+            if day >= first_day:
+                counts[day.isoformat()] = counts.get(day.isoformat(), 0) + 1
+        return [{"date": day, "count": counts[day]} for day in sorted(counts)]
 
     def get_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Renvoie les dernières lignes du journal des actions."""
         cursor = self.connection.cursor()
         cursor.execute("SELECT * FROM logs ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(row) for row in cursor.fetchall()]
+
+
+def migrate_schema(db_file: str) -> None:
+    """Met à jour le schéma d'un fichier de base : colonnes, index et tables absents sont ajoutés.
+
+    Les données existantes ne sont pas modifiées, à part la conversion en UTC des anciennes dates
+    de validation (voir :meth:`DatabaseManager.init_database`). Sert à rendre utilisable par la
+    version courante une sauvegarde faite par une version plus ancienne.
+
+    Raises:
+        sqlite3.Error: le fichier n'est pas une base SQLite lisible, ou son schéma est incompatible.
+    """
+    manager = DatabaseManager(db_file)
+    try:
+        if not manager.connect():
+            raise sqlite3.DatabaseError(f"base illisible : {Path(db_file).name}")
+        manager.init_database()
+    finally:
+        manager.close_all()

@@ -211,12 +211,16 @@ class TestClientMatching:
     def test_without_database(self):
         assert DataExtractor().find_matching_client("Atlas") is None
 
-    def test_last_order_prefers_validated(self, temp_db):
-        first = temp_db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 100, "email_id": "a"})
-        temp_db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 999, "email_id": "b"})
+    def test_last_order_is_the_senders_last_validated_one(self, temp_db):
+        sender = "Achats <achats@snack-atlas.ma>"
+        first = temp_db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 100, "email_id": "a",
+                                      "email_from": sender})
+        temp_db.create_order({"entreprise_cliente": "Snack Atlas", "quantite": 999, "email_id": "b",
+                              "email_from": sender})
         temp_db.update_order_status(first, "validee")
-        last = DataExtractor(db_manager=temp_db).get_client_last_order("Snack Atlas")
-        assert last["id"] == first
+        extractor = DataExtractor(db_manager=temp_db)
+        assert extractor.get_sender_last_order("ACHATS@snack-atlas.ma", "email")["id"] == first
+        assert extractor.get_sender_last_order("autre@snack-atlas.ma", "email") is None
 
 
 class TestFillFromHistory:
@@ -323,11 +327,13 @@ class TestDataExtractorWithMockedAPI:
         order_id = temp_db.create_order({
             "entreprise_cliente": "Chhiwat Fès", "type_produit": "Sac fond carré avec poignées plates",
             "nature_produit": "sacs poignées plates", "quantite": 8000, "unite": "pièces", "email_id": "old",
+            "email_from": "Chhiwat <commandes@chhiwat.ma>",
         })
         temp_db.update_order_status(order_id, "validee")
         llm = _llm_returning({"entreprise_cliente": "chhiwat fes", "est_bon_commande": False, "confiance": 55})
 
-        result = DataExtractor(db_manager=temp_db, llm=llm).extract_from_email({"body": "commande b7al dima"})
+        result = DataExtractor(db_manager=temp_db, llm=llm).extract_from_email(
+            {"body": "commande b7al dima", "from": "commandes@chhiwat.ma"})
 
         # « b7al dima » est reconnu par les règles : le modèle de détection n'est pas appelé.
         assert len(llm.calls_to("chat_json")) == 1

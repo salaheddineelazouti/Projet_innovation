@@ -16,9 +16,9 @@
                 <i class="fas fa-magic"></i>
                 Générer tous les codes
             </button>
-            <a href="/export/excel/sage" class="btn-success">
+            <a href="/export/excel/sage" class="btn-success" title="Commandes validées uniquement">
                 <i class="fas fa-download"></i>
-                Télécharger Excel SAGE X3
+                Télécharger Excel SAGE X3 (commandes validées)
             </a>
         </div>
     </div>
@@ -111,25 +111,26 @@
             <div class="p-5">
                 <form id="exportForm" class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">Statut des commandes</label>
-                        <select name="status" class="input-pro">
-                            <option value="">Toutes les commandes</option>
-                            <option value="validee">Validées uniquement</option>
+                        <label for="export_status" class="block text-sm font-medium text-slate-700 mb-1">Statut des commandes</label>
+                        <select id="export_status" name="status" class="input-pro">
+                            <option value="validee" selected>Validées uniquement</option>
                             <option value="en_attente">En attente uniquement</option>
+                            <option value="rejetee">Rejetées uniquement</option>
+                            <option value="">Toutes les commandes (sauf supprimées)</option>
                         </select>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1">Date début</label>
-                            <input type="date" name="date_from" class="input-pro">
+                            <label for="export_date_from" class="block text-sm font-medium text-slate-700 mb-1">Date début</label>
+                            <input type="date" id="export_date_from" name="date_from" class="input-pro">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1">Date fin</label>
-                            <input type="date" name="date_to" class="input-pro">
+                            <label for="export_date_to" class="block text-sm font-medium text-slate-700 mb-1">Date fin (incluse)</label>
+                            <input type="date" id="export_date_to" name="date_to" class="input-pro">
                         </div>
                     </div>
                     <div class="flex gap-3 pt-2">
-                        <button type="button" onclick="exportSage()" class="btn-primary flex-1">
+                        <button type="button" id="exportSageButton" onclick="exportSage()" class="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">
                             <i class="fas fa-file-excel"></i>
                             Export Excel SAGE X3
                         </button>
@@ -138,6 +139,10 @@
                             CSV
                         </button>
                     </div>
+                    <p id="exportSageHint" class="text-xs text-slate-500">
+                        L'export SAGE X3 ne contient que les commandes validées. Les autres statuts s'exportent en CSV.
+                        Les dates de début et de fin sont incluses.
+                    </p>
                 </form>
             </div>
         </div>
@@ -186,6 +191,10 @@
                     </div>
                     <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
                         <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Unité</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
                         <span>Qté Livrée</span>
                     </div>
                     <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
@@ -201,24 +210,31 @@
                         <span>Grammage / Laize</span>
                     </div>
                 </div>
-                <div class="mt-4 p-3 bg-amber-50 rounded-lg">
+                <div class="mt-4 p-3 bg-amber-50 rounded-lg space-y-2">
                     <p class="text-sm text-amber-800">
-                        <i class="fas fa-lightbulb mr-2"></i>
-                        <strong>API SAGE X3:</strong> L'intégration API sera disponible ultérieurement. En attendant, utilisez l'export Excel.
+                        <i class="fas fa-ruler mr-2"></i>
+                        <strong>Unités :</strong> la feuille d'import ne contient que des quantités en unités de stock (US, pièces).
+                        Les commandes validées en cartons, paquets ou kg sont placées dans la feuille « Unités à convertir » :
+                        convertissez leur quantité en US avant l'import.
+                    </p>
+                    <p class="text-sm text-amber-800">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        <strong>Import :</strong> les commandes entrent dans SAGE X3 par l'import du fichier Excel ; aucune connexion directe à l'API de SAGE X3 n'est configurée.
                     </p>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Preview Table -->
+    <!-- Aperçu : les commandes validées, seules exportées vers SAGE X3 -->
+    {% set validated_orders = orders | selectattr('statut', 'equalto', 'validee') | list %}
     <div class="card overflow-hidden">
         <div class="p-5 border-b border-slate-100 flex items-center justify-between">
             <div>
-                <h3 class="font-bold text-slate-800">Aperçu des données</h3>
-                <p class="text-sm text-slate-500">Dernières commandes validées</p>
+                <h3 class="font-bold text-slate-800">Aperçu des données exportées</h3>
+                <p class="text-sm text-slate-500">Commandes validées, les plus récentes d'abord</p>
             </div>
-            <span class="text-sm text-slate-500">{{ orders|length }} commande(s)</span>
+            <span class="text-sm text-slate-500">{{ validated_orders|length }} commande(s) validée(s)</span>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full table-pro text-sm">
@@ -230,6 +246,7 @@
                         <th>Code Article</th>
                         <th>Désignation</th>
                         <th>Qté Cmd</th>
+                        <th>Unité</th>
                         <th>Qté Livrée</th>
                         <th>Reste</th>
                         <th>Type SAC</th>
@@ -239,9 +256,11 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for order in orders[:20] %}
+                    {% for order in validated_orders[:20] %}
+                    {% set unit = (order.unite or 'US')|trim %}
+                    {% set remaining = order.reste_a_livrer if order.reste_a_livrer is not none else (order.quantite or 0) - (order.quantite_livree or 0) %}
                     <tr>
-                        <td class="font-mono text-xs">{{ order.numero_commande or 'CMD-' ~ order.id }}</td>
+                        <td class="font-mono text-xs">{{ order|order_reference }}</td>
                         <td class="font-mono text-xs">{{ order.code_client or 'CL' ~ '%05d'|format(order.client_id or 0) }}</td>
                         <td>{{ (order.client_nom or 'N/A')[:20] }}</td>
                         <td>
@@ -252,10 +271,17 @@
                             {% endif %}
                         </td>
                         <td class="text-xs">{{ (order.nature_produit or order.produit_type or 'N/A')[:25] }}</td>
-                        <td class="font-semibold">{{ "{:,.0f}".format(order.quantite or 0) }}</td>
-                        <td>{{ "{:,.0f}".format(order.quantite_livree or 0) }}</td>
-                        <td class="{% if order.reste_a_livrer and order.reste_a_livrer > 0 %}text-orange-600 font-semibold{% endif %}">
-                            {{ "{:,.0f}".format(order.reste_a_livrer or order.quantite or 0) }}
+                        <td class="font-semibold">{{ (order.quantite or 0)|format_quantity }}</td>
+                        <td class="text-xs">
+                            {% if is_stock_unit(order.unite) %}
+                            US
+                            {% else %}
+                            <span class="px-2 py-0.5 bg-orange-100 text-orange-700 rounded" title="Quantité à convertir en unités de stock (US) avant l'import : feuille « Unités à convertir »">{{ unit }} · à convertir</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ (order.quantite_livree or 0)|format_quantity }}</td>
+                        <td class="{% if remaining > 0 %}text-orange-600 font-semibold{% endif %}">
+                            {{ remaining|format_quantity }}
                         </td>
                         <td class="text-xs">{{ order.type_sac or '-' }}</td>
                         <td class="text-xs">{{ order.grammage or '-' }}{% if order.grammage %}g{% endif %}</td>
@@ -279,10 +305,10 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="12" class="text-center py-12">
+                        <td colspan="13" class="text-center py-12">
                             <div class="text-slate-400">
                                 <i class="fas fa-inbox text-4xl mb-3"></i>
-                                <p class="font-medium">Aucune commande à exporter</p>
+                                <p class="font-medium">Aucune commande validée à exporter</p>
                             </div>
                         </td>
                     </tr>
@@ -290,9 +316,9 @@
                 </tbody>
             </table>
         </div>
-        {% if orders|length > 20 %}
+        {% if validated_orders|length > 20 %}
         <div class="p-4 bg-slate-50 text-center text-sm text-slate-500">
-            Affichage des 20 premières commandes sur {{ orders|length }} au total
+            Affichage des 20 commandes validées les plus récentes sur {{ validated_orders|length }}
         </div>
         {% endif %}
     </div>
@@ -306,42 +332,39 @@
             </h3>
         </div>
         <div class="p-5">
+            {% set code_options = article_code_options() %}
             <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Type papier</label>
+                    <label for="gen_paper_type" class="block text-sm font-medium text-slate-700 mb-1">Type papier</label>
                     <select id="gen_paper_type" class="input-pro">
-                        <option value="KB">Kraft Blanchi (KB)</option>
-                        <option value="KE">Kraft Écru (KE)</option>
+                        {% for option in code_options.paper_types %}
+                        <option value="{{ option.value }}">{{ option.label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Grammage (g/m²)</label>
+                    <label for="gen_grammage" class="block text-sm font-medium text-slate-700 mb-1">Grammage (g/m²)</label>
                     <select id="gen_grammage" class="input-pro">
-                        <option value="60">60</option>
-                        <option value="70">70</option>
-                        <option value="80">80</option>
-                        <option value="100" selected>100</option>
-                        <option value="120">120</option>
+                        {% for option in code_options.grammages %}
+                        <option value="{{ option.value }}"{% if option.value == '100' %} selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Laize (cm)</label>
+                    <label for="gen_laize" class="block text-sm font-medium text-slate-700 mb-1">Laize (cm)</label>
                     <select id="gen_laize" class="input-pro">
-                        <option value="20">20</option>
-                        <option value="25">25</option>
-                        <option value="28" selected>28</option>
-                        <option value="30">30</option>
-                        <option value="35">35</option>
-                        <option value="40">40</option>
+                        {% for option in code_options.laizes %}
+                        <option value="{{ option.value }}"{% if option.value == '28' %} selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Fournisseur</label>
+                    <label for="gen_supplier" class="block text-sm font-medium text-slate-700 mb-1">Fournisseur</label>
                     <select id="gen_supplier" class="input-pro">
                         <option value="">Sans</option>
-                        <option value="MON">MONDI</option>
-                        <option value="NOR">NORDIC</option>
-                        <option value="BIL">BILLERUD</option>
+                        {% for option in code_options.suppliers %}
+                        <option value="{{ option.value }}">{{ option.label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div>
@@ -362,14 +385,37 @@
 
 {% block scripts %}
 <script>
-function generateCode() {
-    const paperType = document.getElementById('gen_paper_type').value;
-    const grammage = document.getElementById('gen_grammage').value;
-    const laize = document.getElementById('gen_laize').value;
-    const supplier = document.getElementById('gen_supplier').value;
-    
-    const code = `${paperType}${grammage}L${laize}${supplier}`;
-    document.getElementById('gen_result').value = code;
+// Le code article est construit par le serveur (/api/article-code/generate), avec les mêmes
+// règles que les codes enregistrés sur les commandes.
+let codeRequest = 0;
+
+async function generateCode() {
+    const requestNumber = ++codeRequest;
+    const payload = {
+        paper_type: document.getElementById('gen_paper_type').value,
+        grammage: document.getElementById('gen_grammage').value,
+        laize: document.getElementById('gen_laize').value,
+        supplier: document.getElementById('gen_supplier').value || null
+    };
+    try {
+        const response = await fetch('/api/article-code/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (requestNumber !== codeRequest) {
+            return;  // une demande plus récente a été envoyée entre-temps
+        }
+        if (data.success) {
+            document.getElementById('gen_result').value = data.code;
+        } else {
+            document.getElementById('gen_result').value = '';
+            showNotification(`Erreur: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Erreur: ${error.message}`, 'error');
+    }
 }
 
 // Auto-generate on change
@@ -385,6 +431,17 @@ function copyCode() {
     navigator.clipboard.writeText(code);
     showNotification('Code copié!', 'success');
 }
+
+// L'export SAGE X3 ne contient que les commandes validées : son bouton n'est actif que pour ce statut.
+function updateSageButton() {
+    const status = document.getElementById('export_status').value;
+    const button = document.getElementById('exportSageButton');
+    button.disabled = status !== 'validee';
+    button.title = button.disabled ? "L'export SAGE X3 ne contient que les commandes validées : utilisez le CSV pour ce statut." : '';
+}
+
+document.getElementById('export_status').addEventListener('change', updateSageButton);
+updateSageButton();
 
 function exportSage() {
     const form = document.getElementById('exportForm');

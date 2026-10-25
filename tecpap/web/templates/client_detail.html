@@ -2,13 +2,13 @@
 
 {% block title %}{{ client.nom }} - TECPAP{% endblock %}
 {% block page_title %}Détail Client{% endblock %}
-{% block breadcrumb %}<span class="mx-2">/</span><a href="/clients" class="hover:text-brand-600">Clients</a><span class="mx-2">/</span><span>{{ client.nom }}</span>{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><a href="{{ url_for('pages.clients_page') }}" class="hover:text-brand-600">Clients</a><span class="mx-2">/</span><span>{{ client.nom }}</span>{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
     <div class="flex items-center gap-4">
-        <a href="/clients" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
-            <i class="fas fa-arrow-left text-slate-600"></i>
+        <a href="{{ url_for('pages.clients_page') }}" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition" aria-label="Retour à la liste des clients">
+            <i class="fas fa-arrow-left text-slate-600" aria-hidden="true"></i>
         </a>
         <div class="flex items-center gap-4">
             <div class="w-16 h-16 bg-brand-100 rounded-xl flex items-center justify-center">
@@ -16,7 +16,9 @@
             </div>
             <div>
                 <h2 class="text-2xl font-bold text-slate-800">{{ client.nom or 'Client' }}</h2>
-                <p class="text-slate-500">{{ client.entreprise or 'Entreprise non spécifiée' }}</p>
+                {% if client.created_at %}
+                <p class="text-slate-500">Client depuis le {{ client.created_at|format_date }}</p>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -41,10 +43,10 @@
                         <tbody>
                             {% for order in orders %}
                             <tr>
-                                <td><a href="/orders/{{ order.id }}" class="text-brand-600 font-medium">{{ order.numero_commande or '#' ~ order.id }}</a></td>
+                                <td><a href="{{ url_for('pages.order_detail', order_id=order.id) }}" class="text-brand-600 font-medium">{{ order|order_reference }}</a></td>
                                 <td>{{ order.produit_type or 'N/A' }}</td>
-                                <td>{{ "{:,.0f}".format(order.quantite or 0) }} {{ order.unite or '' }}</td>
-                                <td>{{ order.created_at[:10] if order.created_at else 'N/A' }}</td>
+                                <td>{{ order.quantite|format_quantity(order.unite) }}</td>
+                                <td>{{ order.created_at|format_date if order.created_at else 'N/A' }}</td>
                                 <td>
                                     {% if order.statut == 'en_attente' %}
                                     <span class="badge badge-pending">En attente</span>
@@ -64,25 +66,78 @@
             </div>
         </div>
 
-        <div class="card p-5">
-            <h3 class="font-bold text-slate-800 mb-4">Informations</h3>
-            <div class="space-y-4">
-                {% if client.email %}
-                <div class="flex items-center gap-3">
-                    <i class="fas fa-envelope text-slate-400 w-5"></i>
-                    <span class="text-slate-700">{{ client.email }}</span>
+        <div class="space-y-6">
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4">Informations</h3>
+                <div class="space-y-4">
+                    {% if client.email %}
+                    <div class="flex items-center gap-3">
+                        <i class="fas fa-envelope text-slate-400 w-5" aria-hidden="true"></i>
+                        <span class="text-slate-700">{{ client.email }}</span>
+                    </div>
+                    {% endif %}
+                    {% if client.telephone %}
+                    <div class="flex items-center gap-3">
+                        <i class="fas fa-phone text-slate-400 w-5" aria-hidden="true"></i>
+                        <span class="text-slate-700">{{ client.telephone }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="pt-4 border-t border-slate-100">
+                        <p class="text-sm text-slate-500">Total commandes</p>
+                        <p class="text-2xl font-bold text-slate-800">{{ orders|length }}</p>
+                    </div>
                 </div>
+            </div>
+
+            <!-- Estimation de la prochaine commande -->
+            <div class="card p-5" id="clientPrediction">
+                <h3 class="font-bold text-slate-800 mb-1">Prochaine commande estimée</h3>
+                <p class="text-xs text-slate-400 mb-4">Calculée par des règles fixes à partir de l'historique du client.</p>
+                {% if prediction %}
+                <dl class="space-y-3 text-sm">
+                    {% if prediction.next_order_date %}
+                    <div>
+                        <dt class="text-slate-500">Date estimée</dt>
+                        <dd class="font-semibold text-slate-800" id="predictedDate">vers le {{ prediction.next_order_date|format_date }}</dd>
+                    </div>
+                    {% endif %}
+                    {% if prediction.predicted_next_order_days %}
+                    <div>
+                        <dt class="text-slate-500">Intervalle moyen entre deux commandes</dt>
+                        <dd class="font-semibold text-slate-800">{{ prediction.predicted_next_order_days|format_quantity }} jour{% if prediction.predicted_next_order_days > 1 %}s{% endif %}</dd>
+                    </div>
+                    {% endif %}
+                    {% if prediction.predicted_quantity %}
+                    <div>
+                        <dt class="text-slate-500">Quantité moyenne par commande</dt>
+                        <dd class="font-semibold text-slate-800" id="predictedQuantity">{{ prediction.predicted_quantity|round(0)|format_quantity }}</dd>
+                    </div>
+                    {% endif %}
+                    {% if prediction.likely_products %}
+                    <div>
+                        <dt class="text-slate-500">Produits les plus commandés</dt>
+                        <dd>
+                            <ul class="mt-1 space-y-1">
+                                {% for product in prediction.likely_products %}
+                                <li class="text-slate-800">{{ product }}</li>
+                                {% endfor %}
+                            </ul>
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% if prediction.value_label %}
+                    <div>
+                        <dt class="text-slate-500">Valeur du client (montant total commandé)</dt>
+                        <dd class="font-semibold text-slate-800">{{ prediction.value_label }}</dd>
+                    </div>
+                    {% endif %}
+                </dl>
+                {% if not prediction.next_order_date %}
+                <p class="text-xs text-slate-400 mt-4">Il faut au moins deux commandes passées à des jours différents pour estimer la date de la prochaine.</p>
                 {% endif %}
-                {% if client.telephone %}
-                <div class="flex items-center gap-3">
-                    <i class="fas fa-phone text-slate-400 w-5"></i>
-                    <span class="text-slate-700">{{ client.telephone }}</span>
-                </div>
+                {% else %}
+                <p class="text-sm text-slate-400">Aucune commande&nbsp;: pas d'estimation possible.</p>
                 {% endif %}
-                <div class="pt-4 border-t border-slate-100">
-                    <p class="text-sm text-slate-500">Total commandes</p>
-                    <p class="text-2xl font-bold text-slate-800">{{ orders|length }}</p>
-                </div>
             </div>
         </div>
     </div>

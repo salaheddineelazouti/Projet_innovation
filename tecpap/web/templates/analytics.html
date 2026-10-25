@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
 
-{% block title %}Analytics - TECPAP{% endblock %}
-{% block page_title %}Statistiques & Analytics{% endblock %}
-{% block breadcrumb %}<span class="mx-2">/</span><span>Analytics</span>{% endblock %}
+{% block title %}Statistiques - TECPAP{% endblock %}
+{% block page_title %}Statistiques{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Statistiques</span>{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
@@ -27,7 +27,8 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm text-slate-500">Commandes ce mois</p>
-                    <p class="text-2xl font-bold text-brand-600 mt-1">{{ stats.total_orders }}</p>
+                    <p class="text-2xl font-bold text-brand-600 mt-1">{{ stats.orders_this_month|format_quantity }}</p>
+                    <p class="text-xs text-slate-400 mt-1">{{ stats.total_orders|format_quantity }} au total</p>
                 </div>
                 <div class="w-12 h-12 bg-brand-100 rounded-xl flex items-center justify-center">
                     <i class="fas fa-shopping-cart text-brand-600"></i>
@@ -38,7 +39,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm text-slate-500">En attente</p>
-                    <p class="text-2xl font-bold text-amber-600 mt-1">{{ stats.pending_orders }}</p>
+                    <p class="text-2xl font-bold text-amber-600 mt-1">{{ stats.pending_orders|format_quantity }}</p>
                 </div>
                 <div class="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
                     <i class="fas fa-clock text-amber-600"></i>
@@ -48,8 +49,8 @@
         <div class="card p-5">
             <div class="flex items-center justify-between">
                 <div>
-                    <p class="text-sm text-slate-500">Clients actifs</p>
-                    <p class="text-2xl font-bold text-violet-600 mt-1">{{ stats.total_clients }}</p>
+                    <p class="text-sm text-slate-500">Clients enregistrés</p>
+                    <p class="text-2xl font-bold text-violet-600 mt-1">{{ stats.total_clients|format_quantity }}</p>
                 </div>
                 <div class="w-12 h-12 bg-violet-100 rounded-xl flex items-center justify-center">
                     <i class="fas fa-users text-violet-600"></i>
@@ -93,15 +94,15 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="p-4 bg-slate-50 rounded-lg">
                     <div class="flex items-center gap-3 mb-3">
-                        <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-                            <i class="fas fa-chart-line text-emerald-600"></i>
+                        <div class="w-10 h-10 bg-rose-100 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-times-circle text-rose-600"></i>
                         </div>
-                        <h4 class="font-semibold text-slate-800">Taux de conversion</h4>
+                        <h4 class="font-semibold text-slate-800">Taux de rejet</h4>
                     </div>
-                    <p class="text-3xl font-bold text-emerald-600">
-                        {% if stats.total_orders > 0 %}{{ ((stats.validated_orders / stats.total_orders) * 100)|round|int }}%{% else %}0%{% endif %}
+                    <p class="text-3xl font-bold text-rose-600">
+                        {% if stats.total_orders > 0 %}{{ ((stats.rejected_orders / stats.total_orders) * 100)|round|int }}%{% else %}0%{% endif %}
                     </p>
-                    <p class="text-sm text-slate-500 mt-1">Commandes validées / Total</p>
+                    <p class="text-sm text-slate-500 mt-1">Commandes rejetées / Total</p>
                 </div>
                 <div class="p-4 bg-slate-50 rounded-lg">
                     <div class="flex items-center gap-3 mb-3">
@@ -110,7 +111,7 @@
                         </div>
                         <h4 class="font-semibold text-slate-800">En attente</h4>
                     </div>
-                    <p class="text-3xl font-bold text-amber-600">{{ stats.pending_orders }}</p>
+                    <p class="text-3xl font-bold text-amber-600">{{ stats.pending_orders|format_quantity }}</p>
                     <p class="text-sm text-slate-500 mt-1">Commandes à traiter</p>
                 </div>
             </div>

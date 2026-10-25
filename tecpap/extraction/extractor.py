@@ -25,19 +25,23 @@ par l'équipe commerciale.
    (:func:`tecpap.extraction.rules.detect_reorder`) décident d'abord ; le modèle léger n'est
    consulté que si elles ne trouvent rien dans un texte assez long pour être ambigu
    (:data:`REORDER_MODEL_MIN_CHARS`) ;
-6. pour un renouvellement, la dernière commande du client est cherchée en base par des requêtes
-   SQL fixes et paramétrées (le modèle ne reçoit jamais d'accès libre à la base) et seuls les
-   champs manquants sont complétés depuis cet historique ;
+6. pour un renouvellement, la dernière commande validée envoyée par le même expéditeur (même
+   adresse email, ou même numéro WhatsApp) est cherchée en base par des requêtes SQL fixes et
+   paramétrées (le modèle ne reçoit jamais d'accès libre à la base), et seuls les champs
+   manquants sont complétés depuis cette commande (voir :meth:`DataExtractor.fill_from_history`).
+   Le nom d'un client cité dans le message ne donne jamais accès à l'historique de ce client :
+   sans commande validée de l'expéditeur, l'anomalie :data:`REORDER_WITHOUT_HISTORY_ANOMALY`
+   demande à l'équipe commerciale de compléter la commande ;
 7. un code article SAGE X3 est calculé par des règles fixes s'il n'a pas été trouvé ;
 8. :func:`tecpap.extraction.rules.normalize_order` normalise les champs, rédige les anomalies,
    liste les champs obligatoires manquants et calcule la confiance ; chaque anomalie du
-   traitement (contenu suspect, extraction par règles) retire à son tour
-   :data:`~tecpap.extraction.rules.ANOMALY_PENALTY` points.
+   traitement (contenu suspect, extraction par règles, renouvellement sans historique) retire à
+   son tour :data:`~tecpap.extraction.rules.ANOMALY_PENALTY` points.
 
 Sans modèle de langue (clé d'API absente) ou quand l'appel échoue, l'extraction par règles
 (:func:`tecpap.extraction.rules.rule_based_extract`) prend le relais avec l'anomalie
 :data:`RULES_FALLBACK_ANOMALY` : la commande arrive quand même au tableau de bord, où l'équipe
-commerciale vérifie tous les champs.
+commerciale vérifie tous les champs ; sa confiance ne dépasse jamais :data:`RULES_MAX_CONFIDENCE`.
 
 Le résultat contient, en plus des champs de la commande : ``langue`` (code de
 :func:`~tecpap.nlp.language.detect_language`), ``modele_llm`` (``None`` pour l'extraction par
@@ -53,7 +57,8 @@ import os
 import threading
 import unicodedata
 from collections.abc import Callable, Mapping
-from datetime import date
+from datetime import date, datetime, timezone
+from email.utils import parseaddr
 from typing import Any
 
 from tecpap.catalog import ALL_REORDER_PATTERNS, COMPANY_INFO, PRODUCT_TYPES
@@ -71,9 +76,12 @@ from tecpap.extraction.rules import (
     detect_reorder,
     extract_client_name,
     normalize_order,
+    normalize_phone,
+    normalize_product_type,
     rule_based_extract,
 )
 from tecpap.extraction.schema import parse_llm_order
+from tecpap.formatting import resolve_timezone
 from tecpap.llm.client import LLMClient
 from tecpap.llm.router import ModelRouter
 from tecpap.nlp.language import detect_language
@@ -91,10 +99,13 @@ __all__ = [
     "PROCESSING_ANOMALIES",
     "PRODUCT_TYPES",
     "REORDER_PATTERNS",
+    "REORDER_WITHOUT_HISTORY_ANOMALY",
     "RULES_FALLBACK_ANOMALY",
+    "RULES_MAX_CONFIDENCE",
     "DataExtractor",
     "auto_generate_article_code",
     "build_message_content",
+    "sender_identity",
 ]
 
 REORDER_PATTERNS: list[str] = list(ALL_REORDER_PATTERNS)
@@ -122,7 +133,23 @@ PROCESSING_ANOMALIES: frozenset[str] = frozenset({INJECTION_ANOMALY, RULES_FALLB
 RULES_ROUTING_REASON = "Extraction par règles : aucun modèle de langue disponible pour ce message."
 """Raison enregistrée dans ``routage_modele`` pour une extraction par règles."""
 
-# Champs complétés depuis la dernière commande du client lors d'un renouvellement :
+RULES_MAX_CONFIDENCE = 50
+"""Confiance maximale d'une commande extraite par règles seules.
+
+Le calcul de :func:`~tecpap.extraction.rules.normalize_order` mesure seulement que les champs
+obligatoires sont remplis ; sans modèle de langue, rien ne recoupe leurs valeurs (le contrôle par
+les règles relirait le même texte avec les mêmes règles). La confiance reste donc sous le seuil
+des alertes de confiance faible du tableau de bord (60 %) et sous celle de toute extraction par
+le modèle, quelle que soit la complétude.
+"""
+
+REORDER_WITHOUT_HISTORY_ANOMALY = (
+    "Renouvellement demandé, mais aucune commande validée de cet expéditeur à reprendre : "
+    "commande à compléter par l'équipe commerciale."
+)
+"""Anomalie d'un renouvellement que l'historique de l'expéditeur ne permet pas de compléter."""
+
+# Champs complétés depuis la dernière commande validée de l'expéditeur lors d'un renouvellement :
 # champ de la commande extraite -> colonne de la commande en base.
 HISTORY_FIELDS = {
     "type_produit": "produit_type",
@@ -134,6 +161,12 @@ HISTORY_FIELDS = {
     "devise": "devise",
 }
 
+PRODUCT_HISTORY_FIELDS = frozenset({"nature_produit", "prix_unitaire", "prix_total"})
+"""Champs de l'historique propres au produit commandé : ils ne sont pas repris pour un autre type de produit."""
+
+SENDER_HISTORY_LIMIT = 50
+"""Nombre maximal de commandes validées de l'expéditeur lues pour un renouvellement."""
+
 # Score minimal de recouvrement des mots pour rapprocher un nom cité d'un client connu.
 CLIENT_MATCH_THRESHOLD = 0.3
 
@@ -143,11 +176,31 @@ CHANNELS = ("email", "whatsapp")
 """Canaux d'origine d'un message, enregistrés dans le journal des événements de sécurité."""
 
 
+def company_today() -> date:
+    """Date du jour dans le fuseau horaire de l'entreprise (Casablanca), quel que soit celui du serveur."""
+    return datetime.now(timezone.utc).astimezone(resolve_timezone()).date()
+
+
 def _as_bool(value: Any) -> bool:
     """Interprète un booléen renvoyé par le modèle (``true``, ``"true"``, ``"oui"``…)."""
     if isinstance(value, bool):
         return value
     return value is not None and str(value).strip().lower() in TRUE_WORDS
+
+
+def sender_identity(sender: str | None, channel: str) -> str | None:
+    """Forme comparable d'un expéditeur, ou ``None`` quand elle est illisible.
+
+    Canal email : adresse de l'en-tête ``From`` sans le nom affiché, en minuscules
+    (« Achats <Achats@Atlas.ma> » → « achats@atlas.ma »). Canal WhatsApp : numéro au format
+    international (:func:`tecpap.extraction.rules.normalize_phone`).
+    """
+    if not isinstance(sender, str) or not sender.strip():
+        return None
+    if channel == "email":
+        address = parseaddr(sender)[1].strip().lower()
+        return address if "@" in address else None
+    return normalize_phone(sender)
 
 
 def auto_generate_article_code(extracted_data: dict[str, Any]) -> str | None:
@@ -207,8 +260,8 @@ class DataExtractor:
         router: choix des modèles ; par défaut construit depuis ``settings``.
         embedder: calcul des plongements des exemples ; par défaut celui de la configuration
             (:func:`tecpap.rag.retriever.build_embedder`).
-        clock: date du jour (dates sans année, dates de livraison passées) ; par défaut la date
-            du système.
+        clock: date du jour (dates sans année, dates de livraison passées) ; par défaut la date du
+            jour à Casablanca (:func:`company_today`).
     """
 
     def __init__(self, db_manager: Any = None, settings: Settings | None = None, llm: LLMClient | None = None,
@@ -221,7 +274,7 @@ class DataExtractor:
         self.router = router if router is not None else ModelRouter(self.settings)
         self.db = db_manager
         self._embedder = embedder
-        self._clock = clock or date.today
+        self._clock = clock or company_today
         self._local = threading.local()
 
     def set_database(self, db_manager: Any) -> None:
@@ -291,7 +344,9 @@ class DataExtractor:
         """Renvoie le nom du client connu le plus proche de ``search_name``, ou ``None``.
 
         Le score est la part de mots communs (rapportée au nom le plus long), augmentée de 0,3
-        quand un mot de plus de trois lettres du nom cherché figure dans le nom du client.
+        quand un mot de plus de trois lettres du nom cherché figure dans le nom du client. Ce
+        rapprochement n'attribue jamais une commande ni ne donne accès à un historique : il sert
+        seulement à signaler un client proche à l'équipe commerciale.
         """
         connection = self._connection()
         if connection is None:
@@ -324,50 +379,94 @@ class DataExtractor:
             return best_match["nom"]
         return None
 
-    def get_client_last_order(self, client_name: str) -> dict[str, Any] | None:
-        """Renvoie la dernière commande validée du client, à défaut sa dernière commande."""
-        connection = self._connection()
-        if connection is None:
-            return None
+    def _sender_validated_orders(self, sender: str | None, channel: str) -> list[dict[str, Any]]:
+        """Commandes validées envoyées par ``sender`` (même adresse email ou même numéro), la plus récente d'abord.
 
-        matched_name = self.find_matching_client(client_name)
-        if matched_name:
-            client_name = matched_name
-
-        cursor = connection.cursor()
-        base_query = """
-            SELECT c.*, p.type as produit_type, cl.nom as client_nom
-            FROM commandes c
-            LEFT JOIN clients cl ON c.client_id = cl.id
-            LEFT JOIN produits p ON c.produit_id = p.id
-            WHERE cl.nom LIKE ?
+        La requête SQL est fixe et paramétrée ; elle présélectionne les lignes, puis l'expéditeur
+        de chacune est comparé exactement à ``sender`` (adresse sans nom affiché ni casse, ou
+        numéro au format international).
         """
-        cursor.execute(
-            base_query + " AND c.statut = 'validee' ORDER BY c.validated_at DESC, c.created_at DESC LIMIT 1",
-            (f"%{client_name}%",),
-        )
-        result = cursor.fetchone()
-        if result:
-            return dict(result)
+        connection = self._connection()
+        identity = sender_identity(sender, channel)
+        if connection is None or identity is None:
+            return []
+        if channel == "email":
+            column, needle, searched = "email_from", identity, "LOWER(COALESCE(c.email_from, ''))"
+        else:
+            # Les 9 derniers chiffres du numéro, cherchés dans la colonne sans séparateurs.
+            column, needle = "whatsapp_from", identity[-9:]
+            searched = "REPLACE(REPLACE(REPLACE(COALESCE(c.whatsapp_from, ''), ' ', ''), '-', ''), '.', '')"
+        # Fragments SQL choisis parmi des constantes ; les valeurs passent par des paramètres « ? ».
+        rows = connection.execute(
+            "SELECT c.*, p.type AS produit_type, cl.nom AS client_nom FROM commandes c "
+            "LEFT JOIN clients cl ON c.client_id = cl.id LEFT JOIN produits p ON c.produit_id = p.id "
+            f"WHERE c.statut = 'validee' AND INSTR({searched}, ?) > 0 "  # nosec B608
+            "ORDER BY COALESCE(c.validated_at, c.created_at) DESC, c.id DESC LIMIT ?",
+            (needle, SENDER_HISTORY_LIMIT),
+        ).fetchall()
+        return [dict(row) for row in rows if sender_identity(row[column], channel) == identity]
 
-        cursor.execute(base_query + " ORDER BY c.created_at DESC LIMIT 1", (f"%{client_name}%",))
-        result = cursor.fetchone()
-        return dict(result) if result else None
+    def get_sender_last_order(self, sender: str | None, channel: str,
+                              client_name: str | None = None) -> dict[str, Any] | None:
+        """Dernière commande validée envoyée par ``sender``, pour compléter un renouvellement.
+
+        Seules les commandes validées par l'équipe commerciale et envoyées depuis la même
+        adresse email (canal email) ou le même numéro (canal WhatsApp) sont lues : un message
+        qui cite le nom d'un autre client n'obtient jamais l'historique de ce client.
+
+        Args:
+            sender: expéditeur du message (en-tête ``From`` d'un email, numéro WhatsApp).
+            channel: « email » ou « whatsapp ».
+            client_name: client cité dans le message ; la commande retenue est alors la dernière
+                de l'expéditeur pour ce client (même nom sans casse ni accents, ou nom cité dont
+                tous les mots figurent dans le nom d'un seul des clients de l'expéditeur).
+
+        Returns:
+            La commande (colonnes de ``commandes``, ``produit_type`` et ``client_nom``), ou ``None``.
+        """
+        rows = self._sender_validated_orders(sender, channel)
+        if not rows or not client_name:
+            return rows[0] if rows else None
+        wanted = self._name_words(client_name)
+        exact = [row for row in rows if self._name_words(row.get("client_nom")) == wanted]
+        if exact:
+            return exact[0]
+        partial = [row for row in rows if wanted and wanted <= self._name_words(row.get("client_nom"))]
+        return partial[0] if len({row.get("client_id") for row in partial}) == 1 else None
+
+    def _name_words(self, name: str | None) -> frozenset[str]:
+        return frozenset(self.normalize_client_name(name).split())
 
     def fill_from_history(self, extracted_data: dict[str, Any], last_order: dict[str, Any] | None) -> dict[str, Any]:
         """Complète les champs vides de la commande avec ceux de la dernière commande du client.
 
-        Seuls les champs absents de l'extraction sont complétés ; la confiance déclarée par le
-        modèle est conservée telle quelle.
+        Seuls les champs absents de l'extraction sont complétés, et la confiance déclarée par le
+        modèle est conservée telle quelle. Deux règles évitent de reprendre une valeur qui ne
+        vaut plus :
+
+        - la désignation et les prix (:data:`PRODUCT_HISTORY_FIELDS`) ne sont repris que si le
+          type de produit extrait est absent ou identique à celui de la commande précédente ;
+        - le prix total n'est repris qu'avec la quantité : pour une autre quantité, il reste vide.
         """
         if not last_order:
             return extracted_data
 
+        new_type = extracted_data.get("type_produit")
+        old_type = last_order.get("produit_type")
+        same_product = not new_type or not old_type or (
+            (normalize_product_type(str(new_type)) or new_type) == (normalize_product_type(str(old_type)) or old_type))
+        quantity_from_history = not extracted_data.get("quantite")
+
         filled_fields = []
         for new_field, old_field in HISTORY_FIELDS.items():
-            if not extracted_data.get(new_field) and last_order.get(old_field):
-                extracted_data[new_field] = last_order[old_field]
-                filled_fields.append(new_field)
+            if extracted_data.get(new_field) or not last_order.get(old_field):
+                continue
+            if new_field in PRODUCT_HISTORY_FIELDS and not same_product:
+                continue
+            if new_field == "prix_total" and not quantity_from_history:
+                continue
+            extracted_data[new_field] = last_order[old_field]
+            filled_fields.append(new_field)
 
         if filled_fields:
             extracted_data["filled_from_history"] = True
@@ -397,22 +496,35 @@ class DataExtractor:
         logger.info("Renouvellement détecté par le modèle (indices : %s)", info.get("reorder_indicators", []))
         return True, info.get("client_name") or data.get("entreprise_cliente")
 
-    def _fill_reorder(self, data: dict[str, Any], client_name: str | None) -> dict[str, Any]:
-        """Complète un renouvellement depuis la dernière commande du client cité (requêtes SQL fixes)."""
-        if not client_name:
-            logger.info("Renouvellement sans nom de client : aucun historique consulté")
-            return data
-        last_order = self.get_client_last_order(client_name)
+    def _fill_reorder(self, data: dict[str, Any], client_name: str | None, *, sender: str | None, channel: str,
+                      anomalies: list[str]) -> dict[str, Any]:
+        """Complète un renouvellement depuis la dernière commande validée de l'expéditeur (requêtes SQL fixes).
+
+        Sans commande validée de l'expéditeur (pour le client cité, le cas échéant), aucun champ
+        n'est complété et l'anomalie :data:`REORDER_WITHOUT_HISTORY_ANOMALY` demande à l'équipe
+        commerciale de compléter la commande ; un client connu au nom proche du nom cité y est
+        mentionné.
+        """
+        last_order = self.get_sender_last_order(sender, channel, client_name)
         if not last_order:
-            logger.info("Aucun historique pour le client cité : extraction standard")
+            logger.info("Renouvellement sans commande validée de l'expéditeur : aucun champ complété")
+            anomalies.append(self._reorder_anomaly(client_name))
             return data
-        logger.info("Dernière commande retenue : %s",
+        logger.info("Dernière commande validée de l'expéditeur retenue : %s",
                     last_order.get("numero_commande") or f"ID-{last_order.get('id')}")
-        # Le nom exact enregistré en base remplace le nom approximatif cité dans le message.
-        data["entreprise_cliente"] = last_order.get("client_nom") or client_name
+        # Commande validée de l'expéditeur : le nom enregistré remplace le nom écrit dans le message.
+        if last_order.get("client_nom"):
+            data["entreprise_cliente"] = last_order["client_nom"]
         data = self.fill_from_history(data, last_order)
         data["est_bon_commande"] = True
         return data
+
+    def _reorder_anomaly(self, client_name: str | None) -> str:
+        """Anomalie d'un renouvellement sans historique, avec le client connu le plus proche du nom cité."""
+        close = self.find_matching_client(client_name) if client_name else None
+        if close:
+            return f"{REORDER_WITHOUT_HISTORY_ANOMALY} Client connu le plus proche du nom cité : « {close} »."
+        return REORDER_WITHOUT_HISTORY_ANOMALY
 
     # ------------------------------------------------------------------ exemples et sécurité
 
@@ -483,12 +595,11 @@ class DataExtractor:
     def assistant_extractor(self) -> Callable[[str, str], dict[str, Any] | None]:
         """Fonction ``extract(text, sender)`` attendue par :class:`tecpap.chatbot.bot.WhatsAppAssistant`.
 
-        L'historique des clients n'y est pas consulté, et le renouvellement n'y est lu que par les
-        règles (aucun appel au modèle de détection) : l'assistant renouvelle une commande avec
-        ses propres outils, limités aux commandes de l'expéditeur
-        (:meth:`tecpap.chatbot.tools.AssistantTools.last_validated_order_draft`). La recherche par
-        nom de client, qui ne dépend pas de l'expéditeur, ferait apparaître dans le récapitulatif
-        envoyé au client la dernière commande d'une autre entreprise citée dans le message.
+        L'historique n'y est pas consulté, et le renouvellement n'y est lu que par les règles
+        (aucun appel au modèle de détection) : l'assistant renouvelle une commande avec ses
+        propres outils, limités aux commandes de l'expéditeur
+        (:meth:`tecpap.chatbot.tools.AssistantTools.last_validated_order_draft`), et montre la
+        commande renouvelée au client avant de l'enregistrer.
         """
         def extract(text: str, sender: str) -> dict[str, Any] | None:
             if not isinstance(text, str) or not text.strip():
@@ -512,7 +623,7 @@ class DataExtractor:
         language = detect_language(text).code
         if not self.llm.available:
             logger.warning("Modèle de langue indisponible (clé OPENAI_API_KEY absente) : extraction par règles")
-            return self._rules_extraction(text, language, anomalies, use_history)
+            return self._rules_extraction(text, language, anomalies, use_history, sender=sender, channel=channel)
 
         choice = self.router.route("extraction", language)
         raw = self.llm.chat_json(
@@ -524,7 +635,7 @@ class DataExtractor:
         )
         if not isinstance(raw, dict):
             logger.error("Extraction en échec : réponse du modèle absente ou illisible ; extraction par règles")
-            return self._rules_extraction(text, language, anomalies, use_history)
+            return self._rules_extraction(text, language, anomalies, use_history, sender=sender, channel=channel)
 
         data = parse_llm_order(raw)
         reasons = [choice.reason]
@@ -533,15 +644,17 @@ class DataExtractor:
         is_reorder, client_name = self._reorder(text, language, data, reasons, use_model=use_history)
         data["is_reorder"] = is_reorder
         if is_reorder and use_history:
-            data = self._fill_reorder(data, client_name)
+            data = self._fill_reorder(data, client_name, sender=sender, channel=channel, anomalies=anomalies)
         return self._finish(data, text, language, choice.model, " ; ".join(reasons), anomalies)
 
-    def _rules_extraction(self, text: str, language: str, anomalies: list[str], use_history: bool) -> dict[str, Any]:
+    def _rules_extraction(self, text: str, language: str, anomalies: list[str], use_history: bool, *,
+                          sender: str | None, channel: str) -> dict[str, Any]:
         """Extraction de secours par règles, signalée par :data:`RULES_FALLBACK_ANOMALY`."""
         data = rule_based_extract(text, today=self._clock())
-        if data.get("is_reorder") and use_history:
-            data = self._fill_reorder(data, data.get("entreprise_cliente"))
         anomalies.append(RULES_FALLBACK_ANOMALY)
+        if data.get("is_reorder") and use_history:
+            data = self._fill_reorder(data, data.get("entreprise_cliente"), sender=sender, channel=channel,
+                                      anomalies=anomalies)
         return self._finish(data, text, language, None, RULES_ROUTING_REASON, anomalies)
 
     def _finish(self, data: dict[str, Any], text: str, language: str, model: str | None, reason: str,
@@ -557,9 +670,11 @@ class DataExtractor:
         order = result.data
         order.setdefault("est_bon_commande", False)
         order["is_reorder"] = bool(data.get("is_reorder"))
-        # Les anomalies du traitement (contenu suspect, extraction par règles) retirent les mêmes
-        # points de confiance que les anomalies des valeurs.
+        # Les anomalies du traitement (contenu suspect, extraction par règles, renouvellement sans
+        # historique) retirent les mêmes points de confiance que les anomalies des valeurs.
         confidence = max(0, result.confidence - ANOMALY_PENALTY * len(anomalies))
+        if model is None:
+            confidence = min(confidence, RULES_MAX_CONFIDENCE)
         order.update({
             "confiance": confidence,
             "langue": language,

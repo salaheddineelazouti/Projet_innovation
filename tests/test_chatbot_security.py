@@ -17,12 +17,13 @@ from __future__ import annotations
 import base64
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from tecpap.chatbot import bot as bot_module
-from tecpap.chatbot.bot import WhatsAppAssistant, routing_system_prompt
+from tecpap.chatbot.bot import BotReply, WhatsAppAssistant, routing_system_prompt
 from tecpap.chatbot.messages import LANGUAGES, TEMPLATE_KEYS, render
 from tecpap.chatbot.tools import AssistantTools
 from tecpap.config import Settings
@@ -75,10 +76,12 @@ class Chat:
     def __init__(self, assistant: WhatsAppAssistant, sender: str, clock: Clock):
         self.assistant, self.sender, self.clock = assistant, sender, clock
 
-    def send(self, text, *, media_kind: str | None = None):
+    def send(self, text, *, media_kind: str | None = None) -> BotReply:
         Chat.counter += 1
         self.clock.advance()
-        return self.assistant.handle(self.sender, text, message_sid=f"SMSEC{Chat.counter:06d}", media_kind=media_kind)
+        reply = self.assistant.handle(self.sender, text, message_sid=f"SMSEC{Chat.counter:06d}", media_kind=media_kind)
+        # Les quantités s'écrivent avec des espaces insécables (milliers, unité) : les tests comparent le texte lisible.
+        return replace(reply, text=reply.text.replace("\u202f", " ").replace("\u00a0", " "))
 
 
 class FakeKnowledgeBase:
@@ -217,15 +220,15 @@ class TestOtherSendersData:
         assert [order["reference"] for order in moroccan.my_recent_orders(10)] == ["MA-1"]
 
     @pytest.mark.parametrize("telephone", ["06 00 00 00 02", "+212600000002", "whatsapp:+212 6-00-00-00-02"])
-    def test_client_phone_link_is_scoped_to_the_linked_sender(self, db, telephone):
+    def test_client_phone_never_gives_access_to_other_orders_of_the_client(self, db, telephone):
         email_order = make_order(db, client="Boulangerie Nour", numero_commande="EM-1", email_from="achat@exemple.ma")
         db.connection.execute("UPDATE clients SET telephone = ? WHERE nom = 'Boulangerie Nour'", (telephone,))
-        make_order(db, client="Boulangerie Nour", whatsapp_from=BOB, status="validee")
+        own_order = make_order(db, client="Boulangerie Nour", whatsapp_from=BOB, status="validee")
+        for sender in (*BOB_SENDER_FORMS, *ALICE_SENDER_FORMS):
+            tools = AssistantTools(db.connection, db, sender)
+            assert tools.my_order_status("EM-1") is None and tools.my_order_status(str(email_order)) is None
         for sender in BOB_SENDER_FORMS:
-            assert AssistantTools(db.connection, db, sender).my_order_status("EM-1")["reference"] == "EM-1"
-        for sender in ALICE_SENDER_FORMS:
-            alice = AssistantTools(db.connection, db, sender)
-            assert alice.my_order_status("EM-1") is None and alice.my_order_status(str(email_order)) is None
+            assert AssistantTools(db.connection, db, sender).my_order_status(str(own_order)) is not None
 
     def test_tool_arguments_cannot_change_the_sender(self, db, bob_orders):
         alice = AssistantTools(db.connection, db, ALICE)

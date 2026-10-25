@@ -1,0 +1,10 @@
+# Mise à jour des actions GitHub des workflows. Elles sont désignées par l'empreinte de leur
+# commit : Dependabot propose chaque semaine l'empreinte de la dernière version, avec le numéro
+# de cette version en commentaire.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

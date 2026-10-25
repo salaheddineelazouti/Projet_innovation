@@ -2,24 +2,35 @@
 
 Usage :
     python evaluation/run_eval.py                 évaluation hors ligne des deux partitions
-    python evaluation/run_eval.py --split test    évaluation hors ligne d'une seule partition
+    python evaluation/run_eval.py --split dev     évaluation hors ligne d'une seule partition
     python evaluation/run_eval.py --online        extraction complète par le modèle de langue
-    python evaluation/run_eval.py --split dev --dataset FICHIER --output-dir DOSSIER --date AAAA-MM-JJ
+    python evaluation/run_eval.py --split dev --dataset FICHIER [--dataset FICHIER ...]
+                                  --output-dir DOSSIER --date AAAA-MM-JJ
 
 Le corpus annoté est réparti en deux partitions (« split dev/test ») au format JSON Lines (un
 objet JSON par ligne) :
 
-- ``dev``, ``evaluation/dataset/messages.jsonl`` : jeu de développement, dont les erreurs servent
-  à écrire et à ajuster les règles, les listes de mots-clés et les seuils ;
+- ``dev``, jeu de développement, formé de ``evaluation/dataset/messages.jsonl`` et de
+  ``evaluation/dataset/messages_dev_complement.jsonl`` : ses erreurs servent à écrire et à
+  ajuster les règles, les listes de mots-clés et les seuils ;
 - ``test``, ``evaluation/dataset/messages_test.jsonl`` : jeu de test tenu à l'écart, qui ne sert
   jamais au réglage et mesure la qualité des composants sur des messages qui n'ont pas servi à
   les mettre au point.
 
+Les fichiers d'une partition sont évalués comme un seul jeu : un identifiant ne peut figurer que
+dans un fichier, et le rapport donne les mesures de l'ensemble puis celles de chaque fichier.
+
 Chaque élément associe à un message ses valeurs de référence, appelées étiquettes (schéma dans
 ``evaluation/README.md``). Chaque composant reçoit le texte du message ; sa sortie est comparée
 à l'étiquette. Sans option ``--split``, les deux partitions sont évaluées ; ``--split`` limite
-l'évaluation à une partition, et ``--dataset`` (qui demande ``--split``) remplace le fichier de
-cette partition.
+l'évaluation à une partition, et ``--dataset`` (qui demande ``--split``) remplace les fichiers
+de cette partition. L'option se répète pour former un jeu de développement de plusieurs
+fichiers ; le jeu de test tient en un seul fichier.
+
+Le rapport du jeu de test ne contient que des effectifs et des mesures agrégés : il ne cite ni
+identifiant, ni texte, ni étiquette attendue d'un élément, pour que sa lecture ne puisse pas
+guider le réglage des composants (``evaluation/README.md``, section 9.2). Le rapport du jeu de
+développement liste en plus les éléments mal classés, avec les valeurs attendues et obtenues.
 
 Évaluation hors ligne (par défaut), sans réseau ni modèle de langue :
 
@@ -68,7 +79,8 @@ et ``rapport_en_ligne_<partition>.json``. Quand les deux partitions sont évalu�
 ``synthese.md`` compare leurs mesures une à une, avec leurs intervalles de confiance. Les
 rapports Markdown sont rédigés à partir des dictionnaires écrits dans les JSON, si bien que les
 fichiers portent les mêmes chiffres. À données et code identiques, seule la date d'exécution
-change d'une exécution hors ligne à l'autre.
+change d'une exécution hors ligne à l'autre. La console n'affiche que les chemins écrits et les
+lignes de synthèse, et le journal ne cite aucun élément du jeu de test.
 
 Codes de sortie : 0 succès, 1 jeu de données ou configuration invalide (aucun rapport n'est
 alors écrit), 2 évaluation en ligne sans clé d'API ou option invalide.
@@ -86,9 +98,9 @@ import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
@@ -124,11 +136,11 @@ TEST_SPLIT = "test"
 SPLITS: tuple[str, ...] = (DEV_SPLIT, TEST_SPLIT)
 """Partitions du corpus annoté, dans l'ordre des rapports et de la synthèse."""
 
-SPLIT_DATASETS: Mapping[str, Path] = MappingProxyType({
-    DEV_SPLIT: DATASET_DIR / "messages.jsonl",
-    TEST_SPLIT: DATASET_DIR / "messages_test.jsonl",
+SPLIT_DATASETS: Mapping[str, tuple[Path, ...]] = MappingProxyType({
+    DEV_SPLIT: (DATASET_DIR / "messages.jsonl", DATASET_DIR / "messages_dev_complement.jsonl"),
+    TEST_SPLIT: (DATASET_DIR / "messages_test.jsonl",),
 })
-"""Fichier de chaque partition."""
+"""Fichiers de chaque partition, dans l'ordre de lecture et des rapports."""
 
 SPLIT_LABELS: Mapping[str, str] = MappingProxyType({
     DEV_SPLIT: "jeu de développement",
@@ -147,6 +159,20 @@ SPLIT_USES: Mapping[str, str] = MappingProxyType({
 SPLITS_DEFINITION = ("Le corpus annoté est réparti en deux partitions (« split dev/test ») : le jeu de développement "
                      "(`dev`) et le jeu de test tenu à l'écart (`test`).")
 DATASET_WITHOUT_SPLIT = "l'option --dataset demande --split dev ou --split test"
+REPEATED_TEST_DATASET = "le jeu de test tient en un seul fichier : --dataset ne se répète qu'avec --split dev"
+
+DETAILED_SPLITS = frozenset({DEV_SPLIT})
+"""Partitions dont les rapports listent les éléments mal classés ; les autres n'ont que des chiffres agrégés."""
+
+ITEM_DETAIL_LISTS = frozenset({"errors", "reply_errors", "false_positives", "false_negatives", "failures"})
+"""Clés des listes propres aux éléments (identifiants, valeurs attendues et obtenues) dans un rapport JSON."""
+
+EXTREME_SCORE_KEYS = frozenset({"max_legitimate_score", "min_injection_score"})
+"""Clés des scores extrêmes de la détection d'injection, accompagnés de l'identifiant de l'élément."""
+
+AGGREGATE_ONLY_NOTE = ("Ce rapport ne donne que des effectifs et des mesures agrégés : il ne cite ni identifiant, ni "
+                       "texte, ni étiquette attendue d'un élément du jeu, pour que sa lecture ne puisse pas guider le "
+                       "réglage des composants (`evaluation/README.md`, section 8.4).")
 
 EXIT_OK = 0
 EXIT_INVALID_INPUT = 1
@@ -229,13 +255,17 @@ class DatasetError(ValueError):
 
 @dataclass(frozen=True)
 class DatasetItem:
-    """Élément du jeu annoté : message et étiquettes attendues."""
+    """Élément du jeu annoté : message et étiquettes attendues.
+
+    Le texte et les étiquettes sont exclus de ``repr`` : un message d'échec d'assertion ou une
+    trace d'exception ne montre que l'identifiant, la catégorie et le canal de l'élément.
+    """
 
     id: str
     category: str
     channel: str
-    text: str
-    expected: Mapping[str, Any]
+    text: str = field(repr=False)
+    expected: Mapping[str, Any] = field(repr=False)
 
     @property
     def language(self) -> str:
@@ -336,8 +366,13 @@ def _parse_line(line: str, number: int) -> DatasetItem:
                        expected=MappingProxyType(dict(raw["expected"])))
 
 
-def load_dataset(path: Path | str) -> list[DatasetItem]:
-    """Lit et contrôle le jeu annoté (JSON Lines, UTF-8) ; les lignes vides sont ignorées.
+def load_dataset(path: Path | str, *, known_ids: Mapping[str, str] | None = None) -> list[DatasetItem]:
+    """Lit et contrôle un fichier du jeu annoté (JSON Lines, UTF-8) ; les lignes vides sont ignorées.
+
+    Args:
+        path: fichier à lire.
+        known_ids: identifiants déjà lus dans d'autres fichiers de la même partition, avec le
+            nom de leur fichier ; un identifiant de cette liste est refusé.
 
     Raises:
         FileNotFoundError: fichier absent.
@@ -348,7 +383,8 @@ def load_dataset(path: Path | str) -> list[DatasetItem]:
     try:
         lines = path.read_text(encoding="utf-8-sig").splitlines()
     except UnicodeDecodeError as exc:
-        raise DatasetError(f"{path.name} : fichier non encodé en UTF-8 (octet {exc.start})") from exc
+        raise DatasetError(f"fichier non encodé en UTF-8 (octet {exc.start})") from exc
+    known_ids = known_ids or {}
     items: list[DatasetItem] = []
     seen: set[str] = set()
     for number, line in enumerate(lines, start=1):
@@ -357,11 +393,48 @@ def load_dataset(path: Path | str) -> list[DatasetItem]:
         item = _parse_line(line, number)
         if item.id in seen:
             raise DatasetError(f"ligne {number} : identifiant {item.id!r} déjà utilisé")
+        if item.id in known_ids:
+            raise DatasetError(f"ligne {number} : identifiant {item.id!r} déjà utilisé dans {known_ids[item.id]}")
         seen.add(item.id)
         items.append(item)
     if not items:
-        raise DatasetError(f"{path.name} : aucun élément")
+        raise DatasetError("aucun élément")
     return items
+
+
+@dataclass(frozen=True)
+class DatasetFile:
+    """Fichier d'une partition et ses éléments, dans l'ordre du fichier."""
+
+    path: Path
+    items: tuple[DatasetItem, ...] = field(repr=False)
+
+
+def load_split(paths: Iterable[Path | str]) -> list[DatasetFile]:
+    """Lit les fichiers d'une partition dans l'ordre donné ; un identifiant n'appartient qu'à un fichier.
+
+    Raises:
+        FileNotFoundError: fichier absent (attribut ``filename``).
+        DatasetError: fichier invalide (voir :func:`load_dataset`) ; le message commence par
+            le chemin du fichier en cause.
+    """
+    files: list[DatasetFile] = []
+    known_ids: dict[str, str] = {}
+    for path in map(Path, paths):
+        try:
+            items = load_dataset(path, known_ids=known_ids)
+        except DatasetError as exc:
+            raise DatasetError(f"{display_path(path)} : {exc}") from exc
+        known_ids.update((item.id, path.name) for item in items)
+        files.append(DatasetFile(path=path, items=tuple(items)))
+    if not files:
+        raise DatasetError("aucun fichier de jeu de données")
+    return files
+
+
+def split_items(files: Iterable[DatasetFile]) -> list[DatasetItem]:
+    """Éléments de tous les fichiers d'une partition, dans l'ordre de lecture."""
+    return [item for dataset_file in files for item in dataset_file.items]
 
 
 def file_sha256(path: Path | str) -> str:
@@ -390,11 +463,13 @@ def _language_counts(items: Sequence[DatasetItem]) -> JsonDict:
     }
 
 
-def describe_dataset(items: Sequence[DatasetItem], path: Path | str) -> JsonDict:
-    """Effectifs du jeu, au total et par langue, avec le chemin et l'empreinte du fichier."""
+def describe_dataset(files: Sequence[DatasetFile]) -> JsonDict:
+    """Effectifs de la partition, au total, par langue et par fichier, avec le chemin et l'empreinte des fichiers."""
+    items = split_items(files)
     return {
-        "path": display_path(path),
-        "sha256": file_sha256(path),
+        "files": [{"path": display_path(dataset_file.path), "sha256": file_sha256(dataset_file.path),
+                   **_language_counts(dataset_file.items)}
+                  for dataset_file in files],
         **_language_counts(items),
         "by_language": {language: _language_counts([item for item in items if item.language == language])
                         for language in LANGUAGES},
@@ -766,15 +841,21 @@ def _intent_label(result: Any) -> str:
     return label if isinstance(label, str) else str(label)
 
 
-def _intent_predictions(items: Sequence[DatasetItem], detector: IntentDetector,
-                        languages: Mapping[str, str]) -> tuple[dict[str, str], str | None]:
+def _intent_predictions(items: Sequence[DatasetItem], detector: IntentDetector, languages: Mapping[str, str],
+                        *, log_items: bool = True) -> tuple[dict[str, str], str | None]:
     predictions: dict[str, str] = {}
     for item in items:
         try:
             predictions[item.id] = _intent_label(detector(item.text, language=languages[item.id]))
         except Exception as exc:
-            logger.warning("Échec de %s sur l'élément %s", INTENT_COMPONENT, item.id, exc_info=True)
-            return predictions, f"erreur de {INTENT_FUNCTION} sur l'élément {item.id} ({type(exc).__name__})"
+            # La raison est recopiée dans le rapport, y compris celui du jeu de test : elle ne cite
+            # donc pas l'élément. Son identifiant ne figure que dans le journal, et seulement pour
+            # une partition dont le rapport liste les éléments.
+            if log_items:
+                logger.warning("Échec de %s sur l'élément %s", INTENT_COMPONENT, item.id, exc_info=True)
+            else:
+                logger.warning("Échec de %s sur un élément d'une partition sans détail", INTENT_COMPONENT)
+            return predictions, f"erreur de {INTENT_FUNCTION} ({type(exc).__name__})"
     return predictions, None
 
 
@@ -786,13 +867,15 @@ def _per_intent(items: Sequence[DatasetItem], predictions: Mapping[str, str]) ->
     return per_intent
 
 
-def evaluate_intents(items: Sequence[DatasetItem], detector: IntentDetector, languages: Mapping[str, str]) -> JsonDict:
+def evaluate_intents(items: Sequence[DatasetItem], detector: IntentDetector, languages: Mapping[str, str],
+                     *, log_items: bool = True) -> JsonDict:
     """Exactitude, F1 par intention, macro-F1, matrice de confusion et erreurs de la détection d'intention.
 
     ``languages`` donne, par identifiant, la langue détectée passée au détecteur. Une exception
-    levée par le détecteur rend la section non disponible.
+    levée par le détecteur rend la section non disponible ; ``log_items`` fixe si le journal
+    cite alors l'élément en cause.
     """
-    predictions, failure = _intent_predictions(items, detector, languages)
+    predictions, failure = _intent_predictions(items, detector, languages, log_items=log_items)
     if failure:
         return unavailable_intents(items, failure)
     accuracy = Ratio()
@@ -898,21 +981,63 @@ def offline_summary(report: Mapping[str, Any]) -> list[JsonDict]:
 
 # ---------------------------------------------------------------- rapports
 
-def build_offline_report(items: Sequence[DatasetItem], *, dataset_path: Path | str, run_date: date,
-                         split: str = DEV_SPLIT, intent_loader: IntentLoader = load_intent_detector) -> JsonDict:
-    """Évalue tous les composants hors ligne sur une partition et renvoie le contenu du rapport JSON."""
-    detections = {item.id: detect_language(item.text) for item in items}
-    extractions = {item.id: rule_based_extract(item.text, today=run_date) for item in items}
-    checks = {item.id: inspect_input(item.text) for item in items}
+def publishes_item_details(split: str) -> bool:
+    """Vrai quand le rapport de la partition liste les éléments mal classés (jeu de développement)."""
+    return split in DETAILED_SPLITS
+
+
+def without_item_details(value: Any) -> Any:
+    """Copie d'un rapport JSON sans aucune information propre à un élément.
+
+    Les listes d'erreurs (identifiants, valeurs attendues et obtenues) sont retirées et les
+    scores extrêmes perdent leur identifiant ; restent les effectifs, les proportions, les
+    matrices de confusion et les lignes de synthèse.
+    """
+    if isinstance(value, Mapping):
+        copy: JsonDict = {}
+        for key, entry in value.items():
+            if key in ITEM_DETAIL_LISTS and isinstance(entry, list):
+                continue
+            if key in EXTREME_SCORE_KEYS and isinstance(entry, Mapping):
+                copy[key] = {"score": entry.get("score")}
+                continue
+            copy[key] = without_item_details(entry)
+        return copy
+    if isinstance(value, list):
+        return [without_item_details(entry) for entry in value]
+    return value
+
+
+def _finish_report(report: JsonDict) -> JsonDict:
+    report["item_details"] = publishes_item_details(report["split"])
+    return report if report["item_details"] else without_item_details(report)
+
+
+@dataclass(frozen=True)
+class ComponentOutputs:
+    """Sorties des composants déterministes, par identifiant d'élément."""
+
+    languages: Mapping[str, LanguageResult]
+    extractions: Mapping[str, Mapping[str, Any]]
+    checks: Mapping[str, InputCheck]
+
+
+def run_components(items: Sequence[DatasetItem], run_date: date) -> ComponentOutputs:
+    """Applique une fois chaque composant déterministe au texte de chaque élément."""
+    return ComponentOutputs(
+        languages={item.id: detect_language(item.text) for item in items},
+        extractions={item.id: rule_based_extract(item.text, today=run_date) for item in items},
+        checks={item.id: inspect_input(item.text) for item in items},
+    )
+
+
+def offline_sections(items: Sequence[DatasetItem], outputs: ComponentOutputs, detector: IntentDetector | None,
+                     reason: str | None, *, log_items: bool = True) -> JsonDict:
+    """Sections de mesure du rapport hors ligne et leur synthèse, pour un ensemble d'éléments."""
+    extractions = outputs.extractions
     orders = [item for item in items if item.is_order]
-    detector, reason = intent_loader()
-    report: JsonDict = {
-        "report": "hors_ligne",
-        "split": split,
-        "run_date": run_date.isoformat(),
-        "package_version": __version__,
-        "dataset": describe_dataset(items, dataset_path),
-        "language": evaluate_language(items, detections),
+    sections: JsonDict = {
+        "language": evaluate_language(items, outputs.languages),
         "extraction": compare_orders(orders, {item.id: extractions[item.id] for item in orders},
                                      component=EXTRACTION_COMPONENT),
         "order_detection": evaluate_binary(
@@ -921,12 +1046,43 @@ def build_offline_report(items: Sequence[DatasetItem], *, dataset_path: Path | s
             component=f"{EXTRACTION_COMPONENT} (est_bon_commande)"),
         "reorder_detection": evaluate_binary(items, lambda item: item.is_reorder,
                                              lambda item: detect_reorder(item.text), component=REORDER_COMPONENT),
-        "injection": evaluate_injection(items, checks),
-        "intent": (evaluate_intents(items, detector, {key: result.code for key, result in detections.items()})
+        "injection": evaluate_injection(items, outputs.checks),
+        "intent": (evaluate_intents(items, detector, {item.id: outputs.languages[item.id].code for item in items},
+                                    log_items=log_items)
                    if detector is not None else unavailable_intents(items, reason)),
     }
-    report["summary"] = offline_summary(report)
-    return report
+    sections["summary"] = offline_summary(sections)
+    return sections
+
+
+def build_offline_report(files: Sequence[DatasetFile], *, run_date: date, split: str = DEV_SPLIT,
+                         intent_loader: IntentLoader = load_intent_detector) -> JsonDict:
+    """Évalue tous les composants hors ligne sur une partition et renvoie le contenu du rapport JSON.
+
+    Quand la partition compte plusieurs fichiers, ``by_file`` donne en plus la synthèse de
+    chaque fichier. Le rapport d'une partition sans détail (jeu de test) passe par
+    :func:`without_item_details`.
+    """
+    items = split_items(files)
+    outputs = run_components(items, run_date)
+    detector, reason = intent_loader()
+    log_items = publishes_item_details(split)
+    report: JsonDict = {
+        "report": "hors_ligne",
+        "split": split,
+        "run_date": run_date.isoformat(),
+        "package_version": __version__,
+        "dataset": describe_dataset(files),
+        **offline_sections(items, outputs, detector, reason, log_items=log_items),
+    }
+    if len(files) > 1:
+        report["by_file"] = [
+            {"path": display_path(dataset_file.path), "items": len(dataset_file.items),
+             "summary": offline_sections(dataset_file.items, outputs, detector, reason,
+                                         log_items=log_items)["summary"]}
+            for dataset_file in files
+        ]
+    return _finish_report(report)
 
 
 def message_for_extraction(item: DatasetItem, run_date: date) -> dict[str, str]:
@@ -969,16 +1125,23 @@ def build_online_extractor(settings: Settings, llm: Any, run_date: date) -> Onli
     return extract
 
 
-def run_online_extraction(orders: Sequence[DatasetItem], extract: OnlineExtractor,
-                          run_date: date) -> tuple[dict[str, NormalizationResult], list[str]]:
-    """Extrait puis normalise chaque commande ; renvoie les résultats par identifiant et les échecs."""
+def run_online_extraction(orders: Sequence[DatasetItem], extract: OnlineExtractor, run_date: date,
+                          *, log_items: bool = True) -> tuple[dict[str, NormalizationResult], list[str]]:
+    """Extrait puis normalise chaque commande ; renvoie les résultats par identifiant et les échecs.
+
+    Avec ``log_items`` faux (partition sans détail), le journal ne cite ni l'identifiant de
+    l'élément en échec ni la trace de l'exception, qui peut reprendre le texte du message.
+    """
     results: dict[str, NormalizationResult] = {}
     failures: list[str] = []
     for item in orders:
         try:
             raw = extract(item)
         except Exception:
-            logger.warning("Extraction en échec pour l'élément %s", item.id, exc_info=True)
+            if log_items:
+                logger.warning("Extraction en échec pour l'élément %s", item.id, exc_info=True)
+            else:
+                logger.warning("Extraction en échec pour un élément d'une partition sans détail")
             raw = None
         if not isinstance(raw, Mapping):
             failures.append(item.id)
@@ -1013,7 +1176,7 @@ def _order_recognition(orders: Sequence[DatasetItem], data: Mapping[str, Mapping
 def online_summary(report: Mapping[str, Any]) -> list[JsonDict]:
     """Lignes de la synthèse du rapport en ligne."""
     component = "Extraction complète"
-    failures, items = len(report["failures"]), report["extraction"]["items"]
+    failures, items = report["failure_count"], report["extraction"]["items"]
     normalization = report["normalization"]
     return [
         *_extraction_entries(component, report["extraction"]),
@@ -1024,11 +1187,15 @@ def online_summary(report: Mapping[str, Any]) -> list[JsonDict]:
     ]
 
 
-def build_online_report(items: Sequence[DatasetItem], *, dataset_path: Path | str, run_date: date,
-                        extract: OnlineExtractor, models: Mapping[str, Any], split: str = DEV_SPLIT) -> JsonDict:
-    """Évalue l'extraction complète sur les commandes d'une partition et renvoie le contenu du rapport JSON."""
-    orders = [item for item in items if item.is_order]
-    results, failures = run_online_extraction(orders, extract, run_date)
+def build_online_report(files: Sequence[DatasetFile], *, run_date: date, extract: OnlineExtractor,
+                        models: Mapping[str, Any], split: str = DEV_SPLIT) -> JsonDict:
+    """Évalue l'extraction complète sur les commandes d'une partition et renvoie le contenu du rapport JSON.
+
+    ``failures`` liste les commandes dont l'extraction a échoué et ``failure_count`` les compte ;
+    le rapport d'une partition sans détail (jeu de test) ne garde que le compte.
+    """
+    orders = [item for item in split_items(files) if item.is_order]
+    results, failures = run_online_extraction(orders, extract, run_date, log_items=publishes_item_details(split))
     data = {key: result.data for key, result in results.items()}
     report: JsonDict = {
         "report": "en_ligne",
@@ -1036,14 +1203,15 @@ def build_online_report(items: Sequence[DatasetItem], *, dataset_path: Path | st
         "run_date": run_date.isoformat(),
         "package_version": __version__,
         "models": dict(models),
-        "dataset": describe_dataset(items, dataset_path),
+        "dataset": describe_dataset(files),
         "extraction": compare_orders(orders, data, component=ONLINE_COMPONENT),
         "order_recognition": _order_recognition(orders, data),
         "failures": failures,
+        "failure_count": len(failures),
         "normalization": _normalization_stats(results),
     }
     report["summary"] = online_summary(report)
-    return report
+    return _finish_report(report)
 
 
 # ---------------------------------------------------------------- mise en forme Markdown
@@ -1183,10 +1351,14 @@ def split_label(split: str) -> str:
     return SPLIT_LABELS.get(split, split)
 
 
-def _split_intro(split: str) -> Block:
+def _split_intro(report: Mapping[str, Any]) -> Block:
+    split = report["split"]
     role = SPLIT_ROLES.get(split)
-    return [f"{SPLITS_DEFINITION} Ce rapport porte sur le {split_label(split)} ({code(split)})."
-            + (f" {role}" if role else "")]
+    text = f"{SPLITS_DEFINITION} Ce rapport porte sur le {split_label(split)} ({code(split)})."
+    text += f" {role}" if role else ""
+    if not report.get("item_details", True):
+        text += f" {AGGREGATE_ONLY_NOTE}"
+    return [text]
 
 
 def _run_information(report: Mapping[str, Any], extra_rows: Sequence[Sequence[str]] = ()) -> Block:
@@ -1194,8 +1366,7 @@ def _run_information(report: Mapping[str, Any], extra_rows: Sequence[Sequence[st
     rows = [
         ["Date de l'exécution", report["run_date"]],
         ["Partition", code(report["split"])],
-        ["Jeu de données", code(dataset["path"])],
-        ["Empreinte SHA-256 du fichier", code(dataset["sha256"])],
+        ["Fichiers du jeu", str(len(dataset["files"]))],
         ["Éléments du jeu", str(dataset["items"])],
         ["Version du paquet `tecpap`", cell(report["package_version"])],
         *extra_rows,
@@ -1203,25 +1374,36 @@ def _run_information(report: Mapping[str, Any], extra_rows: Sequence[Sequence[st
     return table(["Information", "Valeur"], rows)
 
 
+def _files_table(dataset: Mapping[str, Any]) -> Block:
+    rows = [[code(entry["path"]), str(entry["items"]), code(entry["sha256"])] for entry in dataset["files"]]
+    return table(["Fichier", "Éléments", "Empreinte SHA-256"], rows, "lrl")
+
+
 SHA_NOTE = ("L'empreinte SHA-256 est une somme de contrôle du fichier : deux rapports qui portent la même "
             "empreinte ont été calculés sur exactement les mêmes données.")
+
+COUNT_KEYS = ("items", "email", "whatsapp", "orders", "reorders", "injections", "traps")
+COUNT_HEADERS = ("Éléments", "Email", "WhatsApp", "Commandes", "Renouvellements", "Injections", "Pièges")
 
 
 def _dataset_blocks(dataset: Mapping[str, Any]) -> list[Block]:
     legend = ", ".join(f"{code(language)} {name}" for language, name in LANGUAGE_NAMES.items())
-    keys = ("items", "email", "whatsapp", "orders", "reorders", "injections", "traps")
-    rows = [[code(language), *(str(counts[key]) for key in keys)]
+    rows = [[code(language), *(str(counts[key]) for key in COUNT_KEYS)]
             for language, counts in dataset["by_language"].items()]
-    rows.append(["Total", *(str(dataset[key]) for key in keys)])
-    return [
+    rows.append(["Total", *(str(dataset[key]) for key in COUNT_KEYS)])
+    blocks = [
         [f"Codes de langue : {legend}."],
-        table(["Langue", "Éléments", "Email", "WhatsApp", "Commandes", "Renouvellements", "Injections", "Pièges"],
-              rows, "lrrrrrrr"),
-        ["« Commandes » : éléments dont l'étiquette `is_order` est vraie, renouvellements compris. "
-         "« Renouvellements » : intention `reorder`. « Injections » : tentatives d'injection d'instructions "
-         "(`is_injection` vrai). « Pièges » : messages légitimes qui emploient les mots surveillés par la "
-         "détection d'injection (catégorie `piege_faux_positif`)."],
+        table(["Langue", *COUNT_HEADERS], rows, "lrrrrrrr"),
     ]
+    if len(dataset["files"]) > 1:
+        file_rows = [[code(entry["path"]), *(str(entry[key]) for key in COUNT_KEYS)] for entry in dataset["files"]]
+        file_rows.append(["Total", *(str(dataset[key]) for key in COUNT_KEYS)])
+        blocks += [["Effectifs par fichier :"], table(["Fichier", *COUNT_HEADERS], file_rows, "lrrrrrrr")]
+    blocks.append(["« Commandes » : éléments dont l'étiquette `is_order` est vraie, renouvellements compris. "
+                   "« Renouvellements » : intention `reorder`. « Injections » : tentatives d'injection d'instructions "
+                   "(`is_injection` vrai). « Pièges » : messages légitimes qui emploient les mots surveillés par la "
+                   "détection d'injection (catégorie `piege_faux_positif`)."])
+    return blocks
 
 
 def _definition_blocks(keys: Sequence[str]) -> list[Block]:
@@ -1267,6 +1449,12 @@ def _language_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
         _heading(3, f"{number}.2 Matrice de confusion du code de langue"),
         ["Lignes : langue attendue. Colonnes : langue obtenue."],
         _confusion_table(section["confusion_matrix"]),
+        *(_language_error_blocks(section, number) if "errors" in section else []),
+    ]
+
+
+def _language_error_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
+    return [
         _heading(3, f"{number}.3 Éléments mal classés"),
         ["Code de langue :"],
         _error_table(section["errors"], [("Élément", _id_cell), ("Attendu", lambda entry: code(entry["expected"])),
@@ -1301,8 +1489,10 @@ def _extraction_blocks(section: Mapping[str, Any], number: int, intro: str) -> l
         _heading(3, f"{number}.2 Exactitude par langue"),
         table(["Langue", "Commandes", *(code(name) for name in EXTRACTION_FIELDS), "Champs obligatoires"],
               language_rows, "lrrrrrr"),
-        _heading(3, f"{number}.3 Erreurs par champ"),
     ]
+    if "errors" not in section["required_fields"]:
+        return blocks
+    blocks.append(_heading(3, f"{number}.3 Erreurs par champ"))
     for name in EXTRACTION_FIELDS:
         blocks.append(_heading(4, code(name)))
         blocks.append(_error_table(section["fields"][name]["errors"],
@@ -1335,17 +1525,21 @@ def _binary_blocks(section: Mapping[str, Any], prefix: str, intro: str) -> list[
                       format_percent(counts["accuracy"]), str(counts["fp"]), str(counts["fn"])]
                      for language, counts in section["by_language"].items()]
     error_columns = [("Élément", _id_cell), ("Langue", _language_cell)]
-    return [
+    blocks = [
         [intro],
         table(["Mesure", "Effectifs", "Valeur"], _binary_measure_rows(section), "lrr"),
         _counts_table(section),
         _heading(4, f"{prefix} — par langue"),
         table(["Langue", "Éléments", "Justes", "Exactitude", "FP", "FN"], language_rows, "lrrrrr"),
-        _heading(4, f"{prefix} — faux positifs"),
-        _error_table(section["false_positives"], error_columns),
-        _heading(4, f"{prefix} — faux négatifs"),
-        _error_table(section["false_negatives"], error_columns),
     ]
+    if "false_positives" in section:
+        blocks += [
+            _heading(4, f"{prefix} — faux positifs"),
+            _error_table(section["false_positives"], error_columns),
+            _heading(4, f"{prefix} — faux négatifs"),
+            _error_table(section["false_negatives"], error_columns),
+        ]
+    return blocks
 
 
 def _detection_blocks(report: Mapping[str, Any], number: int) -> list[Block]:
@@ -1363,14 +1557,18 @@ def _detection_blocks(report: Mapping[str, Any], number: int) -> list[Block]:
     ]
 
 
-def _score_rows(section: Mapping[str, Any]) -> list[list[str]]:
+def _score_table(section: Mapping[str, Any]) -> Block:
+    """Scores extrêmes et seuil ; la colonne « Élément » n'apparaît que dans un rapport détaillé."""
+    with_ids = "false_positives" in section
     rows = []
     for label, entry in (("Score maximal d'un message légitime", section["max_legitimate_score"]),
                          ("Score minimal d'une injection", section["min_injection_score"])):
-        rows.append([label, NO_VALUE if entry is None else str(entry["score"]),
-                     NO_VALUE if entry is None else code(entry["id"])])
-    rows.append(["Seuil de signalement", str(section["threshold"]), NO_VALUE])
-    return rows
+        score = NO_VALUE if entry is None or entry.get("score") is None else str(entry["score"])
+        rows.append([label, score, *([NO_VALUE if entry is None else code(entry["id"])] if with_ids else [])])
+    rows.append(["Seuil de signalement", str(section["threshold"]), *([NO_VALUE] if with_ids else [])])
+    if with_ids:
+        return table(["Mesure", "Score", "Élément"], rows, "lrl")
+    return table(["Mesure", "Score"], rows, "lr")
 
 
 def _injection_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
@@ -1387,7 +1585,7 @@ def _injection_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
                    str(counts["trap_false_positives"])]
                   for language, counts in section["by_language"].items()]
     score_column = ("Score", lambda entry: str(entry["score"]))
-    return [
+    blocks = [
         [f"Composant : {code(section['component'])}. Un message est signalé quand son score atteint "
          f"{section['threshold']} (sur 100). Étiquette : `is_injection`. Classe positive : tentative d'injection "
          f"({section['positives']} éléments sur {section['items']}). Les {legitimate['items']} autres éléments, "
@@ -1396,19 +1594,24 @@ def _injection_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
         table(["Mesure", "Effectifs", "Valeur"], measure_rows, "lrr"),
         _counts_table(section),
         _heading(3, f"{number}.2 Scores"),
-        table(["Mesure", "Score", "Élément"], _score_rows(section), "lrl"),
+        _score_table(section),
         _heading(3, f"{number}.3 Détection par langue"),
         table(["Langue", "Injections", "Détectées", "Précision", "Rappel", "F1"], detection_rows, "lrrrrr"),
         _heading(3, f"{number}.4 Fausses alertes par langue"),
         table(["Langue", "Légitimes", "Fausses alertes", "Taux de faux positifs", "Pièges", "Alertes sur pièges"],
               alert_rows, "lrrrrr"),
-        _heading(3, f"{number}.5 Erreurs"),
-        ["Injections manquées (faux négatifs) :"],
-        _error_table(section["false_negatives"], [("Élément", _id_cell), ("Langue", _language_cell), score_column]),
-        ["Fausses alertes (faux positifs) :"],
-        _error_table(section["false_positives"], [("Élément", _id_cell), ("Langue", _language_cell), score_column,
-                                                  ("Piège", lambda entry: cell(entry["trap"]))]),
     ]
+    if "false_positives" in section:
+        blocks += [
+            _heading(3, f"{number}.5 Erreurs"),
+            ["Injections manquées (faux négatifs) :"],
+            _error_table(section["false_negatives"], [("Élément", _id_cell), ("Langue", _language_cell),
+                                                      score_column]),
+            ["Fausses alertes (faux positifs) :"],
+            _error_table(section["false_positives"], [("Élément", _id_cell), ("Langue", _language_cell),
+                                                      score_column, ("Piège", lambda entry: cell(entry["trap"]))]),
+        ]
+    return blocks
 
 
 def _intent_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
@@ -1437,10 +1640,11 @@ def _intent_blocks(section: Mapping[str, Any], number: int) -> list[Block]:
         _heading(3, f"{number}.3 Matrice de confusion"),
         ["Lignes : intention attendue. Colonnes : intention obtenue."],
         _confusion_table(section["confusion_matrix"]),
-        _heading(3, f"{number}.4 Éléments mal classés"),
-        _error_table(section["errors"], [("Élément", _id_cell), ("Langue", _language_cell),
-                                         ("Attendu", lambda entry: code(entry["expected"])),
-                                         ("Obtenu", lambda entry: code(entry["obtained"]))]),
+        *([_heading(3, f"{number}.4 Éléments mal classés"),
+           _error_table(section["errors"], [("Élément", _id_cell), ("Langue", _language_cell),
+                                            ("Attendu", lambda entry: code(entry["expected"])),
+                                            ("Obtenu", lambda entry: code(entry["obtained"]))])]
+          if "errors" in section else []),
     ]
 
 
@@ -1452,15 +1656,35 @@ def _numbered_sections(builders: Sequence[tuple[str, Callable[[int], list[Block]
     return blocks
 
 
+def _by_file_blocks(by_file: Sequence[Mapping[str, Any]]) -> list[Block]:
+    """Synthèse de chaque fichier d'une partition, mesure par mesure."""
+    paths = [entry["path"] for entry in by_file]
+    headers = ["Composant", "Mesure"]
+    for path in paths:
+        name = code(PurePosixPath(path).name)
+        headers += [f"Effectifs ({name})", f"Valeur ({name})", f"Intervalle de confiance à 95 % ({name})"]
+    paired = paired_summaries({entry["path"]: entry["summary"] for entry in by_file})
+    rows = [[component, measure, *(text for path in paths for text in _split_cells(entries[path]))]
+            for component, measure, entries in paired]
+    return [
+        ["Mêmes mesures que la synthèse, calculées sur les éléments de chaque fichier de la partition "
+         "(fichiers du tableau de la section 1). Plus un fichier est petit, plus ses intervalles de confiance "
+         "sont larges."],
+        table(headers, rows, "ll" + "rrr" * len(paths)),
+    ]
+
+
 def render_offline_markdown(report: Mapping[str, Any]) -> str:
     """Rapport hors ligne en Markdown, rédigé à partir du contenu du rapport JSON."""
     orders = report["extraction"]["items"]
     extraction_intro = (f"Composant : {code(EXTRACTION_COMPONENT)}, appliqué aux {orders} commandes du jeu "
                         "(étiquette `is_order` vraie).")
+    by_file = report.get("by_file")
     builders = [
         ("Jeu de données", lambda number: _dataset_blocks(report["dataset"])),
         ("Mesures employées", lambda number: _definition_blocks(OFFLINE_MEASURES)),
         ("Synthèse", lambda number: _summary_blocks(report["summary"])),
+        *([("Synthèse par fichier", lambda number: _by_file_blocks(by_file))] if by_file else []),
         ("Détection de la langue", lambda number: _language_blocks(report["language"], number)),
         ("Extraction par règles des commandes",
          lambda number: _extraction_blocks(report["extraction"], number, extraction_intro)),
@@ -1472,8 +1696,9 @@ def render_offline_markdown(report: Mapping[str, Any]) -> str:
         _heading(1, f"Évaluation hors ligne de l'analyse des messages clients : {split_label(report['split'])}"),
         ["Mesure, sans réseau ni modèle de langue, des composants déterministes qui analysent les messages "
          "clients, sur le corpus annoté décrit dans `evaluation/README.md`."],
-        _split_intro(report["split"]),
+        _split_intro(report),
         _run_information(report),
+        _files_table(report["dataset"]),
         [SHA_NOTE],
         *_numbered_sections(builders),
     ])
@@ -1485,25 +1710,25 @@ def _online_quality_blocks(report: Mapping[str, Any]) -> list[Block]:
     rows = [
         ["Rappel de `est_bon_commande`", fraction(recognition["correct"], recognition["total"]),
          format_percent(recognition["rate"])],
-        ["Extractions en échec", fraction(len(report["failures"]), report["extraction"]["items"]),
-         format_percent(_ratio(len(report["failures"]), report["extraction"]["items"]))],
+        ["Extractions en échec", fraction(report["failure_count"], report["extraction"]["items"]),
+         format_percent(_ratio(report["failure_count"], report["extraction"]["items"]))],
         ["Commandes avec anomalie", fraction(anomalies["correct"], anomalies["total"]),
          format_percent(anomalies["rate"])],
         ["Commandes avec champ obligatoire manquant", fraction(missing["correct"], missing["total"]),
          format_percent(missing["rate"])],
         ["Confiance calculée moyenne", NO_VALUE, cell(normalization["mean_confidence"])],
     ]
-    return [
+    blocks = [
         ["Classe positive : commande. Toutes les commandes du jeu sont positives : la proportion de commandes "
          "reconnues (`est_bon_commande` vrai) est le rappel. Une extraction est en échec quand l'extracteur ne "
          "renvoie aucune commande (modèle indisponible, réponse illisible). Les anomalies et les champs "
          "manquants sont ceux de `normalize_order`, sur les extractions réussies."],
         table(["Mesure", "Effectifs", "Valeur"], rows, "lrr"),
-        ["Commandes non reconnues :"],
-        _id_list(recognition["errors"]),
-        ["Extractions en échec :"],
-        _id_list(report["failures"]),
     ]
+    if "errors" in recognition:
+        blocks += [["Commandes non reconnues :"], _id_list(recognition["errors"]),
+                   ["Extractions en échec :"], _id_list(report["failures"])]
+    return blocks
 
 
 def render_online_markdown(report: Mapping[str, Any]) -> str:
@@ -1528,8 +1753,9 @@ def render_online_markdown(report: Mapping[str, Any]) -> str:
         ["Mesure de l'extraction complète par le modèle de langue, suivie des règles de normalisation, sur les "
          "commandes du corpus annoté décrit dans `evaluation/README.md`. Les réponses du modèle varient d'une "
          "exécution à l'autre : les chiffres valent pour la date et les modèles indiqués."],
-        _split_intro(report["split"]),
+        _split_intro(report),
         _run_information(report, extra),
+        _files_table(report["dataset"]),
         [SHA_NOTE],
         *_numbered_sections(builders),
     ])
@@ -1559,6 +1785,30 @@ def _entry_rate(entry: Mapping[str, Any] | None) -> float | None:
     return entry.get("value")
 
 
+def paired_summaries(summaries: Mapping[str, Sequence[Mapping[str, Any]]]
+                     ) -> list[tuple[str, str, dict[str, Mapping[str, Any] | None]]]:
+    """Lignes de plusieurs synthèses appariées par composant et par mesure.
+
+    Args:
+        summaries: lignes de synthèse de chaque rapport, par nom (partition ou fichier).
+
+    Returns:
+        Un triplet (composant, mesure, ligne de chaque rapport) par mesure, dans l'ordre de
+        première apparition ; la ligne vaut ``None`` quand la mesure est absente de ce rapport.
+    """
+    keys: list[tuple[str, str]] = []
+    by_name: dict[str, dict[tuple[str, str], Mapping[str, Any]]] = {}
+    for name, entries in summaries.items():
+        by_name[name] = {}
+        for entry in entries:
+            key = (entry["component"], entry["measure"])
+            by_name[name][key] = entry
+            if key not in keys:
+                keys.append(key)
+    return [(component, measure, {name: by_name[name].get((component, measure)) for name in summaries})
+            for component, measure in keys]
+
+
 def synthesis_rows(reports: Mapping[str, Mapping[str, Any]]) -> list[JsonDict]:
     """Lignes de synthèse des partitions appariées par composant et par mesure, dans l'ordre des rapports.
 
@@ -1567,18 +1817,9 @@ def synthesis_rows(reports: Mapping[str, Mapping[str, Any]]) -> list[JsonDict]:
     proportion entre −1 et 1, ou ``None``) et ``disjoint`` (vrai quand les deux intervalles de
     confiance existent et ne se chevauchent pas).
     """
-    keys: list[tuple[str, str]] = []
-    by_split: dict[str, dict[tuple[str, str], Mapping[str, Any]]] = {}
-    for split, report in reports.items():
-        by_split[split] = {}
-        for entry in report["summary"]:
-            key = (entry["component"], entry["measure"])
-            by_split[split][key] = entry
-            if key not in keys:
-                keys.append(key)
     rows: list[JsonDict] = []
-    for component, measure in keys:
-        entries = {split: by_split[split].get((component, measure)) for split in reports}
+    for component, measure, entries in paired_summaries({split: report["summary"]
+                                                         for split, report in reports.items()}):
         dev, test = entries.get(DEV_SPLIT), entries.get(TEST_SPLIT)
         dev_rate, test_rate = _entry_rate(dev), _entry_rate(test)
         difference = None if dev_rate is None or test_rate is None else test_rate - dev_rate
@@ -1608,15 +1849,17 @@ def _split_cells(entry: Mapping[str, Any] | None) -> list[str]:
 
 
 def _synthesis_dataset_blocks(reports: Mapping[str, Mapping[str, Any]]) -> list[Block]:
-    rows = []
+    rows, file_rows = [], []
     for split, report in reports.items():
         dataset = report["dataset"]
-        rows.append([code(split), split_label(split), SPLIT_USES.get(split, NO_VALUE), code(dataset["path"]),
-                     str(dataset["items"]), str(dataset["orders"]), str(dataset["injections"]),
-                     report["run_date"], code(dataset["sha256"])])
+        rows.append([code(split), split_label(split), SPLIT_USES.get(split, NO_VALUE), str(len(dataset["files"])),
+                     str(dataset["items"]), str(dataset["orders"]), str(dataset["injections"]), report["run_date"]])
+        file_rows += [[code(split), code(entry["path"]), str(entry["items"]), code(entry["sha256"])]
+                      for entry in dataset["files"]]
     return [
-        table(["Partition", "Nom", "Usage", "Fichier", "Éléments", "Commandes", "Injections", "Date de l'exécution",
-               "Empreinte SHA-256"], rows, "llllrrrll"),
+        table(["Partition", "Nom", "Usage", "Fichiers", "Éléments", "Commandes", "Injections", "Date de l'exécution"],
+              rows, "lllrrrrl"),
+        table(["Partition", "Fichier", "Éléments", "Empreinte SHA-256"], file_rows, "llrl"),
         [SHA_NOTE],
     ]
 
@@ -1659,6 +1902,10 @@ def render_synthesis(reports: Mapping[str, Mapping[str, Any]]) -> str:
     splits = list(reports)
     rows = synthesis_rows(reports)
     report_files = _enumeration([code(f"{report_name(OFFLINE_REPORT_NAME, split)}.md") for split in splits])
+    detailed = [code(f"{report_name(OFFLINE_REPORT_NAME, split)}.md") for split, report in reports.items()
+                if report.get("item_details", True)]
+    details_text = (f" Les éléments mal classés ne sont listés que dans {_enumeration(detailed)}." if detailed
+                    else " Aucun de ces rapports ne liste les éléments mal classés.")
     builders = [
         ("Partitions évaluées", lambda number: _synthesis_dataset_blocks(reports)),
         ("Mesures employées", lambda number: [
@@ -1675,8 +1922,8 @@ def render_synthesis(reports: Mapping[str, Mapping[str, Any]]) -> str:
     return _join([
         _heading(1, "Synthèse de l'évaluation hors ligne : jeu de développement et jeu de test"),
         [f"{SPLITS_DEFINITION} {SYNTHESIS_INTRO}"],
-        [f"Les résultats par langue, les matrices de confusion et les éléments mal classés de chaque partition "
-         f"sont dans {report_files}."],
+        [f"Les résultats par langue et les matrices de confusion de chaque partition sont dans {report_files}."
+         + details_text],
         *_numbered_sections(builders),
     ])
 
@@ -1736,9 +1983,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split", choices=SPLITS,
                         help="partition à évaluer : dev (jeu de développement) ou test (jeu de test tenu à "
                              "l'écart) ; par défaut les deux")
-    parser.add_argument("--dataset", type=Path,
-                        help="fichier JSON Lines de la partition choisie par --split, à la place de "
-                             "evaluation/dataset/messages.jsonl (dev) ou messages_test.jsonl (test)")
+    parser.add_argument("--dataset", type=Path, action="append", metavar="FICHIER",
+                        help="fichier JSON Lines de la partition choisie par --split, à la place de ses fichiers "
+                             "(dev : messages.jsonl et messages_dev_complement.jsonl ; test : messages_test.jsonl "
+                             "dans evaluation/dataset) ; option répétable avec --split dev")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                         help="dossier des rapports (par défaut evaluation/results)")
     parser.add_argument("--date", type=_parse_date,
@@ -1746,39 +1994,44 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def requested_datasets(split: str | None, dataset: Path | None) -> dict[str, Path]:
-    """Fichier de chaque partition à évaluer : les deux partitions sans ``split``, sinon celle demandée.
+def requested_datasets(split: str | None, datasets: Sequence[Path] | None = None) -> dict[str, tuple[Path, ...]]:
+    """Fichiers de chaque partition à évaluer : les deux partitions sans ``split``, sinon celle demandée.
 
-    ``dataset`` remplace le fichier de la partition ``split``.
+    ``datasets`` remplace les fichiers de la partition ``split`` ; plusieurs fichiers ne sont
+    acceptés que pour le jeu de développement.
 
     Raises:
-        ValueError: ``dataset`` donné sans ``split``.
+        ValueError: ``datasets`` donné sans ``split``, ou plusieurs fichiers pour le jeu de test.
     """
     if split is None:
-        if dataset is not None:
+        if datasets:
             raise ValueError(DATASET_WITHOUT_SPLIT)
         return {name: SPLIT_DATASETS[name] for name in SPLITS}
-    return {split: dataset if dataset is not None else SPLIT_DATASETS[split]}
+    if not datasets:
+        return {split: SPLIT_DATASETS[split]}
+    if split == TEST_SPLIT and len(datasets) > 1:
+        raise ValueError(REPEATED_TEST_DATASET)
+    return {split: tuple(datasets)}
 
 
-def _load_items(path: Path) -> list[DatasetItem] | None:
+def _load_files(paths: Sequence[Path]) -> list[DatasetFile] | None:
     try:
-        return load_dataset(path)
-    except FileNotFoundError:
-        print(f"Jeu de données introuvable : {path}", file=sys.stderr)
+        return load_split(paths)
+    except FileNotFoundError as exc:
+        print(f"Jeu de données introuvable : {exc.filename}", file=sys.stderr)
     except (OSError, DatasetError) as exc:
-        print(f"Jeu de données invalide ({path}) : {exc}", file=sys.stderr)
+        print(f"Jeu de données invalide : {exc}", file=sys.stderr)
     return None
 
 
-def _load_splits(datasets: Mapping[str, Path]) -> dict[str, list[DatasetItem]] | None:
+def _load_splits(datasets: Mapping[str, Sequence[Path]]) -> dict[str, list[DatasetFile]] | None:
     """Lit toutes les partitions avant d'écrire le moindre rapport ; ``None`` si l'une est invalide."""
-    loaded: dict[str, list[DatasetItem]] = {}
-    for split, path in datasets.items():
-        items = _load_items(path)
-        if items is None:
+    loaded: dict[str, list[DatasetFile]] = {}
+    for split, paths in datasets.items():
+        files = _load_files(paths)
+        if files is None:
             return None
-        loaded[split] = items
+        loaded[split] = files
     return loaded
 
 
@@ -1800,7 +2053,7 @@ def _online_client(settings: Settings | None, llm: Any) -> tuple[Settings | None
     return settings, (llm if llm is not None else LLMClient.from_settings(settings))
 
 
-def _run_online(args: argparse.Namespace, datasets: Mapping[str, Path], run_date: date,
+def _run_online(args: argparse.Namespace, datasets: Mapping[str, Sequence[Path]], run_date: date,
                 settings: Settings | None, llm: Any) -> int:
     settings, client = _online_client(settings, llm)
     if settings is None:
@@ -1814,21 +2067,20 @@ def _run_online(args: argparse.Namespace, datasets: Mapping[str, Path], run_date
     models = {"extraction": settings.model_extraction, "light": settings.model_light,
               "temperature": settings.llm_temperature}
     extract = build_online_extractor(settings, client, run_date)
-    for split, items in loaded.items():
-        report = build_online_report(items, dataset_path=datasets[split], run_date=run_date, extract=extract,
-                                     models=models, split=split)
+    for split, files in loaded.items():
+        report = build_online_report(files, run_date=run_date, extract=extract, models=models, split=split)
         _print_outcome(report, write_report(report, render_online_markdown(report), args.output_dir,
                                             report_name(ONLINE_REPORT_NAME, split)))
     return EXIT_OK
 
 
-def _run_offline(args: argparse.Namespace, datasets: Mapping[str, Path], run_date: date) -> int:
+def _run_offline(args: argparse.Namespace, datasets: Mapping[str, Sequence[Path]], run_date: date) -> int:
     loaded = _load_splits(datasets)
     if loaded is None:
         return EXIT_INVALID_INPUT
     reports: dict[str, JsonDict] = {}
-    for split, items in loaded.items():
-        report = build_offline_report(items, dataset_path=datasets[split], run_date=run_date, split=split)
+    for split, files in loaded.items():
+        report = build_offline_report(files, run_date=run_date, split=split)
         _print_outcome(report, write_report(report, render_offline_markdown(report), args.output_dir,
                                             report_name(OFFLINE_REPORT_NAME, split)))
         reports[split] = report

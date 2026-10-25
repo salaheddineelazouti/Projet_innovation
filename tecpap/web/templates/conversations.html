@@ -13,6 +13,19 @@
         <p class="text-slate-500">Échanges entre les clients et l'assistant WhatsApp. Une conversation « à reprendre » a été transférée à l'équipe commerciale : l'assistant n'y répond plus jusqu'à la fin de la prise en charge.</p>
     </div>
 
+    {% if inbox_counts and (inbox_counts.pending or inbox_counts.processing or inbox_counts.failed) %}
+    <!-- File des messages reçus -->
+    <div id="inboxStatus" class="card p-4 border-l-4 {% if inbox_counts.failed %}border-l-red-500{% else %}border-l-blue-500{% endif %}">
+        <p class="text-sm text-slate-700">
+            <i class="fas fa-inbox mr-1 {% if inbox_counts.failed %}text-red-600{% else %}text-blue-600{% endif %}"></i>
+            Messages WhatsApp reçus :
+            {{ inbox_counts.pending + inbox_counts.processing }} en attente ou en cours de traitement{% if inbox_counts.failed %},
+            <strong class="text-red-700">{{ inbox_counts.failed }} en échec</strong> (le client a reçu au plus le message
+            d'erreur générique : consultez le journal du serveur et répondez-lui depuis sa conversation){% endif %}.
+        </p>
+    </div>
+    {% endif %}
+
     <!-- Indicateurs -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div class="card p-4 border-l-4 border-l-amber-500">

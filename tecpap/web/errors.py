@@ -31,8 +31,12 @@ def is_api_request() -> bool:
     return request.path == "/api" or request.path.startswith("/api/")
 
 
-def json_error(message: str, status: int, **extra: object) -> tuple[Response, int]:
-    """Réponse JSON d'erreur ``{"success": false, "error": message, ...}`` avec le code ``status``."""
+def json_error(message: str, status: int, /, **extra: object) -> tuple[Response, int]:
+    """Réponse JSON d'erreur ``{"success": false, "error": message, ...}`` avec le code HTTP ``status``.
+
+    Les paramètres nommés ``extra`` s'ajoutent au corps de la réponse ; un paramètre nommé
+    ``status`` y désigne par exemple le statut d'une commande, sans lien avec le code HTTP.
+    """
     return jsonify({"success": False, "error": message, **extra}), status
 
 

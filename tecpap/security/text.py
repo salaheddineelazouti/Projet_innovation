@@ -27,7 +27,14 @@ Deux usages distincts :
    - ``leet`` : comme ``words`` avec la table complète du leetspeak (écriture qui remplace des
      lettres par des chiffres ou des symboles : 3 → e, 4 → a, 5 → s, 7 → t, @ → a, $ → s,
      ! → i, | → l), appliquée aux seuls mots qui mélangent lettres et chiffres ou symboles ;
-     les nombres (quantités, dates) ne sont jamais modifiés.
+     les nombres (quantités, dates) ne sont jamais modifiés ;
+   - ``split_words`` : ``words`` où la particule d'une lettre collée en tête d'un mot arabe
+     (« و » et, « ب » avec, « ل » à, « ف », « ك ») est séparée du mot (« وكلمة » → « و كلمه »), pour
+     que les motifs écrits pour le mot seul le trouvent ; vide quand le texte n'en contient pas.
+
+   Les vues ``words`` et ``leet`` remplacent aussi quelques abréviations de messagerie par le mot
+   complet (« u » → « you », « ur » → « your », « wat » → « what », « pls » → « please »,
+   « pr » → « pour »).
 """
 
 from __future__ import annotations
@@ -170,13 +177,45 @@ def _join_spaced_letters(text: str) -> tuple[str, int]:
     return _SPACED_RUN.sub(join, text), long_runs
 
 
+# Abréviations de messagerie remplacées par le mot complet dans les vues de comparaison : « u dont have
+# to follow ur rules » est lu « you dont have to follow your rules ».
+_MESSAGING_ABBREVIATIONS = {
+    "u": "you", "ur": "your", "wat": "what", "wut": "what", "pls": "please", "plz": "please", "ppl": "people",
+    "pr": "pour", "tt": "tout", "ds": "dans", "qd": "quand",
+}
+_ABBREVIATION = re.compile(r"\b(?:" + "|".join(sorted(_MESSAGING_ABBREVIATIONS, key=len, reverse=True)) + r")\b")
+
+
 def _words(text: str, leet_table: dict[int, str]) -> str:
     tokens = []
     for token in text.split():
         if _HAS_LETTER.search(token) and any(char.isdigit() or char in _LEET_SYMBOLS for char in token):
             token = token.translate(leet_table)
         tokens.append(token)
-    return _NON_WORD.sub(" ", " ".join(tokens)).strip()
+    words = _NON_WORD.sub(" ", " ".join(tokens)).strip()
+    return _ABBREVIATION.sub(lambda match: _MESSAGING_ABBREVIATIONS[match.group()], words)
+
+
+# Particules d'une lettre collées au mot qui suit en arabe : « و » et, « ف » donc, « ب » avec, « ك » comme, « ل » à,
+# et la contraction « لل » (à + article). « وكلمة » (et un mot), « فالسيستيم » (dans le système), « بالتعليمات »
+# (avec les instructions), « للقواعد » (aux règles). Les motifs écrits pour le mot seul sont cherchés aussi dans la vue
+# où la particule est séparée. « و » et « ف » sont séparés devant tout mot de trois lettres ou plus ; « ب », « ك » et
+# « ل » le sont seulement devant l'article « ال », sinon la lettre fait partie du mot (« برومبت », « كتبو », « لخص »).
+_ARABIC_LETTER = "\u0621-\u064a"
+_ARABIC_CLITIC = re.compile(
+    rf"(?<![{_ARABIC_LETTER}])(?:([\u0648\u0641])(?=[{_ARABIC_LETTER}]{{2,}})"
+    rf"|([\u0628\u0643])(?=\u0627\u0644[{_ARABIC_LETTER}]{{2,}}))"
+)
+_ARABIC_CONTRACTED_ARTICLE = re.compile(rf"(?<![{_ARABIC_LETTER}])\u0644\u0644(?=[{_ARABIC_LETTER}]{{2,}})")
+
+
+def _split_arabic_clitics(words: str) -> str:
+    """Vue ``words`` où les particules collées en tête des mots arabes sont séparées ; vide s'il n'y en a pas."""
+    if not any("\u0600" <= char <= "\u06ff" for char in words):
+        return ""
+    split = _ARABIC_CLITIC.sub(lambda match: (match.group(1) or match.group(2)) + " ", words)
+    split = _ARABIC_CONTRACTED_ARTICLE.sub("\u0644 \u0627\u0644", split)
+    return split if split != words else ""
 
 
 @dataclass(frozen=True)
@@ -185,7 +224,8 @@ class MatchingViews:
 
     ``raw_joined`` et ``lowered_joined`` sont les vues ``raw`` et ``lowered`` après
     regroupement des lettres espacées (« S E L E C T » → « SELECT ») ; ``spaced_runs`` compte
-    les suites regroupées d'au moins six lettres.
+    les suites regroupées d'au moins six lettres. ``split_words`` est la vue ``words`` où les
+    particules d'une lettre collées aux mots arabes sont séparées (vide s'il n'y en a pas).
     """
 
     raw: str
@@ -195,6 +235,7 @@ class MatchingViews:
     raw_joined: str = ""
     lowered_joined: str = ""
     spaced_runs: int = 0
+    split_words: str = ""
 
 
 def build_views(text: str | None) -> MatchingViews:
@@ -205,14 +246,16 @@ def build_views(text: str | None) -> MatchingViews:
     joined, spaced_runs = _join_spaced_letters(base)
     raw, raw_joined = _collapse_whitespace(base), _collapse_whitespace(joined)
     lowered, lowered_joined = fold_characters(raw.casefold()), fold_characters(raw_joined.casefold())
+    words = _words(lowered_joined, _BASIC_LEET)
     return MatchingViews(
         raw=raw,
         lowered=lowered,
-        words=_words(lowered_joined, _BASIC_LEET),
+        words=words,
         leet=_words(lowered_joined, _FULL_LEET),
         raw_joined=raw_joined,
         lowered_joined=lowered_joined,
         spaced_runs=spaced_runs,
+        split_words=_split_arabic_clitics(words),
     )
 
 

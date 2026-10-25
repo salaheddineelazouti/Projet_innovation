@@ -17,6 +17,11 @@ Langues de réponse (voir :func:`tecpap.nlp.language.reply_language`) :
 Une langue inconnue (``en``, ``unknown``…) donne le français. :func:`render` remplit un modèle ;
 les autres fonctions mettent en forme les valeurs (quantité, date, produit, statut) dans la
 langue demandée.
+
+Les nombres suivent :mod:`tecpap.formatting` : espace fine insécable (U+202F) entre les milliers
+et virgule décimale (« 10 000 », « 2,5 »), espace insécable (U+00A0) entre la quantité et son
+unité. Avec une espace ordinaire, l'algorithme bidirectionnel Unicode afficherait « 10 000 »
+sous la forme « 000 10 » dans une réponse en arabe.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from types import MappingProxyType
 from typing import Any
 
 from tecpap.catalog import COMPANY_INFO, PRODUCTS
+from tecpap.formatting import MISSING_VALUE, UNIT_SEPARATOR, format_number
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +233,7 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         "draft_expired": "لم يتم تأكيد طلبك الجاري خلال 24 ساعة، لذلك تم التخلي عنه.",
         "excerpt_answer": "حسب وثائقنا: «{excerpt}»",
         "catalog_list": "منتجاتنا:\n{products}",
-        "order_validated": "خبر سار: أكد فريقنا التجاري طلبك {reference}.\n{lines}\nشكرا على ثقتكم.",
+        "order_validated": "خبر سار: أكد فريقنا التجاري طلبك {reference}.\n{lines}\nشكرا على ثقتك.",
         "order_rejected": "تعذر على فريقنا التجاري تأكيد طلبك {reference}.{reason}\nاكتب «مستشار» للتواصل معنا.",
     },
 }
@@ -245,11 +251,11 @@ _ORDER_LABELS: dict[str, dict[str, str]] = {
            "reference": "المرجع"},
 }
 
-# Ligne d'une liste de commandes (réponse au suivi).
+# Ligne d'une liste de commandes (réponse au suivi) ; U+00A0 : espace insécable entre la quantité et l'unité.
 _STATUS_LINE: dict[str, str] = {
-    "fr": "- {reference} ({date}) : {quantity} {unit}, {product} — {status}",
-    "darija": "- {reference} ({date}): {quantity} {unit}, {product} — {status}",
-    "ar": "- {reference} ({date}): {quantity} {unit}، {product} — {status}",
+    "fr": "- {reference} ({date}) : {quantity}\u00a0{unit}, {product} — {status}",
+    "darija": "- {reference} ({date}): {quantity}\u00a0{unit}, {product} — {status}",
+    "ar": "- {reference} ({date}): {quantity}\u00a0{unit}، {product} — {status}",
 }
 
 STATUS_LABELS: Mapping[str, Mapping[str, str]] = MappingProxyType({
@@ -269,8 +275,8 @@ _PRODUCT_LABELS: dict[str, dict[str, str]] = {
 }
 _PRODUCT_MENU_DETAILS: dict[str, dict[str, str]] = {
     "fr": {"SFP": " (sandwichs, tacos, viennoiseries)", "SFCPT": " (sacs premium)"},
-    "darija": {"SFP": " (sachiyat dyal sandwich, tacos)"},
-    "ar": {"SFP": " (ساشي)"},
+    "darija": {"SFP": " (sachiyat dyal sandwich, tacos, viennoiseries)", "SFCPT": " (sacs premium)"},
+    "ar": {"SFP": " (ساشي للسندويتشات والتاكوس والمعجنات)", "SFCPT": " (أكياس فاخرة)"},
 }
 
 _UNIT_LABELS: dict[str, dict[str, str]] = {
@@ -278,8 +284,13 @@ _UNIT_LABELS: dict[str, dict[str, str]] = {
     "darija": {"US": "7ba", "pièces": "7ba", "kg": "kilo", "carton": "carton", "paquet": "paquet"},
     "ar": {"US": "قطعة", "pièces": "قطعة", "kg": "كلغ", "carton": "كرتون", "paquet": "علبة"},
 }
+# Singulier français, employé pour une quantité inférieure à 2 (« 1 carton », « 1,5 carton »).
+# La darija et l'arabe gardent la même forme après un nombre écrit en chiffres.
+_UNIT_SINGULAR_LABELS: dict[str, dict[str, str]] = {
+    "fr": {"US": "pièce", "pièces": "pièce", "carton": "carton", "paquet": "paquet"},
+}
 
-_MISSING_VALUE = {"fr": "—", "darija": "—", "ar": "—"}
+_MISSING_VALUE = {"fr": MISSING_VALUE, "darija": MISSING_VALUE, "ar": MISSING_VALUE}
 
 # Libellé du motif d'un refus de commande (notification « order_rejected »).
 _REASON_LABELS = {"fr": "Motif : ", "darija": "Sabab: ", "ar": "السبب: "}
@@ -335,12 +346,15 @@ def render(key: str, language: str | None, **values: Any) -> str:
 
 
 def format_quantity(value: Any, language: str | None = None) -> str:
-    """Quantité écrite avec une espace entre les milliers (« 10 000 ») et une virgule décimale (« 2,5 »)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return _MISSING_VALUE[normalize_reply_language(language)] if value is None else str(value)
-    if float(value).is_integer():
-        return f"{int(value):,}".replace(",", " ")
-    return f"{value:,.2f}".rstrip("0").rstrip(".").replace(",", " ").replace(".", ",")
+    """Quantité écrite avec une espace fine insécable entre les milliers (« 10 000 ») et une virgule décimale (« 2,5 »).
+
+    Voir :func:`tecpap.formatting.format_number` (deux décimales au plus) ; une valeur absente
+    donne « — » et un texte qui n'est pas un nombre est renvoyé tel quel.
+    """
+    lang = normalize_reply_language(language)
+    if isinstance(value, bool):
+        return str(value)
+    return format_number(value, decimals=2, language=lang)
 
 
 def format_date(value: Any, language: str | None = None) -> str:
@@ -364,12 +378,24 @@ def product_label(product_type: str | None, language: str | None) -> str:
     return product_type
 
 
-def unit_label(unit: str | None, language: str | None) -> str:
-    """Unité d'une quantité montrée au client (« US », unité de stock de SAGE X3, devient « pièces »)."""
+def unit_label(unit: str | None, language: str | None, quantity: Any = None) -> str:
+    """Unité d'une quantité montrée au client (« US », unité de stock de SAGE X3, devient « pièces »).
+
+    En français, une quantité numérique inférieure à 2 prend le singulier (« 1 carton ») ; sans
+    quantité, le libellé est au pluriel.
+    """
     lang = normalize_reply_language(language)
-    if not unit:
-        return _UNIT_LABELS[lang]["US"]
-    return _UNIT_LABELS[lang].get(unit, unit)
+    key = unit or "US"
+    if _is_singular(quantity) and key in _UNIT_SINGULAR_LABELS.get(lang, {}):
+        return _UNIT_SINGULAR_LABELS[lang][key]
+    return _UNIT_LABELS[lang].get(key, key)
+
+
+def _is_singular(quantity: Any) -> bool:
+    """Vrai pour une quantité numérique dont la valeur absolue est inférieure à 2 (règle du français)."""
+    if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+        return False
+    return abs(quantity) < 2
 
 
 def status_label(status: str | None, language: str | None) -> str:
@@ -380,15 +406,21 @@ def status_label(status: str | None, language: str | None) -> str:
     return STATUS_LABELS[lang].get(status, status)
 
 
-def order_lines(order: Mapping[str, Any], language: str | None) -> str:
-    """Lignes du récapitulatif d'une commande : client, produit, quantité, puis livraison et référence si connues."""
+def order_lines(order: Mapping[str, Any], language: str | None, *, omit_unknown_client: bool = False) -> str:
+    """Lignes du récapitulatif d'une commande : client, produit, quantité, puis livraison et référence si connues.
+
+    Avec ``omit_unknown_client``, la ligne du client est omise quand son nom est absent, au lieu
+    d'afficher une valeur à préciser (notification d'une décision : le client ne doit pas lire
+    un nom provisoire).
+    """
     lang = normalize_reply_language(language)
     labels = _ORDER_LABELS[lang]
-    lines = [
-        f"- {labels['client']} : {order.get('entreprise_cliente') or _MISSING_VALUE[lang]}",
+    client_line = f"- {labels['client']} : {order.get('entreprise_cliente') or _MISSING_VALUE[lang]}"
+    lines = [] if omit_unknown_client and not order.get("entreprise_cliente") else [client_line]
+    lines += [
         f"- {labels['product']} : {product_label(order.get('type_produit'), lang)}",
-        f"- {labels['quantity']} : {format_quantity(order.get('quantite'), lang)} "
-        f"{unit_label(order.get('unite'), lang)}",
+        f"- {labels['quantity']} : {format_quantity(order.get('quantite'), lang)}{UNIT_SEPARATOR}"
+        f"{unit_label(order.get('unite'), lang, order.get('quantite'))}",
     ]
     if order.get("date_livraison"):
         lines.append(f"- {labels['delivery']} : {format_date(order['date_livraison'], lang)}")
@@ -419,7 +451,7 @@ def status_lines(orders: Iterable[Mapping[str, Any]], language: str | None) -> s
             reference=order.get("reference") or _MISSING_VALUE[lang],
             date=format_date(order.get("date"), lang),
             quantity=format_quantity(order.get("quantity"), lang),
-            unit=unit_label(order.get("unit"), lang),
+            unit=unit_label(order.get("unit"), lang, order.get("quantity")),
             product=product_label(order.get("product"), lang),
             status=status_label(order.get("status"), lang),
         )
