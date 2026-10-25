@@ -365,7 +365,7 @@ Règles de contribution : [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Structure du dépôt
 
 ```
-Projet_innovation/
+orderflow-ai-innovation-project/
 ├── app.py                        # Point d'entrée : python app.py, ou gunicorn app:app
 ├── tecpap/                       # Paquet de l'application
 │   ├── config.py                 # Configuration unique (Settings, load_settings)
