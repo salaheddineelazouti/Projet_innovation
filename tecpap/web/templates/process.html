@@ -1,0 +1,293 @@
+{% extends 'base.html' %}
+
+{% block title %}Traitement Emails - TECPAP{% endblock %}
+{% block page_title %}Traitement des Emails{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Emails</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Présentation -->
+    <div class="card p-6 bg-gradient-to-r from-brand-50 to-blue-50 border-brand-200">
+        <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-brand-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                <i class="fas fa-robot text-white text-xl" aria-hidden="true"></i>
+            </div>
+            <div class="flex-1">
+                <h3 class="font-bold text-slate-800 mb-1">Extraction automatique des bons de commande</h3>
+                <p class="text-slate-600 text-sm">Le système lit les emails récents et leurs pièces jointes (PDF, images, notes vocales), en extrait les informations des bons de commande avec un modèle de langue, puis les contrôle par des règles fixes. Chaque commande extraite attend la validation de l'équipe commerciale.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Lancement du traitement -->
+        <div class="lg:col-span-2 card">
+            <div class="p-6 border-b border-slate-100">
+                <h3 class="font-bold text-slate-800 text-lg">Lancer le traitement</h3>
+                <p class="text-slate-500 text-sm mt-1">Analyse de la boîte de réception pour détecter les nouveaux bons de commande</p>
+            </div>
+            <div class="p-6">
+                <div id="processPanel" class="text-center py-8">
+                    <div class="w-20 h-20 bg-brand-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-envelope-open-text text-brand-600 text-3xl" aria-hidden="true"></i>
+                    </div>
+                    <h4 class="font-semibold text-slate-800 mb-2">Prêt à analyser</h4>
+                    <p class="text-slate-500 text-sm mb-6">Cliquez sur le bouton ci-dessous pour analyser les nouveaux emails</p>
+                    {% if not gmail_configured %}
+                    <p class="text-sm text-amber-700 bg-amber-50 rounded-lg px-4 py-2 mb-6 inline-block" id="gmailWarning">
+                        <i class="fas fa-exclamation-triangle mr-1" aria-hidden="true"></i>Les identifiants Gmail ne sont pas configurés (GMAIL_EMAIL, GMAIL_APP_PASSWORD)&nbsp;: aucun email ne pourra être lu.
+                    </p>
+                    {% endif %}
+                    <div>
+                        <button type="button" onclick="processEmails()" class="btn-primary text-lg px-8 py-3">
+                            <i class="fas fa-play" aria-hidden="true"></i>
+                            Démarrer le traitement
+                        </button>
+                    </div>
+                </div>
+
+                <div id="processingPanel" class="hidden py-8">
+                    <div class="text-center">
+                        <div class="w-20 h-20 bg-brand-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                            <i class="fas fa-cog text-brand-600 text-3xl animate-spin" aria-hidden="true"></i>
+                        </div>
+                        <h4 class="font-semibold text-slate-800 mb-2">Traitement en cours...</h4>
+                        <p class="text-slate-500 text-sm" id="processingStatus" role="status">Lecture des emails et extraction des commandes. L'analyse peut prendre quelques minutes.</p>
+                    </div>
+
+                    <!-- Barre de progression indéterminée : la durée du traitement n'est pas connue à l'avance -->
+                    <div class="mt-6 max-w-md mx-auto">
+                        <div class="flex justify-between text-sm text-slate-600 mb-2">
+                            <span>Temps écoulé</span>
+                            <span id="elapsedTime">0 s</span>
+                        </div>
+                        <div class="w-full h-3 bg-slate-200 rounded-full overflow-hidden" role="progressbar" aria-label="Traitement des emails en cours">
+                            <div class="h-full w-1/3 bg-gradient-to-r from-brand-500 to-blue-500 rounded-full indeterminate-bar"></div>
+                        </div>
+                    </div>
+
+                    <!-- Journal des étapes -->
+                    <div class="mt-6 bg-slate-900 rounded-lg p-4 max-h-48 overflow-y-auto" id="logContainer">
+                        <pre id="processLog" class="text-green-400 text-xs font-mono"></pre>
+                    </div>
+                </div>
+
+                <div id="resultPanel" class="hidden py-8">
+                    <div class="text-center" id="resultContent"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Colonne latérale -->
+        <div class="space-y-6">
+            <!-- Configuration -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-1 flex items-center gap-2">
+                    <i class="fas fa-server text-brand-500" aria-hidden="true"></i>
+                    Configuration
+                </h3>
+                <p class="text-xs text-slate-400 mb-4">Présence des identifiants dans la configuration&nbsp;; la connexion n'est testée qu'au lancement du traitement.</p>
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg" id="gmailStatus">
+                        <span class="text-sm text-slate-600">Identifiants Gmail</span>
+                        {% if gmail_configured %}
+                        <span class="flex items-center text-emerald-600 text-xs font-medium">
+                            <span class="w-2 h-2 bg-emerald-500 rounded-full mr-1.5" aria-hidden="true"></span>Configurés
+                        </span>
+                        {% else %}
+                        <span class="flex items-center text-red-600 text-xs font-medium">
+                            <span class="w-2 h-2 bg-red-500 rounded-full mr-1.5" aria-hidden="true"></span>Non configurés
+                        </span>
+                        {% endif %}
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-slate-50 rounded-lg" id="llmStatus">
+                        <span class="text-sm text-slate-600">Modèles de langue (OpenAI)</span>
+                        {% if llm_configured %}
+                        <span class="flex items-center text-emerald-600 text-xs font-medium">
+                            <span class="w-2 h-2 bg-emerald-500 rounded-full mr-1.5" aria-hidden="true"></span>Clé configurée
+                        </span>
+                        {% else %}
+                        <span class="flex items-center text-amber-600 text-xs font-medium" title="Sans clé d'API, l'extraction n'utilise que les règles fixes.">
+                            <span class="w-2 h-2 bg-amber-500 rounded-full mr-1.5" aria-hidden="true"></span>Clé absente
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Fonctions d'extraction -->
+            <div class="card p-5">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i class="fas fa-magic text-brand-500" aria-hidden="true"></i>
+                    Fonctions d'extraction
+                </h3>
+                <div class="space-y-3 text-sm">
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-file-pdf text-red-500 w-5" aria-hidden="true"></i>
+                        <span>Lecture du texte des PDF</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-image text-blue-500 w-5" aria-hidden="true"></i>
+                        <span>Lecture des images (modèle de vision)</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-microphone text-purple-500 w-5" aria-hidden="true"></i>
+                        <span>Transcription des notes vocales (Whisper)</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-slate-600">
+                        <i class="fas fa-redo text-amber-500 w-5" aria-hidden="true"></i>
+                        <span>Détection des renouvellements de commande</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    @keyframes indeterminate {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(300%); }
+    }
+    .indeterminate-bar { animation: indeterminate 1.5s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) {
+        .indeterminate-bar { animation: none; width: 100%; opacity: 0.6; }
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Le compteur de temps écoulé est la seule animation pendant l'attente : le journal ne contient
+// que des étapes réellement franchies (envoi de la requête, réponse du serveur).
+let elapsedTimer = null;
+
+function stopElapsedTimer() {
+    if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+    }
+}
+
+function addLog(message, type = 'info') {
+    const colors = {
+        'info': 'text-blue-400',
+        'success': 'text-green-400',
+        'warning': 'text-yellow-400',
+        'error': 'text-red-400'
+    };
+    const line = document.createElement('span');
+    const time = document.createElement('span');
+    time.className = 'text-slate-500';
+    time.textContent = '[' + new Date().toLocaleTimeString('fr-FR') + '] ';
+    const text = document.createElement('span');
+    text.className = colors[type] || 'text-green-400';
+    text.textContent = message;
+    line.append(time, text, '\n');
+    document.getElementById('processLog').appendChild(line);
+    const container = document.getElementById('logContainer');
+    container.scrollTop = container.scrollHeight;
+}
+
+// Panneau de résultat construit sans innerHTML pour les textes : les messages du serveur sont
+// insérés comme du texte.
+function showResultPanel(kind, title, message, actions) {
+    const icons = {
+        success: ['bg-emerald-100', 'fa-check text-emerald-600'],
+        warning: ['bg-amber-100', 'fa-exclamation-triangle text-amber-600'],
+        error: ['bg-red-100', 'fa-times text-red-600']
+    };
+    const [background, glyph] = icons[kind];
+    const content = document.getElementById('resultContent');
+    content.replaceChildren();
+
+    const badge = document.createElement('div');
+    badge.className = 'w-20 h-20 ' + background + ' rounded-full flex items-center justify-center mx-auto mb-4';
+    const icon = document.createElement('i');
+    icon.className = 'fas ' + glyph + ' text-3xl';
+    icon.setAttribute('aria-hidden', 'true');
+    badge.appendChild(icon);
+
+    const heading = document.createElement('h4');
+    heading.className = 'font-semibold text-slate-800 mb-2';
+    heading.textContent = title;
+
+    const paragraph = document.createElement('p');
+    paragraph.className = (kind === 'error' ? 'text-red-600' : 'text-slate-600') + ' mb-6';
+    paragraph.textContent = message;
+
+    const buttons = document.createElement('div');
+    buttons.className = 'flex justify-center gap-3';
+    if (actions.showOrders) {
+        const link = document.createElement('a');
+        link.href = '/orders?status=en_attente';
+        link.className = 'btn-primary';
+        link.innerHTML = '<i class="fas fa-list" aria-hidden="true"></i>Voir les commandes en attente';
+        buttons.appendChild(link);
+    }
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn-secondary';
+    retry.innerHTML = '<i class="fas fa-redo" aria-hidden="true"></i>' + (kind === 'error' ? 'Réessayer' : 'Relancer');
+    retry.addEventListener('click', resetProcess);
+    buttons.appendChild(retry);
+
+    content.append(badge, heading, paragraph, buttons);
+    document.getElementById('processingPanel').classList.add('hidden');
+    document.getElementById('resultPanel').classList.remove('hidden');
+    heading.setAttribute('tabindex', '-1');
+    heading.focus();
+}
+
+function processEmails() {
+    document.getElementById('processPanel').classList.add('hidden');
+    document.getElementById('processingPanel').classList.remove('hidden');
+    document.getElementById('resultPanel').classList.add('hidden');
+    document.getElementById('processLog').replaceChildren();
+
+    const started = Date.now();
+    stopElapsedTimer();
+    document.getElementById('elapsedTime').textContent = '0 s';
+    elapsedTimer = setInterval(() => {
+        document.getElementById('elapsedTime').textContent = Math.floor((Date.now() - started) / 1000) + ' s';
+    }, 1000);
+    addLog('Demande de traitement envoyée au serveur', 'info');
+
+    fetch('/api/process-emails', { method: 'POST' })
+        .then(async response => {
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (error) {
+                // Réponse sans corps JSON : traitée comme une erreur ci-dessous.
+            }
+            stopElapsedTimer();
+            if (!response.ok || !data.success) {
+                const message = data.error || data.message || ('Erreur ' + response.status);
+                addLog('Échec du traitement : ' + message, 'error');
+                showResultPanel('error', 'Erreur', message, {});
+                return;
+            }
+            const count = Number(data.orders_count) || 0;
+            addLog('Réponse du serveur : ' + (data.message || count + ' bon(s) de commande détecté(s)'), 'success');
+            if (count > 0) {
+                showResultPanel('success', 'Traitement terminé', count + ' commande(s) détectée(s), en attente de validation.', {showOrders: true});
+            } else {
+                showResultPanel('warning', 'Traitement terminé', 'Aucun nouveau bon de commande détecté. Si des commandes étaient attendues, vérifiez les identifiants Gmail et le journal du serveur.', {});
+            }
+        })
+        .catch(error => {
+            stopElapsedTimer();
+            addLog('Erreur de connexion : ' + error.message, 'error');
+            showResultPanel('error', 'Erreur de connexion', 'Le serveur n’a pas répondu : ' + error.message, {});
+        });
+}
+
+function resetProcess() {
+    stopElapsedTimer();
+    document.getElementById('processPanel').classList.remove('hidden');
+    document.getElementById('processingPanel').classList.add('hidden');
+    document.getElementById('resultPanel').classList.add('hidden');
+}
+</script>
+{% endblock %}

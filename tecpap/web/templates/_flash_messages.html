@@ -1,0 +1,20 @@
+{# Messages de confirmation ou d'erreur laissés par une action (formulaire POST suivi d'une redirection). #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="space-y-3" id="flashMessages">
+    {% for category, message in messages %}
+    {% if category == 'error' %}
+    <div class="card p-4 flex items-start gap-3 border-l-4 border-l-red-500" role="alert">
+        <i class="fas fa-exclamation-circle text-red-500 mt-0.5" aria-hidden="true"></i>
+        <p class="text-sm text-slate-700">{{ message }}</p>
+    </div>
+    {% else %}
+    <div class="card p-4 flex items-start gap-3 border-l-4 border-l-emerald-500" role="status">
+        <i class="fas fa-check-circle text-emerald-500 mt-0.5" aria-hidden="true"></i>
+        <p class="text-sm text-slate-700">{{ message }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}

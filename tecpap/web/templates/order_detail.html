@@ -1,0 +1,686 @@
+{% extends 'base.html' %}
+
+{% block title %}Commande {{ order|order_reference }} - TECPAP{% endblock %}
+{% block page_title %}Détail de la Commande{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><a href="{{ url_for('pages.orders_list') }}" class="hover:text-brand-600">Commandes</a><span class="mx-2">/</span><span>{{ order|order_reference }}</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- En-tête -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div class="flex items-center gap-4">
+            <a href="{{ url_for('pages.orders_list') }}" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition" aria-label="Retour à la liste des commandes">
+                <i class="fas fa-arrow-left text-slate-600" aria-hidden="true"></i>
+            </a>
+            <div>
+                <div class="flex items-center gap-3">
+                    <h2 class="text-2xl font-bold text-slate-800" id="orderReference">{{ order|order_reference }}</h2>
+                    {% if order.statut == 'en_attente' %}
+                    <span class="badge badge-pending"><i class="fas fa-clock mr-1" aria-hidden="true"></i>En attente</span>
+                    {% elif order.statut == 'validee' %}
+                    <span class="badge badge-validated"><i class="fas fa-check mr-1" aria-hidden="true"></i>Validée</span>
+                    {% elif order.statut == 'rejetee' %}
+                    <span class="badge badge-rejected"><i class="fas fa-times mr-1" aria-hidden="true"></i>Rejetée</span>
+                    {% endif %}
+                </div>
+                <p class="text-slate-500 text-sm mt-1">Reçue le {{ order.created_at|format_datetime if order.created_at else 'N/A' }}</p>
+            </div>
+        </div>
+        {% if order.statut == 'en_attente' %}
+        <div class="flex items-center gap-3">
+            <button type="button" onclick="rejectOrder()" class="btn-danger"><i class="fas fa-times" aria-hidden="true"></i>Rejeter</button>
+            <button type="button" onclick="validateOrder()" class="btn-success"><i class="fas fa-check" aria-hidden="true"></i>Valider</button>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Informations principales -->
+        <div class="lg:col-span-2 space-y-6">
+            <!-- Contrôle de l'extraction automatique -->
+            <div class="card {% if order.anomalies_list or order.champs_manquants_list %}border-l-4 border-l-amber-500{% endif %}" id="extractionAudit">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-clipboard-check text-brand-500" aria-hidden="true"></i>
+                        Contrôle de l'extraction automatique
+                    </h3>
+                </div>
+                <div class="p-5 space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-slate-50 p-3 rounded-lg">
+                            <label class="text-xs font-semibold text-slate-500 uppercase">Langue détectée</label>
+                            <p class="text-slate-800 font-medium mt-1" id="orderLanguage">{{ language_label(order.langue) }}</p>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-lg">
+                            <label class="text-xs font-semibold text-slate-500 uppercase">Modèle de langue</label>
+                            <p class="text-slate-800 font-medium mt-1 font-mono text-sm break-all" id="orderModel">{{ order.modele_llm or 'Aucun modèle enregistré' }}</p>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-lg">
+                            <label class="text-xs font-semibold text-slate-500 uppercase">Confiance</label>
+                            {% if order.confiance is not none %}
+                            {% set confidence = [[order.confiance|int, 0]|max, 100]|min %}
+                            <p class="font-bold mt-1 {% if confidence >= 80 %}text-emerald-700{% elif confidence >= 50 %}text-amber-600{% else %}text-red-600{% endif %}" id="orderConfidence">{{ confidence }} %</p>
+                            <div class="w-full h-1.5 bg-slate-200 rounded-full mt-2 overflow-hidden">
+                                <div class="h-full rounded-full {% if confidence >= 80 %}bg-emerald-500{% elif confidence >= 50 %}bg-amber-500{% else %}bg-red-500{% endif %}" style="width: {{ confidence }}%"></div>
+                            </div>
+                            {% else %}
+                            <p class="text-slate-500 mt-1" id="orderConfidence">Non calculée</p>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    {% if order.routage_modele %}
+                    <div>
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Choix du modèle</label>
+                        <p class="text-sm text-slate-700 mt-1" id="orderRouting">{{ order.routage_modele }}</p>
+                    </div>
+                    {% endif %}
+
+                    <div>
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Anomalies</label>
+                        {% if order.anomalies_list %}
+                        <ul class="mt-2 space-y-2" id="orderAnomalies">
+                            {% for anomaly in order.anomalies_list %}
+                            <li class="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                <i class="fas fa-exclamation-triangle text-amber-500 mt-0.5" aria-hidden="true"></i>
+                                <span>{{ anomaly }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p class="text-sm text-emerald-700 mt-1"><i class="fas fa-check mr-1" aria-hidden="true"></i>Aucune anomalie détectée par les règles de contrôle</p>
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Champs obligatoires manquants</label>
+                        {% if order.champs_manquants_list %}
+                        <div class="flex flex-wrap gap-2 mt-2" id="orderMissingFields">
+                            {% for name in order.champs_manquants_list %}
+                            <span class="badge badge-rejected"><i class="fas fa-minus-circle mr-1" aria-hidden="true"></i>{{ field_label(name) }}</span>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-sm text-emerald-700 mt-1"><i class="fas fa-check mr-1" aria-hidden="true"></i>Aucun</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Détails de la commande -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-file-invoice text-brand-500" aria-hidden="true"></i>
+                        Informations de la commande
+                    </h3>
+                </div>
+                <div class="p-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Site de vente</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.site_vente or 'SXP' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Code Client</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.code_client or 'N/A' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Code Article</label>
+                            <p class="text-slate-800 font-medium mt-1 font-mono bg-slate-50 px-2 py-1 rounded inline-block">{{ order.code_article or 'N/A' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Type Produit</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.produit_type or 'Non spécifié' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Désignation</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ order.nature_produit or 'Non spécifiée' }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantité commandée</label>
+                            <p class="text-slate-800 font-medium mt-1" id="orderQuantity">{{ (order.quantite or 0)|format_quantity(order.unite or 'US') }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantité livrée</label>
+                            <p class="text-slate-800 font-medium mt-1">{{ (order.quantite_livree or 0)|format_quantity(order.unite or 'US') }}</p>
+                        </div>
+                        <div>
+                            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Reste à livrer</label>
+                            <p class="text-slate-800 font-medium mt-1 {% if order.reste_a_livrer and order.reste_a_livrer > 0 %}text-orange-600{% endif %}">{{ (order.reste_a_livrer or 0)|format_quantity(order.unite or 'US') }}</p>
+                        </div>
+                    </div>
+
+                    <!-- Caractéristiques techniques SAGE X3 -->
+                    <div class="mt-6 pt-6 border-t border-slate-100">
+                        <h4 class="font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                            <i class="fas fa-cogs text-brand-400" aria-hidden="true"></i>
+                            Caractéristiques techniques (SAGE X3)
+                        </h4>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Type de sac</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.type_sac or 'N/A' }}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Format</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.format_sac or 'N/A' }}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Type papier</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.type_papier or 'N/A' }}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Grammage</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.grammage or 'N/A' }}{% if order.grammage %} g/m²{% endif %}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Laize</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.laize or 'N/A' }}{% if order.laize %} cm{% endif %}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Impression</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.impression_client or 'N/A' }}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Commercial</label>
+                                <p class="text-slate-800 font-medium mt-1">{{ order.commercial or 'DIVERS' }}</p>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-lg">
+                                <label class="text-xs font-semibold text-slate-500 uppercase">Source</label>
+                                <p class="mt-1">
+                                    {% if order.source == 'whatsapp' %}
+                                    <span class="inline-flex items-center px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                                        <i class="fab fa-whatsapp mr-1" aria-hidden="true"></i>WhatsApp
+                                    </span>
+                                    {% else %}
+                                    <span class="inline-flex items-center px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                                        <i class="fas fa-envelope mr-1" aria-hidden="true"></i>Email
+                                    </span>
+                                    {% endif %}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prix -->
+                    {% if order.prix_unitaire or order.prix_total %}
+                    <div class="mt-6 pt-6 border-t border-slate-100">
+                        <h4 class="font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                            <i class="fas fa-money-bill-wave text-brand-400" aria-hidden="true"></i>
+                            Informations tarifaires
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {% if order.prix_unitaire %}
+                            <div class="bg-emerald-50 p-4 rounded-lg">
+                                <label class="text-xs font-semibold text-emerald-600 uppercase">Prix unitaire</label>
+                                <p class="text-emerald-800 font-bold text-xl mt-1" id="orderUnitPrice">{{ order.prix_unitaire|format_amount(order.devise) }}</p>
+                            </div>
+                            {% endif %}
+                            {% if order.prix_total %}
+                            <div class="bg-emerald-100 p-4 rounded-lg">
+                                <label class="text-xs font-semibold text-emerald-600 uppercase">Prix total</label>
+                                <p class="text-emerald-800 font-bold text-xl mt-1" id="orderTotalPrice">{{ order.prix_total|format_amount(order.devise) }}</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if order.informations_supplementaires %}
+                    <div class="mt-6 pt-6 border-t border-slate-100">
+                        <label class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Détails supplémentaires</label>
+                        <p class="text-slate-700 mt-2 bg-slate-50 p-4 rounded-lg">{{ order.informations_supplementaires }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Message d'origine -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-align-left text-brand-500" aria-hidden="true"></i>
+                        Message d'origine
+                    </h3>
+                    <p class="text-sm text-slate-500 mt-1">Texte analysé par l'extraction automatique, à comparer aux informations extraites.</p>
+                </div>
+                <div class="p-5">
+                    {% if order.message_brut %}
+                    <pre class="whitespace-pre-wrap break-words text-sm text-slate-700 bg-slate-50 border border-slate-200 p-4 rounded-lg max-h-96 overflow-y-auto font-mono" dir="auto" id="rawMessage">{{ order.message_brut }}</pre>
+                    {% else %}
+                    <p class="text-sm text-slate-400" id="rawMessage">Message d'origine non conservé pour cette commande.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Formulaire de modification -->
+            {% if order.statut == 'en_attente' %}
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-edit text-brand-500" aria-hidden="true"></i>
+                        Modifier les informations (compatibles SAGE X3)
+                    </h3>
+                </div>
+                <form id="editForm" class="p-5">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label for="edit_code_article" class="block text-sm font-medium text-slate-700 mb-1">Code article</label>
+                            <input type="text" id="edit_code_article" name="code_article" value="{{ order.code_article or '' }}" class="input-pro" placeholder="ex. : KB100L28MON">
+                        </div>
+                        <div>
+                            <label for="edit_produit_id" class="block text-sm font-medium text-slate-700 mb-1">Produit</label>
+                            <select id="edit_produit_id" name="produit_id" class="input-pro">
+                                <option value="">Sélectionner...</option>
+                                {% for product in products %}
+                                <option value="{{ product.id }}" {% if order.produit_id == product.id %}selected{% endif %}>{{ product.type }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="edit_nature_produit" class="block text-sm font-medium text-slate-700 mb-1">Désignation</label>
+                            <input type="text" id="edit_nature_produit" name="nature_produit" value="{{ order.nature_produit or '' }}" class="input-pro" placeholder="Description du produit">
+                        </div>
+                        <div>
+                            <label for="edit_quantite" class="block text-sm font-medium text-slate-700 mb-1">Quantité</label>
+                            <input type="number" id="edit_quantite" name="quantite" value="{{ order.quantite if order.quantite is not none else '' }}" min="0" step="any" class="input-pro">
+                        </div>
+                        <div>
+                            <label for="edit_unite" class="block text-sm font-medium text-slate-700 mb-1">Unité</label>
+                            <select id="edit_unite" name="unite" class="input-pro">
+                                {% if not order.unite %}
+                                <option value="" selected>Non renseignée</option>
+                                {% endif %}
+                                {% for value, label in unit_choices %}
+                                <option value="{{ value }}" {% if order.unite == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="edit_type_sac" class="block text-sm font-medium text-slate-700 mb-1">Type de sac</label>
+                            <select id="edit_type_sac" name="type_sac" class="input-pro">
+                                <option value="">Sélectionner...</option>
+                                {% for value, label in bag_type_choices %}
+                                <option value="{{ value }}" {% if order.type_sac == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="edit_type_papier" class="block text-sm font-medium text-slate-700 mb-1">Type de papier</label>
+                            <input type="text" id="edit_type_papier" name="type_papier" value="{{ order.type_papier or '' }}" class="input-pro" placeholder="ex. : KB">
+                        </div>
+                        <div>
+                            <label for="edit_grammage" class="block text-sm font-medium text-slate-700 mb-1">Grammage (g/m²)</label>
+                            <input type="number" id="edit_grammage" name="grammage" value="{{ order.grammage or '' }}" min="0" step="1" class="input-pro" placeholder="ex. : 100">
+                        </div>
+                        <div>
+                            <label for="edit_laize" class="block text-sm font-medium text-slate-700 mb-1">Laize (cm)</label>
+                            <input type="number" id="edit_laize" name="laize" value="{{ order.laize or '' }}" min="0" step="1" class="input-pro" placeholder="ex. : 28">
+                        </div>
+                        <div>
+                            <label for="edit_format_sac" class="block text-sm font-medium text-slate-700 mb-1">Format LAR.PRE.LON</label>
+                            <input type="text" id="edit_format_sac" name="format_sac" value="{{ order.format_sac or '' }}" class="input-pro" placeholder="ex. : 15x10x25">
+                        </div>
+                        <div>
+                            <label for="edit_impression_client" class="block text-sm font-medium text-slate-700 mb-1">Impression client</label>
+                            <input type="text" id="edit_impression_client" name="impression_client" value="{{ order.impression_client or '' }}" class="input-pro" placeholder="ex. : logo 2 couleurs">
+                        </div>
+                        <div>
+                            <label for="edit_commercial" class="block text-sm font-medium text-slate-700 mb-1">Commercial</label>
+                            <input type="text" id="edit_commercial" name="commercial" value="{{ order.commercial or 'DIVERS' }}" class="input-pro">
+                        </div>
+                        <div>
+                            <label for="edit_prix_unitaire" class="block text-sm font-medium text-slate-700 mb-1">Prix unitaire</label>
+                            <input type="number" id="edit_prix_unitaire" name="prix_unitaire" value="{{ order.prix_unitaire if order.prix_unitaire is not none else '' }}" min="0" step="any" class="input-pro">
+                        </div>
+                        <div>
+                            <label for="edit_prix_total" class="block text-sm font-medium text-slate-700 mb-1">Prix total</label>
+                            <input type="number" id="edit_prix_total" name="prix_total" value="{{ order.prix_total if order.prix_total is not none else '' }}" min="0" step="any" class="input-pro">
+                        </div>
+                        <div>
+                            <label for="edit_date_livraison" class="block text-sm font-medium text-slate-700 mb-1">Date de livraison</label>
+                            <input type="date" id="edit_date_livraison" name="date_livraison" value="{{ order.date_livraison or '' }}" class="input-pro">
+                        </div>
+                    </div>
+                    <div class="mt-4 flex items-center gap-3">
+                        <button type="submit" class="btn-primary"><i class="fas fa-save" aria-hidden="true"></i>Enregistrer</button>
+                        <span class="text-sm text-slate-400" id="editStatus" role="status">Seuls les champs modifiés sont enregistrés&nbsp;; ils sont repris dans l'export SAGE X3.</span>
+                    </div>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Colonne latérale -->
+        <div class="space-y-6">
+            <!-- Informations du client -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-building text-brand-500" aria-hidden="true"></i>
+                        Client
+                    </h3>
+                </div>
+                <div class="p-5">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 bg-brand-100 rounded-full flex items-center justify-center">
+                            <span class="text-brand-600 font-bold text-lg">{{ (order.client_nom or 'N')[0]|upper }}</span>
+                        </div>
+                        <div>
+                            <p class="font-semibold text-slate-800">{{ order.client_nom or 'Non spécifié' }}</p>
+                        </div>
+                    </div>
+                    <div class="space-y-3 text-sm">
+                        {% if order.client_email %}
+                        <div class="flex items-center gap-2 text-slate-600">
+                            <i class="fas fa-envelope w-5 text-slate-400" aria-hidden="true"></i>
+                            <span>{{ order.client_email }}</span>
+                        </div>
+                        {% endif %}
+                        {% if order.client_telephone %}
+                        <div class="flex items-center gap-2 text-slate-600">
+                            <i class="fas fa-phone w-5 text-slate-400" aria-hidden="true"></i>
+                            <span>{{ order.client_telephone }}</span>
+                        </div>
+                        {% endif %}
+                        {% if conversation_id %}
+                        <a href="/conversations/{{ conversation_id }}" class="flex items-center gap-2 text-brand-600 hover:text-brand-700 font-medium" id="conversationLink">
+                            <i class="fab fa-whatsapp w-5 text-green-600" aria-hidden="true"></i>
+                            <span>Voir la conversation WhatsApp</span>
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Historique de la commande -->
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-history text-brand-500" aria-hidden="true"></i>
+                        Historique
+                    </h3>
+                </div>
+                <div class="p-5">
+                    <div class="space-y-4">
+                        <div class="flex gap-3">
+                            <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-inbox text-blue-600 text-xs" aria-hidden="true"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">Commande reçue</p>
+                                <p class="text-xs text-slate-500">{{ order.created_at|format_datetime if order.created_at else 'N/A' }}</p>
+                            </div>
+                        </div>
+                        {% if order.statut == 'validee' %}
+                        <div class="flex gap-3">
+                            <div class="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-check text-emerald-600 text-xs" aria-hidden="true"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">Validée</p>
+                                <p class="text-xs text-slate-500">Par {{ order.validated_by or 'Commercial' }}</p>
+                            </div>
+                        </div>
+                        {% elif order.statut == 'rejetee' %}
+                        <div class="flex gap-3">
+                            <div class="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-times text-red-600 text-xs" aria-hidden="true"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">Rejetée</p>
+                                <p class="text-xs text-slate-500">{{ order.motif_rejet or 'Aucun motif' }}</p>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fenêtre de confirmation de la validation -->
+<div id="validateModal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="validateTitle" aria-describedby="validateText">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="closeModal('validateModal')"></div>
+    <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="relative w-full max-w-md mx-4 animate-modal pointer-events-auto">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden">
+                <div class="p-6 text-center">
+                    <div class="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-check text-emerald-600 text-2xl" aria-hidden="true"></i>
+                    </div>
+                    <h3 id="validateTitle" class="text-xl font-bold text-slate-800 mb-2">Valider la commande</h3>
+                    <p id="validateText" class="text-slate-500">Êtes-vous sûr de vouloir valider cette commande&nbsp;?<br>Le client en sera prévenu par email et, pour une commande reçue par WhatsApp, par WhatsApp.</p>
+                </div>
+                <div class="flex border-t border-slate-100">
+                    <button type="button" id="validateCancel" onclick="closeModal('validateModal')" class="flex-1 py-4 text-slate-600 font-semibold hover:bg-slate-50 transition">
+                        Annuler
+                    </button>
+                    <button type="button" onclick="confirmValidation()" class="flex-1 py-4 bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition">
+                        <i class="fas fa-check mr-2" aria-hidden="true"></i>Confirmer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fenêtre de rejet -->
+<div id="rejectModal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="rejectTitle">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="closeModal('rejectModal')"></div>
+    <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="relative w-full max-w-md mx-4 animate-modal pointer-events-auto">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden">
+                <div class="p-6">
+                    <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-times text-red-600 text-2xl" aria-hidden="true"></i>
+                    </div>
+                    <h3 id="rejectTitle" class="text-xl font-bold text-slate-800 mb-2 text-center">Rejeter la commande</h3>
+                    <label for="rejectReason" class="block text-sm font-medium text-slate-700 mb-1">Motif communiqué au client (email et WhatsApp)</label>
+                    <p id="rejectReasonHelp" class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-3">Ce texte est envoyé tel quel au client. N'y mettez pas de remarque interne.</p>
+                    <textarea id="rejectReason" rows="3" aria-describedby="rejectReasonHelp" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-transparent transition resize-none" placeholder="ex. : produit non disponible dans ce format"></textarea>
+                </div>
+                <div class="flex border-t border-slate-100">
+                    <button type="button" onclick="closeModal('rejectModal')" class="flex-1 py-4 text-slate-600 font-semibold hover:bg-slate-50 transition">
+                        Annuler
+                    </button>
+                    <button type="button" onclick="confirmRejection()" class="flex-1 py-4 bg-red-500 text-white font-semibold hover:bg-red-600 transition">
+                        <i class="fas fa-times mr-2" aria-hidden="true"></i>Rejeter
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fenêtre de résultat (succès, ou avertissement quand le client n'a pas été prévenu) -->
+<div id="resultModal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="resultTitle" aria-describedby="resultMessage">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="relative w-full max-w-sm mx-4 animate-modal pointer-events-auto">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden p-8 text-center">
+                <div id="resultIcon" class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i id="resultIconGlyph" class="fas fa-check-circle text-emerald-500 text-4xl" aria-hidden="true"></i>
+                </div>
+                <h3 id="resultTitle" class="text-xl font-bold text-slate-800 mb-2">Succès</h3>
+                <p id="resultMessage" class="text-slate-500">Opération effectuée avec succès</p>
+                <button type="button" id="resultClose" onclick="location.reload()" class="btn-secondary mt-6">Fermer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    @keyframes modalIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    .animate-modal { animation: modalIn 0.2s ease-out; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Fenêtres de dialogue : le curseur clavier passe dans la fenêtre ouverte, y reste (touche Tab)
+// et revient à l'élément qui l'a ouverte à la fermeture.
+let modalOpener = null;
+
+function openModal(id, focusId) {
+    modalOpener = document.activeElement;
+    const modal = document.getElementById(id);
+    modal.classList.remove('hidden');
+    const target = focusId ? document.getElementById(focusId) : modal.querySelector('button');
+    if (target) target.focus();
+}
+
+function closeModal(id) {
+    document.getElementById(id).classList.add('hidden');
+    if (modalOpener && document.body.contains(modalOpener)) modalOpener.focus();
+    modalOpener = null;
+}
+
+function validateOrder() {
+    openModal('validateModal', 'validateCancel');
+}
+
+function rejectOrder() {
+    openModal('rejectModal', 'rejectReason');
+}
+
+// Résultat d'une action : « success » (fenêtre verte, page rechargée après 1,5 seconde) ou
+// « warning » (fenêtre orange, la page est rechargée quand l'utilisateur ferme la fenêtre).
+function showResult(title, message, kind) {
+    const warning = kind === 'warning';
+    document.getElementById('resultTitle').textContent = title;
+    document.getElementById('resultMessage').textContent = message;
+    document.getElementById('resultIcon').className = 'w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ' + (warning ? 'bg-amber-100' : 'bg-emerald-100');
+    document.getElementById('resultIconGlyph').className = 'fas text-4xl ' + (warning ? 'fa-exclamation-triangle text-amber-500' : 'fa-check-circle text-emerald-500');
+    openModal('resultModal', 'resultClose');
+    if (!warning) setTimeout(() => location.reload(), 1500);
+}
+
+async function readJson(response) {
+    try {
+        return await response.json();
+    } catch (error) {
+        return {};
+    }
+}
+
+// Canaux par lesquels le client a été prévenu, d'après les indicateurs email_sent et whatsapp_sent de l'API.
+function notificationText(data) {
+    const channels = [];
+    if (data.email_sent) channels.push('par email');
+    if (data.whatsapp_sent) channels.push('par WhatsApp');
+    return channels.length ? 'Client prévenu ' + channels.join(' et ') + '.' : '';
+}
+
+function clientNotNotified(data) {
+    return data.email_sent === false && data.whatsapp_sent === false;
+}
+
+// Validation ou rejet : erreur de l'API, avertissement si le client n'a été prévenu par aucun canal, sinon succès.
+async function showDecision(response, title, done) {
+    if (!response.ok) {
+        alert(await readApiError(response));
+        return;
+    }
+    const data = await readJson(response);
+    if (clientNotNotified(data)) {
+        showResult(title + ', client non prévenu',
+                   done + ', mais ni l\u2019email ni le message WhatsApp n\u2019ont pu être envoyés. Prévenez le client directement.',
+                   'warning');
+        return;
+    }
+    showResult(title, [done + '.', notificationText(data)].filter(Boolean).join(' '), 'success');
+}
+
+function confirmValidation() {
+    closeModal('validateModal');
+    // Sans « validated_by », le serveur enregistre l'utilisateur connecté comme auteur de la validation.
+    fetch('/api/orders/{{ order.id }}/validate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    }).then(response => showDecision(response, 'Commande validée', 'La commande est validée'));
+}
+
+function confirmRejection() {
+    const field = document.getElementById('rejectReason');
+    const reason = field.value.trim();
+    if (!reason) {
+        field.classList.add('ring-2', 'ring-red-500');
+        field.setAttribute('aria-invalid', 'true');
+        field.focus();
+        return;
+    }
+    closeModal('rejectModal');
+    fetch('/api/orders/{{ order.id }}/reject', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({reason: reason})
+    }).then(response => showDecision(response, 'Commande rejetée', 'La commande est rejetée'));
+}
+
+// Formulaire de modification : seuls les champs dont la valeur diffère de celle affichée au
+// chargement de la page sont envoyés, pour qu'un enregistrement ne réécrive jamais un champ
+// que l'utilisateur n'a pas touché.
+const editForm = document.getElementById('editForm');
+if (editForm) {
+    const initialValues = Object.fromEntries(new FormData(editForm));
+    editForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const changes = {};
+        for (const [name, value] of new FormData(editForm)) {
+            if (value !== initialValues[name]) changes[name] = value;
+        }
+        if (Object.keys(changes).length === 0) {
+            document.getElementById('editStatus').textContent = 'Aucune modification à enregistrer.';
+            return;
+        }
+        fetch('/api/orders/{{ order.id }}/update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(changes)
+        }).then(async response => {
+            if (!response.ok) {
+                alert(await readApiError(response));
+                return;
+            }
+            showResult('Enregistré', 'Les modifications ont été enregistrées.', 'success');
+        });
+    });
+}
+
+// Échap ferme la fenêtre ouverte ; Tab et Maj+Tab restent dans la fenêtre.
+document.addEventListener('keydown', e => {
+    const open = document.querySelector('[role="dialog"]:not(.hidden)');
+    if (!open) return;
+    if (e.key === 'Escape') {
+        if (open.id === 'resultModal') {
+            location.reload();
+        } else {
+            closeModal(open.id);
+        }
+        return;
+    }
+    if (e.key !== 'Tab') return;
+    const focusable = Array.from(open.querySelectorAll('button, textarea, input, select, a[href]')).filter(el => !el.disabled);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!open.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+    } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+    }
+});
+</script>
+{% endblock %}

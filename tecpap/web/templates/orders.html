@@ -1,0 +1,291 @@
+{% extends 'base.html' %}
+
+{% block title %}Commandes - TECPAP{% endblock %}
+{% block page_title %}Gestion des Commandes{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Commandes</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- En-tête -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <p class="text-slate-500">Gérez et validez vos bons de commande</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <!-- Boutons d'export -->
+            {% set export_query = '?status=' ~ (current_filter|urlencode) if current_filter else '' %}
+            <div class="dropdown relative">
+                <button type="button" data-menu-toggle aria-haspopup="true" aria-expanded="false" aria-controls="exportMenu" class="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition flex items-center gap-2">
+                    <i class="fas fa-file-excel" aria-hidden="true"></i>
+                    Exporter
+                    <i class="fas fa-chevron-down text-xs" aria-hidden="true"></i>
+                </button>
+                <div id="exportMenu" class="dropdown-menu absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border z-50">
+                    <a href="/export/excel/sage" class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-700 border-b">
+                        <i class="fas fa-file-excel text-emerald-500" aria-hidden="true"></i>
+                        <div>
+                            <p class="font-medium">Excel SAGE X3</p>
+                            <p class="text-xs text-slate-400">Format compatible SAGE</p>
+                        </div>
+                    </a>
+                    <a href="/export/excel{{ export_query }}" class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-700 border-b">
+                        <i class="fas fa-file-excel text-green-500" aria-hidden="true"></i>
+                        <div>
+                            <p class="font-medium">Excel complet</p>
+                            <p class="text-xs text-slate-400">Toutes les colonnes</p>
+                        </div>
+                    </a>
+                    <a href="/export/csv{{ export_query }}" class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-700 border-b">
+                        <i class="fas fa-file-csv text-blue-500" aria-hidden="true"></i>
+                        <div>
+                            <p class="font-medium">CSV</p>
+                            <p class="text-xs text-slate-400">Données brutes</p>
+                        </div>
+                    </a>
+                    <a href="/export/pdf" class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-slate-700">
+                        <i class="fas fa-file-pdf text-red-500" aria-hidden="true"></i>
+                        <div>
+                            <p class="font-medium">Rapport PDF</p>
+                            <p class="text-xs text-slate-400">Avec statistiques</p>
+                        </div>
+                    </a>
+                    {% if current_source or current_search or current_conversation %}
+                    <p class="px-4 py-2 text-xs text-amber-700 bg-amber-50 rounded-b-lg" id="exportFilterNote">Les exports ne suivent que le filtre de statut.</p>
+                    {% endif %}
+                </div>
+            </div>
+            <a href="{{ url_for('pages.process_page') }}" class="btn-primary"><i class="fas fa-envelope" aria-hidden="true"></i>Traiter les emails</a>
+        </div>
+    </div>
+
+    {% if current_conversation %}
+    <!-- Filtre par numéro WhatsApp -->
+    <div class="card p-4 border-l-4 border-l-green-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3" id="conversationFilter">
+        <p class="text-sm text-slate-700">
+            <i class="fab fa-whatsapp text-green-600 mr-1" aria-hidden="true"></i>
+            Commandes du numéro <strong class="font-mono">{{ current_conversation.phone }}</strong> : envoyées depuis ce numéro ou passées par un client dont c'est le téléphone.
+        </p>
+        <div class="flex items-center gap-3 text-sm">
+            <a href="/conversations/{{ current_conversation.id }}" class="text-brand-600 hover:text-brand-700 font-medium">Voir la conversation</a>
+            <a href="{{ orders_url(conversation=None) }}" class="text-slate-500 hover:text-slate-700">Retirer le filtre</a>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if current_search %}
+    <!-- Recherche -->
+    <div class="card p-4 border-l-4 border-l-brand-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3" id="searchFilter">
+        <p class="text-sm text-slate-700">
+            <i class="fas fa-search text-brand-500 mr-1" aria-hidden="true"></i>
+            Recherche «&nbsp;<strong>{{ current_search }}</strong>&nbsp;»&nbsp;: {{ orders|length }} commande{% if orders|length > 1 %}s{% endif %} trouvée{% if orders|length > 1 %}s{% endif %} (référence, client, email ou téléphone).
+        </p>
+        <a href="{{ orders_url(q=None) }}" class="text-sm text-slate-500 hover:text-slate-700">Effacer la recherche</a>
+    </div>
+    {% endif %}
+
+    <!-- Filtres -->
+    <div class="card p-4 space-y-3">
+        <div class="flex flex-wrap items-center gap-3" id="statusFilters">
+            <span class="text-sm font-medium text-slate-600">Filtrer par statut&nbsp;:</span>
+            {% for value, label, icon, color in [(None, 'Toutes', '', 'bg-brand-500'), ('en_attente', 'En attente', 'fa-clock', 'bg-amber-500'), ('validee', 'Validées', 'fa-check', 'bg-emerald-500'), ('rejetee', 'Rejetées', 'fa-times', 'bg-red-500')] %}
+            <a href="{{ orders_url(status=value) }}" {% if current_filter == value %}aria-current="true" {% endif %}class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_filter == value %}{{ color }} text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                {% if icon %}<i class="fas {{ icon }} mr-1" aria-hidden="true"></i>{% endif %}{{ label }}
+            </a>
+            {% endfor %}
+        </div>
+        <div class="flex flex-wrap items-center gap-3" id="sourceFilters">
+            <span class="text-sm font-medium text-slate-600">Filtrer par canal&nbsp;:</span>
+            <a href="{{ orders_url(source=None) }}" {% if not current_source %}aria-current="true" {% endif %}class="px-4 py-2 rounded-lg text-sm font-medium transition {% if not current_source %}bg-brand-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                Tous
+            </a>
+            {% for value, label in order_sources.items() %}
+            <a href="{{ orders_url(source=value) }}" {% if current_source == value %}aria-current="true" {% endif %}class="px-4 py-2 rounded-lg text-sm font-medium transition {% if current_source == value %}{{ 'bg-green-500' if value == 'whatsapp' else 'bg-blue-500' }} text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                <i class="{{ 'fab fa-whatsapp' if value == 'whatsapp' else 'fas fa-envelope' }} mr-1" aria-hidden="true"></i>{{ label }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Tableau des commandes -->
+    <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full table-pro">
+                <thead>
+                    <tr>
+                        <th>Référence</th>
+                        <th>Client</th>
+                        <th>Produit</th>
+                        <th>Quantité</th>
+                        <th>Source</th>
+                        <th>Date</th>
+                        <th>Statut</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                    <tr>
+                        <td>
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center">
+                                    <i class="fas fa-file-invoice text-slate-500" aria-hidden="true"></i>
+                                </div>
+                                <div>
+                                    <p class="font-semibold text-slate-800">{{ order|order_reference }}</p>
+                                    <p class="text-xs text-slate-400">Identifiant&nbsp;: {{ order.id }}</p>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 bg-brand-100 rounded-full flex items-center justify-center">
+                                    <span class="text-brand-600 text-xs font-bold">{{ (order.client_nom or 'N')[0]|upper }}</span>
+                                </div>
+                                <div>
+                                    <p class="font-medium text-slate-700">{{ order.client_nom or 'N/A' }}</p>
+                                    <p class="text-xs text-slate-400">{{ order.client_email or '' }}</p>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <p class="text-slate-700">{{ order.produit_type or 'N/A' }}</p>
+                            {% if order.dimensions %}
+                            <p class="text-xs text-slate-400">{{ order.dimensions }}</p>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="font-bold text-slate-800">{{ order.quantite|format_quantity }}</span>
+                            <span class="text-slate-400 text-sm">{{ order.unite or 'unités' }}</span>
+                        </td>
+                        <td>
+                            <div class="flex flex-col items-start gap-1">
+                            {% if order.source == 'whatsapp' %}
+                            <span class="inline-flex items-center px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
+                                <i class="fab fa-whatsapp mr-1" aria-hidden="true"></i>WhatsApp
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                                <i class="fas fa-envelope mr-1" aria-hidden="true"></i>Email
+                            </span>
+                            {% endif %}
+                            {% if order.langue %}
+                            <span class="inline-flex items-center px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium" title="Langue détectée&nbsp;: {{ language_label(order.langue) }}" data-language="{{ order.langue }}">
+                                <i class="fas fa-language mr-1" aria-hidden="true"></i>{{ language_label(order.langue, short=True) }}
+                            </span>
+                            {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            {% set received = order.created_at or order.date_commande %}
+                            {% if received %}
+                            <p class="text-slate-600">{{ received|format_date }}</p>
+                            {% if order.created_at and (order.created_at|string|length) > 10 %}
+                            <p class="text-xs text-slate-400">{{ (order.created_at|format_datetime)[11:] }}</p>
+                            {% endif %}
+                            {% else %}
+                            <p class="text-slate-600">N/A</p>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="flex flex-col items-start gap-1">
+                            {% if order.statut == 'en_attente' %}
+                            <span class="badge badge-pending"><i class="fas fa-clock mr-1.5 text-xs" aria-hidden="true"></i>En attente</span>
+                            {% elif order.statut == 'validee' %}
+                            <span class="badge badge-validated"><i class="fas fa-check mr-1.5 text-xs" aria-hidden="true"></i>Validée</span>
+                            {% elif order.statut == 'rejetee' %}
+                            <span class="badge badge-rejected"><i class="fas fa-times mr-1.5 text-xs" aria-hidden="true"></i>Rejetée</span>
+                            {% else %}
+                            <span class="badge bg-slate-100 text-slate-600">{{ order.statut }}</span>
+                            {% endif %}
+                            {% if order.anomalies_list %}
+                            <span class="badge bg-amber-100 text-amber-800" title="{{ order.anomalies_list|join(' ; ') }}" data-anomalies="{{ order.anomalies_list|length }}">
+                                <i class="fas fa-exclamation-triangle mr-1.5 text-xs" aria-hidden="true"></i>{{ order.anomalies_list|length }} anomalie{% if order.anomalies_list|length > 1 %}s{% endif %}
+                            </span>
+                            {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="flex items-center gap-2">
+                                <a href="{{ url_for('pages.order_detail', order_id=order.id) }}" class="p-2 text-brand-600 hover:bg-brand-50 rounded-lg transition" title="Voir le détail" aria-label="Voir le détail de la commande {{ order|order_reference }}">
+                                    <i class="fas fa-eye" aria-hidden="true"></i>
+                                </a>
+                                {% if order.statut == 'en_attente' %}
+                                <button type="button" onclick="validateOrder({{ order.id }})" class="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Valider" aria-label="Valider la commande {{ order|order_reference }}">
+                                    <i class="fas fa-check" aria-hidden="true"></i>
+                                </button>
+                                <button type="button" onclick="rejectOrder({{ order.id }})" class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition" title="Rejeter" aria-label="Rejeter la commande {{ order|order_reference }}">
+                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-16">
+                            <div class="text-slate-400">
+                                <i class="fas fa-inbox text-5xl mb-4" aria-hidden="true"></i>
+                                <p class="font-medium text-lg">Aucune commande trouvée</p>
+                                <p class="text-sm mt-1">{% if current_filter or current_source or current_search or current_conversation %}Aucune commande ne correspond aux filtres choisis{% else %}Commencez par traiter vos emails{% endif %}</p>
+                                <a href="{{ url_for('pages.process_page') }}" class="btn-primary mt-4 inline-flex"><i class="fas fa-envelope" aria-hidden="true"></i>Traiter les emails</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function validateOrder(orderId) {
+    if (confirm('Voulez-vous valider cette commande ? Le client en sera prévenu par email et, pour une commande WhatsApp, par WhatsApp.')) {
+        // Sans « validated_by », le serveur enregistre l'utilisateur connecté comme auteur de la validation.
+        fetch(`/api/orders/${orderId}/validate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        }).then(response => reloadOrShowError(response, 'Commande validée'));
+    }
+}
+
+function rejectOrder(orderId) {
+    const answer = prompt('Motif du rejet, envoyé tel quel au client par email et par WhatsApp (pas de remarque interne) :');
+    if (answer === null) {
+        return;
+    }
+    const reason = answer.trim();
+    if (!reason) {
+        alert('Indiquez un motif : il est communiqué au client.');
+        return;
+    }
+    fetch(`/api/orders/${orderId}/reject`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({reason: reason})
+    }).then(response => reloadOrShowError(response, 'Commande rejetée'));
+}
+
+// Après une validation ou un rejet : erreur de l'API, ou avertissement si le client n'a été
+// prévenu par aucun canal (ni email ni WhatsApp), puis rechargement de la page.
+async function reloadOrShowError(response, done) {
+    if (!response.ok) {
+        alert(await readApiError(response));
+        return;
+    }
+    let data = {};
+    try {
+        data = await response.json();
+    } catch (error) {
+        // Réponse sans corps JSON : rien à signaler de plus.
+    }
+    if (data && data.email_sent === false && data.whatsapp_sent === false) {
+        alert(done + ', mais le client n’a pas été prévenu : ni l’email ni le message WhatsApp n’ont pu être envoyés. Prévenez-le directement.');
+    }
+    location.reload();
+}
+</script>
+{% endblock %}

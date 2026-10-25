@@ -1,1 +1,1 @@
-# Tests package for OrderFlow
+"""Tests automatisés du paquet tecpap."""

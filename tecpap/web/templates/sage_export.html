@@ -1,0 +1,581 @@
+{% extends 'base.html' %}
+
+{% block title %}Export SAGE X3 - TECPAP{% endblock %}
+{% block page_title %}Export SAGE X3{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Export SAGE X3</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <p class="text-slate-500">Exportez vos commandes au format compatible SAGE X3</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="generateAllCodes()" class="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition">
+                <i class="fas fa-magic"></i>
+                Générer tous les codes
+            </button>
+            <a href="/export/excel/sage" class="btn-success" title="Commandes validées uniquement">
+                <i class="fas fa-download"></i>
+                Télécharger Excel SAGE X3 (commandes validées)
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats Overview -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div class="card p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-file-invoice text-blue-600"></i>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-slate-800" id="stat-total">{{ stats.total_orders }}</p>
+                    <p class="text-xs text-slate-500">Total commandes</p>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-check text-emerald-600"></i>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-emerald-600" id="stat-validated">{{ stats.validated_orders }}</p>
+                    <p class="text-xs text-slate-500">Validées</p>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-clock text-amber-600"></i>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-amber-600" id="stat-pending">{{ stats.pending_orders }}</p>
+                    <p class="text-xs text-slate-500">En attente</p>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-barcode text-purple-600"></i>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-purple-600" id="stat-withcode">{{ stats.with_code_article }}</p>
+                    <p class="text-xs text-slate-500">Avec code article</p>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-rose-100 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-exclamation-triangle text-rose-600"></i>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-rose-600" id="stat-nocode">{{ stats.total_orders - stats.with_code_article }}</p>
+                    <p class="text-xs text-slate-500">Sans code</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="card p-5">
+        <div class="flex items-center justify-between mb-2">
+            <h4 class="font-medium text-slate-700">Taux de complétion SAGE X3</h4>
+            <span class="text-sm font-bold text-brand-600" id="completion-rate">
+                {% set rate = ((stats.with_code_article / stats.total_orders * 100) if stats.total_orders > 0 else 0) | round | int %}
+                {{ rate }}%
+            </span>
+        </div>
+        <div class="w-full bg-slate-200 rounded-full h-3">
+            <div class="bg-gradient-to-r from-brand-500 to-emerald-500 h-3 rounded-full transition-all duration-500" 
+                 id="completion-bar"
+                 style="width: {% if stats.total_orders > 0 %}{{ (stats.with_code_article / stats.total_orders * 100) | round }}{% else %}0{% endif %}%"></div>
+        </div>
+    </div>
+
+    <!-- Export Options -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Filter Card -->
+        <div class="card">
+            <div class="p-5 border-b border-slate-100">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fas fa-filter text-brand-500"></i>
+                    Options d'export
+                </h3>
+            </div>
+            <div class="p-5">
+                <form id="exportForm" class="space-y-4">
+                    <div>
+                        <label for="export_status" class="block text-sm font-medium text-slate-700 mb-1">Statut des commandes</label>
+                        <select id="export_status" name="status" class="input-pro">
+                            <option value="validee" selected>Validées uniquement</option>
+                            <option value="en_attente">En attente uniquement</option>
+                            <option value="rejetee">Rejetées uniquement</option>
+                            <option value="">Toutes les commandes (sauf supprimées)</option>
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label for="export_date_from" class="block text-sm font-medium text-slate-700 mb-1">Date début</label>
+                            <input type="date" id="export_date_from" name="date_from" class="input-pro">
+                        </div>
+                        <div>
+                            <label for="export_date_to" class="block text-sm font-medium text-slate-700 mb-1">Date fin (incluse)</label>
+                            <input type="date" id="export_date_to" name="date_to" class="input-pro">
+                        </div>
+                    </div>
+                    <div class="flex gap-3 pt-2">
+                        <button type="button" id="exportSageButton" onclick="exportSage()" class="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <i class="fas fa-file-excel"></i>
+                            Export Excel SAGE X3
+                        </button>
+                        <button type="button" onclick="exportCSV()" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition">
+                            <i class="fas fa-file-csv"></i>
+                            CSV
+                        </button>
+                    </div>
+                    <p id="exportSageHint" class="text-xs text-slate-500">
+                        L'export SAGE X3 ne contient que les commandes validées. Les autres statuts s'exportent en CSV.
+                        Les dates de début et de fin sont incluses.
+                    </p>
+                </form>
+            </div>
+        </div>
+
+        <!-- SAGE X3 Fields Info -->
+        <div class="card">
+            <div class="p-5 border-b border-slate-100">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fas fa-info-circle text-brand-500"></i>
+                    Colonnes SAGE X3
+                </h3>
+            </div>
+            <div class="p-5">
+                <div class="grid grid-cols-2 gap-2 text-sm">
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Numéro commande</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Ligne commande</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Site de vente</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Code client</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Raison sociale</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-blue-50 rounded">
+                        <i class="fas fa-star text-blue-500 text-xs"></i>
+                        <span class="font-medium">Code article</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Désignation</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Qtée commandée</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Unité</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Qté Livrée</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Reste à livrer</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Type SAC</span>
+                    </div>
+                    <div class="flex items-center gap-2 p-2 bg-slate-50 rounded">
+                        <i class="fas fa-check text-emerald-500 text-xs"></i>
+                        <span>Grammage / Laize</span>
+                    </div>
+                </div>
+                <div class="mt-4 p-3 bg-amber-50 rounded-lg space-y-2">
+                    <p class="text-sm text-amber-800">
+                        <i class="fas fa-ruler mr-2"></i>
+                        <strong>Unités :</strong> la feuille d'import ne contient que des quantités en unités de stock (US, pièces).
+                        Les commandes validées en cartons, paquets ou kg sont placées dans la feuille « Unités à convertir » :
+                        convertissez leur quantité en US avant l'import.
+                    </p>
+                    <p class="text-sm text-amber-800">
+                        <i class="fas fa-info-circle mr-2"></i>
+                        <strong>Import :</strong> les commandes entrent dans SAGE X3 par l'import du fichier Excel ; aucune connexion directe à l'API de SAGE X3 n'est configurée.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aperçu : les commandes validées, seules exportées vers SAGE X3 -->
+    {% set validated_orders = orders | selectattr('statut', 'equalto', 'validee') | list %}
+    <div class="card overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div>
+                <h3 class="font-bold text-slate-800">Aperçu des données exportées</h3>
+                <p class="text-sm text-slate-500">Commandes validées, les plus récentes d'abord</p>
+            </div>
+            <span class="text-sm text-slate-500">{{ validated_orders|length }} commande(s) validée(s)</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full table-pro text-sm">
+                <thead>
+                    <tr>
+                        <th>N° Cmd</th>
+                        <th>Code Client</th>
+                        <th>Raison Sociale</th>
+                        <th>Code Article</th>
+                        <th>Désignation</th>
+                        <th>Qté Cmd</th>
+                        <th>Unité</th>
+                        <th>Qté Livrée</th>
+                        <th>Reste</th>
+                        <th>Type SAC</th>
+                        <th>Grammage</th>
+                        <th>Laize</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in validated_orders[:20] %}
+                    {% set unit = (order.unite or 'US')|trim %}
+                    {% set remaining = order.reste_a_livrer if order.reste_a_livrer is not none else (order.quantite or 0) - (order.quantite_livree or 0) %}
+                    <tr>
+                        <td class="font-mono text-xs">{{ order|order_reference }}</td>
+                        <td class="font-mono text-xs">{{ order.code_client or 'CL' ~ '%05d'|format(order.client_id or 0) }}</td>
+                        <td>{{ (order.client_nom or 'N/A')[:20] }}</td>
+                        <td>
+                            {% if order.code_article %}
+                            <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-mono">{{ order.code_article }}</span>
+                            {% else %}
+                            <span class="text-slate-400 text-xs">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-xs">{{ (order.nature_produit or order.produit_type or 'N/A')[:25] }}</td>
+                        <td class="font-semibold">{{ (order.quantite or 0)|format_quantity }}</td>
+                        <td class="text-xs">
+                            {% if is_stock_unit(order.unite) %}
+                            US
+                            {% else %}
+                            <span class="px-2 py-0.5 bg-orange-100 text-orange-700 rounded" title="Quantité à convertir en unités de stock (US) avant l'import : feuille « Unités à convertir »">{{ unit }} · à convertir</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ (order.quantite_livree or 0)|format_quantity }}</td>
+                        <td class="{% if remaining > 0 %}text-orange-600 font-semibold{% endif %}">
+                            {{ remaining|format_quantity }}
+                        </td>
+                        <td class="text-xs">{{ order.type_sac or '-' }}</td>
+                        <td class="text-xs">{{ order.grammage or '-' }}{% if order.grammage %}g{% endif %}</td>
+                        <td class="text-xs">{{ order.laize or '-' }}{% if order.laize %}cm{% endif %}</td>
+                        <td>
+                            <div class="flex items-center gap-1">
+                                {% if not order.code_article %}
+                                <button onclick="generateCodeForOrder({{ order.id }})" 
+                                        class="p-1.5 bg-purple-100 text-purple-600 rounded hover:bg-purple-200 transition"
+                                        title="Générer le code">
+                                    <i class="fas fa-magic text-xs"></i>
+                                </button>
+                                {% endif %}
+                                <a href="/orders/{{ order.id }}" 
+                                   class="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition"
+                                   title="Voir détails">
+                                    <i class="fas fa-eye text-xs"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="13" class="text-center py-12">
+                            <div class="text-slate-400">
+                                <i class="fas fa-inbox text-4xl mb-3"></i>
+                                <p class="font-medium">Aucune commande validée à exporter</p>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if validated_orders|length > 20 %}
+        <div class="p-4 bg-slate-50 text-center text-sm text-slate-500">
+            Affichage des 20 commandes validées les plus récentes sur {{ validated_orders|length }}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Code Article Generator -->
+    <div class="card">
+        <div class="p-5 border-b border-slate-100">
+            <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i class="fas fa-magic text-brand-500"></i>
+                Générateur de Code Article TECPAP
+            </h3>
+        </div>
+        <div class="p-5">
+            {% set code_options = article_code_options() %}
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div>
+                    <label for="gen_paper_type" class="block text-sm font-medium text-slate-700 mb-1">Type papier</label>
+                    <select id="gen_paper_type" class="input-pro">
+                        {% for option in code_options.paper_types %}
+                        <option value="{{ option.value }}">{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="gen_grammage" class="block text-sm font-medium text-slate-700 mb-1">Grammage (g/m²)</label>
+                    <select id="gen_grammage" class="input-pro">
+                        {% for option in code_options.grammages %}
+                        <option value="{{ option.value }}"{% if option.value == '100' %} selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="gen_laize" class="block text-sm font-medium text-slate-700 mb-1">Laize (cm)</label>
+                    <select id="gen_laize" class="input-pro">
+                        {% for option in code_options.laizes %}
+                        <option value="{{ option.value }}"{% if option.value == '28' %} selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="gen_supplier" class="block text-sm font-medium text-slate-700 mb-1">Fournisseur</label>
+                    <select id="gen_supplier" class="input-pro">
+                        <option value="">Sans</option>
+                        {% for option in code_options.suppliers %}
+                        <option value="{{ option.value }}">{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Code généré</label>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="gen_result" class="input-pro font-mono font-bold text-brand-600" readonly>
+                        <button onclick="copyCode()" class="p-2 bg-brand-100 text-brand-600 rounded-lg hover:bg-brand-200">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Le code article est construit par le serveur (/api/article-code/generate), avec les mêmes
+// règles que les codes enregistrés sur les commandes.
+let codeRequest = 0;
+
+async function generateCode() {
+    const requestNumber = ++codeRequest;
+    const payload = {
+        paper_type: document.getElementById('gen_paper_type').value,
+        grammage: document.getElementById('gen_grammage').value,
+        laize: document.getElementById('gen_laize').value,
+        supplier: document.getElementById('gen_supplier').value || null
+    };
+    try {
+        const response = await fetch('/api/article-code/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (requestNumber !== codeRequest) {
+            return;  // une demande plus récente a été envoyée entre-temps
+        }
+        if (data.success) {
+            document.getElementById('gen_result').value = data.code;
+        } else {
+            document.getElementById('gen_result').value = '';
+            showNotification(`Erreur: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Erreur: ${error.message}`, 'error');
+    }
+}
+
+// Auto-generate on change
+document.querySelectorAll('#gen_paper_type, #gen_grammage, #gen_laize, #gen_supplier').forEach(el => {
+    el.addEventListener('change', generateCode);
+});
+
+// Initial generation
+generateCode();
+
+function copyCode() {
+    const code = document.getElementById('gen_result').value;
+    navigator.clipboard.writeText(code);
+    showNotification('Code copié!', 'success');
+}
+
+// L'export SAGE X3 ne contient que les commandes validées : son bouton n'est actif que pour ce statut.
+function updateSageButton() {
+    const status = document.getElementById('export_status').value;
+    const button = document.getElementById('exportSageButton');
+    button.disabled = status !== 'validee';
+    button.title = button.disabled ? "L'export SAGE X3 ne contient que les commandes validées : utilisez le CSV pour ce statut." : '';
+}
+
+document.getElementById('export_status').addEventListener('change', updateSageButton);
+updateSageButton();
+
+function exportSage() {
+    const form = document.getElementById('exportForm');
+    const formData = new FormData(form);
+    const params = new URLSearchParams();
+    
+    for (const [key, value] of formData.entries()) {
+        if (value) params.append(key, value);
+    }
+    
+    window.location.href = '/export/excel/sage?' + params.toString();
+}
+
+function exportCSV() {
+    const form = document.getElementById('exportForm');
+    const formData = new FormData(form);
+    const params = new URLSearchParams();
+    
+    for (const [key, value] of formData.entries()) {
+        if (value) params.append(key, value);
+    }
+    
+    window.location.href = '/export/csv?' + params.toString();
+}
+
+async function generateAllCodes() {
+    if (!confirm('Générer automatiquement les codes articles pour toutes les commandes sans code ?')) {
+        return;
+    }
+    
+    showNotification('Génération en cours...', 'info');
+    
+    try {
+        const response = await fetch('/api/orders/generate-all-codes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`${data.generated} codes générés sur ${data.total_processed} commandes`, 'success');
+            
+            // Update stats
+            refreshStats();
+            
+            // Reload page after 2 seconds
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showNotification(`Erreur: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Erreur: ${error.message}`, 'error');
+    }
+}
+
+async function refreshStats() {
+    try {
+        const response = await fetch('/api/orders/sage-stats');
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('stat-total').textContent = data.stats.total_orders;
+            document.getElementById('stat-withcode').textContent = data.stats.with_code_article;
+            document.getElementById('stat-nocode').textContent = data.stats.without_code_article;
+            document.getElementById('completion-rate').textContent = data.stats.completion_rate + '%';
+            document.getElementById('completion-bar').style.width = data.stats.completion_rate + '%';
+        }
+    } catch (error) {
+        console.error('Error refreshing stats:', error);
+    }
+}
+
+async function generateCodeForOrder(orderId) {
+    try {
+        const response = await fetch(`/api/orders/${orderId}/generate-code`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`Code ${data.code} généré!`, 'success');
+            location.reload();
+        } else {
+            showNotification(`Erreur: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Erreur: ${error.message}`, 'error');
+    }
+}
+
+function showNotification(message, type) {
+    // Remove existing notifications
+    document.querySelectorAll('.notification-toast').forEach(el => el.remove());
+    
+    const colors = {
+        'success': 'bg-emerald-500',
+        'error': 'bg-red-500',
+        'info': 'bg-blue-500',
+        'warning': 'bg-amber-500'
+    };
+    
+    const icons = {
+        'success': 'fa-check-circle',
+        'error': 'fa-exclamation-circle',
+        'info': 'fa-info-circle',
+        'warning': 'fa-exclamation-triangle'
+    };
+    
+    const div = document.createElement('div');
+    div.className = `notification-toast fixed top-4 right-4 px-5 py-3 rounded-lg text-white z-50 shadow-lg flex items-center gap-3 ${colors[type] || colors.info}`;
+    div.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+    document.body.appendChild(div);
+    
+    // Animate in
+    div.style.opacity = '0';
+    div.style.transform = 'translateX(100px)';
+    setTimeout(() => {
+        div.style.transition = 'all 0.3s ease';
+        div.style.opacity = '1';
+        div.style.transform = 'translateX(0)';
+    }, 10);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        div.style.opacity = '0';
+        div.style.transform = 'translateX(100px)';
+        setTimeout(() => div.remove(), 300);
+    }, 3000);
+}
+
+// Refresh stats every 30 seconds
+setInterval(refreshStats, 30000);
+</script>
+{% endblock %}

@@ -1,0 +1,47 @@
+# Les motifs sont relatifs à la racine du contexte de construction : le préfixe **/ les applique
+# à tous les sous-dossiers.
+
+# Secrets et environnements locaux
+**/.env
+**/.env.*
+!.env.example
+**/.venv
+**/venv
+
+# Données : bases, sauvegardes, médias, exports (montés en volumes au lancement)
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+**/*.db.gz
+backups/*
+whatsapp_media/*
+attachments/*
+exports/*
+data/
+orders_output.json
+
+# Dépôt et outils
+.git
+.github
+.gitignore
+.dockerignore
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+htmlcov
+**/.coverage*
+coverage.xml
+**/*.egg-info
+build
+dist
+.vscode
+.idea
+ngrok
+ngrok.exe
+
+# Inutiles à l'exécution : tests, jeu d'évaluation et dépendances de développement
+tests
+evaluation
+requirements-dev.txt

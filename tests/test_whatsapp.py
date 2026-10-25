@@ -1,54 +1,101 @@
 """
-Tests pour le module whatsapp_receiver.py
-Tests de l'intégration WhatsApp/Twilio
+Tests du canal WhatsApp (tecpap.channels.whatsapp) : Twilio, modèle de langue et téléchargements simulés.
 """
 
-import pytest
-import os
-import sys
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
+from PIL import Image
+
+from tecpap.channels.whatsapp import WhatsAppClient, WhatsAppReceiver, declared_message_type, is_allowed_media_url
+from tecpap.config import Settings
+from tecpap.extraction.prompts import TRANSCRIPTION_HINT
+from tecpap.llm.client import LLMClient
+from tests.fakes import FakeLLMClient
+
+TWILIO_MEDIA_URL = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1"
+TWILIO_CREDENTIALS = {"twilio_account_sid": "AC" + "0" * 32, "twilio_auth_token": "jeton"}
+
+
+@pytest.fixture
+def receiver(tmp_path):
+    settings = Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS)
+    return WhatsAppReceiver(settings)
+
+
+def _media_message(content_type, url=TWILIO_MEDIA_URL, **fields):
+    """Formulaire Twilio d'un message avec un média."""
+    return {"From": "whatsapp:+212600000000", "NumMedia": "1", "MessageSid": "SM0001",
+            "MediaUrl0": url, "MediaContentType0": content_type, **fields}
+
+
+def _pdf(path, text):
+    from reportlab.pdfgen import canvas
+
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(100, 750, text)
+    pdf.save()
+    return path
 
 
 class TestWhatsAppConfiguration:
     """Tests de la configuration WhatsApp."""
-    
-    def test_twilio_config_exists(self):
-        """Test que la configuration Twilio existe."""
-        import whatsapp_receiver
-        
-        source = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'whatsapp_receiver.py'), encoding='utf-8').read()
-        assert 'twilio' in source.lower() or 'TWILIO' in source
-    
+
+    def test_twilio_config_exists(self, receiver):
+        """Les identifiants Twilio viennent de la configuration."""
+        assert receiver.account_sid.startswith("AC")
+        assert receiver.auth_token == "jeton"
+
     def test_sandbox_number_format(self):
-        """Test format du numéro sandbox."""
-        # Twilio sandbox format: +14155238886
-        sandbox_number = '+14155238886'
-        
-        assert sandbox_number.startswith('+')
+        """Format du numéro du bac à sable Twilio."""
+        sandbox_number = "+14155238886"
+        assert sandbox_number.startswith("+")
         assert len(sandbox_number) == 12
+
+    def test_whatsapp_client_alias(self):
+        assert WhatsAppClient is WhatsAppReceiver
+
+    def test_media_dir_from_settings(self, receiver, tmp_path):
+        assert receiver.media_dir == str(tmp_path / "whatsapp_media")
+
+    def test_llm_unavailable_without_key(self, receiver):
+        assert isinstance(receiver.llm, LLMClient)
+        assert receiver.llm.available is False
+
+    def test_injected_llm_is_shared_with_media_processing(self, tmp_path):
+        llm = FakeLLMClient()
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path), llm=llm)
+        assert receiver.llm is llm
+        assert receiver.media.llm is llm
+
+    def test_services_share_llm_and_media(self, services):
+        assert services.whatsapp.llm is services.llm
+        assert services.whatsapp.media is services.media
+        assert services.media.llm is services.llm
+
+    def test_connect_without_credentials(self, tmp_path):
+        assert WhatsAppReceiver(Settings.for_tests(tmp_path)).connect() is False
 
 
 class TestPhoneNumberFormatting:
     """Tests du formatage des numéros de téléphone."""
-    
+
     def test_format_moroccan_number_with_plus(self):
         """Test formatage numéro marocain avec +."""
         phone = '+212612345678'
-        
-        # Should be valid format
+
+        # Format valide
         assert phone.startswith('+212')
         assert len(phone) == 13
-    
+
     def test_format_moroccan_number_without_plus(self):
         """Test formatage numéro marocain sans +."""
         phone = '0612345678'
-        
-        # Should start with 0
+
+        # Commence par 0
         assert phone.startswith('0')
         assert len(phone) == 10
-    
+
     def test_normalize_phone_number(self):
         """Test normalisation du numéro."""
         phones = [
@@ -57,8 +104,8 @@ class TestPhoneNumberFormatting:
             '212612345678',
             '06 12 34 56 78'
         ]
-        
-        # All should be convertible to standard format
+
+        # Tous convertibles au format standard
         for phone in phones:
             cleaned = phone.replace(' ', '').replace('-', '')
             assert len(cleaned) >= 10
@@ -66,7 +113,7 @@ class TestPhoneNumberFormatting:
 
 class TestWhatsAppMessageParsing:
     """Tests d'analyse des messages WhatsApp."""
-    
+
     def test_parse_text_message(self):
         """Test parsing d'un message texte."""
         message_data = {
@@ -74,19 +121,19 @@ class TestWhatsAppMessageParsing:
             'From': 'whatsapp:+212612345678',
             'To': 'whatsapp:+14155238886'
         }
-        
+
         assert 'Body' in message_data
         assert message_data['From'].startswith('whatsapp:')
-    
+
     def test_extract_phone_from_whatsapp_format(self):
         """Test extraction du numéro depuis format WhatsApp."""
         whatsapp_from = 'whatsapp:+212612345678'
-        
-        # Extract phone number
+
+        # Extraction du numéro
         phone = whatsapp_from.replace('whatsapp:', '')
-        
+
         assert phone == '+212612345678'
-    
+
     def test_parse_media_message(self):
         """Test parsing d'un message média."""
         message_data = {
@@ -95,25 +142,25 @@ class TestWhatsAppMessageParsing:
             'MediaContentType0': 'audio/ogg',
             'MediaUrl0': 'https://api.twilio.com/media/xxx'
         }
-        
+
         has_media = 'MediaUrl0' in message_data
         assert has_media is True
-    
+
     def test_detect_audio_message(self):
         """Test détection message audio."""
         message_data = {
             'MediaContentType0': 'audio/ogg'
         }
-        
+
         content_type = message_data.get('MediaContentType0', '')
         is_audio = 'audio' in content_type
-        
+
         assert is_audio is True
 
 
 class TestWhatsAppResponseFormatting:
     """Tests du formatage des réponses WhatsApp."""
-    
+
     def test_confirmation_message_format(self):
         """Test format du message de confirmation."""
         order_data = {
@@ -123,8 +170,8 @@ class TestWhatsAppResponseFormatting:
             'quantite': 2,
             'prix_total': 500
         }
-        
-        # Build confirmation message
+
+        # Message de confirmation
         message = f"""✅ Commande #{order_data['id']} reçue
 
 📦 Produit: {order_data['produit']}
@@ -132,10 +179,10 @@ class TestWhatsAppResponseFormatting:
 💰 Total: {order_data['prix_total']} MAD
 
 Merci pour votre commande!"""
-        
+
         assert str(order_data['id']) in message
         assert order_data['produit'] in message
-    
+
     def test_confirmation_no_confidence_percentage(self):
         """Test que la confirmation n'a pas de pourcentage de confiance."""
         order_data = {
@@ -145,91 +192,91 @@ Merci pour votre commande!"""
             'quantite': 1,
             'prix_total': 100
         }
-        
-        # Build message without confidence
+
+        # Message sans taux de confiance
         message = f"""✅ Commande #{order_data['id']} reçue
 
 📦 Produit: {order_data['produit']}
 📊 Quantité: {order_data['quantite']}
 
 Merci!"""
-        
+
         assert 'Confiance' not in message
         assert '%' not in message
-    
+
     def test_error_message_format(self):
         """Test format du message d'erreur."""
         error_message = "❌ Désolé, je n'ai pas pu traiter votre message. Veuillez réessayer."
-        
+
         assert '❌' in error_message or 'Désolé' in error_message
 
 
 class TestTwilioIntegration:
     """Tests d'intégration Twilio (mockés)."""
-    
+
     @pytest.fixture
     def mock_twilio_client(self):
         """Mock du client Twilio."""
         with patch('twilio.rest.Client') as mock:
             yield mock
-    
+
     def test_send_message_structure(self, mock_twilio_client):
         """Test structure d'envoi de message."""
-        # Simulate message sending
+        # Envoi simulé
         message_params = {
             'from_': 'whatsapp:+14155238886',
             'to': 'whatsapp:+212612345678',
             'body': 'Test message'
         }
-        
+
         assert 'from_' in message_params
         assert 'to' in message_params
         assert 'body' in message_params
         assert message_params['from_'].startswith('whatsapp:')
-    
+
     def test_webhook_signature_validation_concept(self):
         """Test concept de validation de signature webhook."""
-        # Twilio sends X-Twilio-Signature header
+        # Twilio envoie l'en-tête X-Twilio-Signature
         headers = {
             'X-Twilio-Signature': 'abc123signature'
         }
-        
+
         assert 'X-Twilio-Signature' in headers
 
 
 class TestAudioProcessing:
     """Tests du traitement audio."""
-    
+
     def test_supported_audio_formats(self):
         """Test formats audio supportés."""
         supported_formats = ['audio/ogg', 'audio/mpeg', 'audio/wav', 'audio/mp4']
-        
+
         test_content_type = 'audio/ogg'
-        
-        # Check if supported
+
+        # Format pris en charge
         is_supported = any(test_content_type.startswith(fmt.split('/')[0]) for fmt in supported_formats)
         assert is_supported
-    
+
     def test_audio_url_download_concept(self):
         """Test concept de téléchargement audio."""
         media_url = 'https://api.twilio.com/2010-04-01/Accounts/xxx/Messages/yyy/Media/zzz'
-        
+
         assert media_url.startswith('https://')
         assert 'twilio.com' in media_url
 
 
 class TestOrderFromWhatsApp:
     """Tests de création de commande depuis WhatsApp."""
-    
+
     def test_whatsapp_order_source(self):
         """Test que la source est WhatsApp."""
         order = {
             'source': 'whatsapp',
             'client_telephone': '+212612345678'
         }
-        
+
         assert order['source'] == 'whatsapp'
-    
+
     def test_order_data_structure(self):
         """Test structure des données de commande."""
         order = {
@@ -242,16 +289,16 @@ class TestOrderFromWhatsApp:
             'source': 'whatsapp',
             'message_original': 'Je veux commander 2 premium packages'
         }
-        
+
         required_fields = ['client_nom', 'client_telephone', 'produit', 'quantite', 'source']
-        
+
         for field in required_fields:
             assert field in order
 
 
 class TestDarijaInWhatsApp:
     """Tests du support Darija dans WhatsApp."""
-    
+
     def test_darija_message_detection(self):
         """Test détection message en Darija."""
         darija_messages = [
@@ -259,15 +306,15 @@ class TestDarijaInWhatsApp:
             'ana bghit chi produit',
             'chhal taman dyal premium'
         ]
-        
-        # Darija keywords
+
+        # Mots-clés en darija
         darija_keywords = ['bghit', 'chhal', 'dial', 'ana', 'chi']
-        
+
         for message in darija_messages:
             message_lower = message.lower()
             has_darija = any(kw in message_lower for kw in darija_keywords)
             assert has_darija
-    
+
     def test_darija_number_words(self):
         """Test mots numériques Darija."""
         number_mappings = {
@@ -277,9 +324,9 @@ class TestDarijaInWhatsApp:
             'rbaa': 4,
             'khamsa': 5
         }
-        
+
         message = 'bghit jouj dial premium'
-        
+
         for word, num in number_mappings.items():
             if word in message:
                 assert num == 2
@@ -287,50 +334,50 @@ class TestDarijaInWhatsApp:
 
 class TestClientIdentification:
     """Tests d'identification client."""
-    
+
     def test_identify_by_phone(self):
         """Test identification par téléphone."""
         existing_client = {
             'telephone': '+212612345678',
             'nom': 'Ahmed Benali'
         }
-        
+
         incoming_phone = '+212612345678'
-        
-        # Match by phone
+
+        # Rapprochement par téléphone
         is_existing = existing_client['telephone'] == incoming_phone
         assert is_existing
-    
+
     def test_new_client_creation_data(self):
         """Test données pour nouveau client."""
         new_client_data = {
-            'nom': None,  # May be unknown
+            'nom': None,  # peut être inconnu
             'telephone': '+212698765432',
             'ville': None
         }
-        
+
         assert 'telephone' in new_client_data
         assert new_client_data['telephone'].startswith('+212')
 
 
 class TestMessageValidation:
     """Tests de validation des messages."""
-    
+
     def test_empty_message(self):
         """Test message vide."""
         message = ''
-        
+
         is_valid = len(message.strip()) > 0
         assert not is_valid
-    
+
     def test_message_too_short(self):
         """Test message trop court."""
         message = 'hi'
         min_length = 3
-        
+
         is_valid = len(message) >= min_length
         assert not is_valid
-    
+
     def test_message_with_order_intent(self):
         """Test message avec intention de commande."""
         messages_with_intent = [
@@ -339,9 +386,9 @@ class TestMessageValidation:
             'I want to order',
             'commande produit'
         ]
-        
+
         order_keywords = ['command', 'order', 'bghit', 'acheter', 'buy']
-        
+
         for message in messages_with_intent:
             message_lower = message.lower()
             has_intent = any(kw in message_lower for kw in order_keywords)
@@ -350,15 +397,15 @@ class TestMessageValidation:
 
 class TestWhatsAppWebhook:
     """Tests du webhook WhatsApp."""
-    
+
     def test_webhook_response_twiml(self):
         """Test réponse TwiML du webhook."""
-        # TwiML response format
+        # Format de réponse TwiML
         twiml_response = '<?xml version="1.0" encoding="UTF-8"?><Response><Message>Test</Message></Response>'
-        
+
         assert 'Response' in twiml_response
         assert 'Message' in twiml_response
-    
+
     def test_webhook_request_parsing(self):
         """Test parsing requête webhook."""
         webhook_data = {
@@ -370,8 +417,8 @@ class TestWhatsAppWebhook:
             'SmsMessageSid': 'SMxxxx',
             'NumMedia': '0'
         }
-        
-        # Required fields
+
+        # Champs obligatoires
         assert 'Body' in webhook_data
         assert 'From' in webhook_data
         assert 'To' in webhook_data
@@ -379,31 +426,31 @@ class TestWhatsAppWebhook:
 
 class TestMediaHandling:
     """Tests de gestion des médias."""
-    
+
     def test_detect_image_media(self):
         """Test détection média image."""
         message_data = {
             'MediaContentType0': 'image/jpeg',
             'NumMedia': '1'
         }
-        
+
         content_type = message_data.get('MediaContentType0', '')
         is_image = content_type.startswith('image/')
-        
+
         assert is_image
-    
+
     def test_detect_voice_note(self):
         """Test détection note vocale."""
         message_data = {
             'MediaContentType0': 'audio/ogg; codecs=opus',
             'NumMedia': '1'
         }
-        
+
         content_type = message_data.get('MediaContentType0', '')
         is_voice = 'audio' in content_type
-        
+
         assert is_voice
-    
+
     def test_multiple_media_count(self):
         """Test comptage médias multiples."""
         message_data = {
@@ -412,18 +459,18 @@ class TestMediaHandling:
             'MediaUrl1': 'url2',
             'MediaUrl2': 'url3'
         }
-        
+
         num_media = int(message_data.get('NumMedia', 0))
-        
+
         assert num_media == 3
 
 
 class TestRateLimiting:
     """Tests de rate limiting (concept)."""
-    
+
     def test_rate_limit_tracking_concept(self):
         """Test concept de tracking rate limit."""
-        # Track requests per phone number
+        # Suivi des requêtes par numéro
         request_tracker = {
             '+212612345678': {
                 'count': 5,
@@ -431,37 +478,269 @@ class TestRateLimiting:
                 'last_request': '2025-01-15T10:05:00'
             }
         }
-        
+
         phone = '+212612345678'
         max_requests_per_minute = 10
-        
+
         current_count = request_tracker.get(phone, {}).get('count', 0)
         is_rate_limited = current_count >= max_requests_per_minute
-        
+
         assert not is_rate_limited  # 5 < 10
 
 
 class TestErrorResponses:
     """Tests des réponses d'erreur."""
-    
+
     def test_transcription_error_message(self):
         """Test message d'erreur de transcription."""
         error_response = "❌ Désolé, je n'ai pas pu transcrire votre message audio. Veuillez réessayer ou envoyer un message texte."
-        
+
         assert 'transcrire' in error_response or 'audio' in error_response
-    
+
     def test_processing_error_message(self):
         """Test message d'erreur de traitement."""
         error_response = "❌ Une erreur s'est produite lors du traitement de votre commande."
-        
+
         assert 'erreur' in error_response.lower()
-    
+
     def test_invalid_format_message(self):
         """Test message format invalide."""
         error_response = "⚠️ Format de message non reconnu. Veuillez décrire votre commande."
-        
+
         assert 'format' in error_response.lower() or 'message' in error_response.lower()
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+
+class TestIncomingMessages:
+    """Analyse des messages reçus par le webhook."""
+
+    def test_text_message(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+212612345678", "Body": " bghit 2000 sachet "})
+        assert result["type"] == "text"
+        assert result["from"] == "+212612345678"
+        assert result["content"] == "bghit 2000 sachet"
+        assert result["media_type"] is None
+        assert result["message_sid"] is None
+
+    def test_output_keys(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+212612345678", "Body": "x"})
+        assert {"type", "from", "to", "timestamp", "content", "media_url", "transcription", "extracted_text",
+                "message_sid", "media_type"} <= set(result)
+
+    def test_message_sid_is_kept(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+1", "Body": "x", "MessageSid": "SM123"})
+        assert result["message_sid"] == "SM123"
+
+    def test_format_for_extraction(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+212612345678", "Body": "500 sacs"})
+        formatted = receiver.format_for_extraction(result)
+        assert formatted["subject"] == "WhatsApp - +212612345678"
+        assert formatted["body"] == "Message: 500 sacs"
+        assert formatted["source"] == "whatsapp"
+
+    def test_invalid_media_count_is_ignored(self, receiver):
+        result = receiver.process_incoming_message({"From": "whatsapp:+1", "Body": "x", "NumMedia": "abc"})
+        assert result["type"] == "text"
+
+    def test_pdf_is_read_with_pypdf(self, receiver, tmp_path):
+        pdf_path = _pdf(tmp_path / "bon.pdf", "Commande 1500 sacs poignees plates")
+
+        with patch.object(receiver, "download_media", return_value=str(pdf_path)) as download:
+            result = receiver.process_incoming_message(_media_message("application/pdf"))
+
+        assert result["type"] == "document"
+        assert result["media_type"] == "application/pdf"
+        assert result["message_sid"] == "SM0001"
+        assert "1500 sacs" in result["extracted_text"]
+        assert result["media_error"] is None
+        assert download.call_args.args[1].endswith(".pdf")
+
+    def test_audio_without_openai_key_is_not_downloaded(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            result = receiver.process_incoming_message(_media_message("audio/ogg"))
+        assert result["type"] == "audio"
+        assert result["transcription"] is None
+        assert "OPENAI_API_KEY" in result["media_error"]
+        get.assert_not_called()
+
+    def test_unsupported_media_is_not_downloaded(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            result = receiver.process_incoming_message(_media_message("video/mp4"))
+        assert result["type"] == "file"
+        assert result["media_type"] == "video/mp4"
+        assert result["media_error"]
+        get.assert_not_called()
+
+    def test_foreign_media_host_is_never_requested(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            result = receiver.process_incoming_message(
+                _media_message("application/pdf", url="https://evil.example.com/bon.pdf")
+            )
+        assert result["type"] == "document"
+        assert result["extracted_text"] is None
+        assert result["media_error"]
+        get.assert_not_called()
+
+    def test_detected_content_wins_over_declared_type(self, tmp_path):
+        llm = FakeLLMClient(image_to_text=["texte"])
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS), llm=llm)
+        pdf_path = _pdf(tmp_path / "image.jpg", "Commande 700 sachets")
+        with patch.object(receiver, "download_media", return_value=str(pdf_path)):
+            result = receiver.process_incoming_message(_media_message("image/jpeg"))
+        assert result["type"] == "document"
+        assert "700 sachets" in result["extracted_text"]
+        assert llm.calls_to("image_to_text") == []
+
+
+class TestMediaDownload:
+    """Téléchargement des médias Twilio."""
+
+    @pytest.mark.parametrize("url, allowed", [
+        (TWILIO_MEDIA_URL, True),
+        ("https://media.twiliocdn.twilio.com/x", True),
+        ("http://api.twilio.com/x", False),
+        ("https://evil.example.com/twilio.com", False),
+        ("https://twilio.com.evil.example/x", False),
+        ("", False),
+        (None, False),
+    ])
+    def test_allowed_media_hosts(self, url, allowed):
+        assert is_allowed_media_url(url) is allowed
+
+    def test_foreign_host_is_never_requested(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get") as get:
+            assert receiver.download_media("https://evil.example.com/x.jpg") is None
+        get.assert_not_called()
+
+    def test_download_saves_file(self, receiver):
+        response = Mock(status_code=200, content=b"donnees")
+        with patch("tecpap.channels.whatsapp.requests.get", return_value=response) as get:
+            path = receiver.download_media(TWILIO_MEDIA_URL, "media.bin")
+        with open(path, "rb") as f:
+            assert f.read() == b"donnees"
+        assert get.call_args.kwargs["auth"] == (receiver.account_sid, receiver.auth_token)
+        assert get.call_args.kwargs["timeout"] > 0
+
+    def test_default_file_name(self, receiver):
+        with patch("tecpap.channels.whatsapp.requests.get", return_value=Mock(status_code=200, content=b"x")):
+            path = receiver.download_media(TWILIO_MEDIA_URL)
+        assert path.endswith(".bin")
+
+    def test_oversized_media_is_refused(self, tmp_path):
+        small = WhatsAppReceiver(Settings.for_tests(tmp_path, max_media_bytes=4))
+        with patch("tecpap.channels.whatsapp.requests.get", return_value=Mock(status_code=200, content=b"12345")):
+            assert small.download_media(TWILIO_MEDIA_URL, "gros.bin") is None
+
+    @pytest.mark.parametrize("media_type, expected", [
+        ("image/jpeg", "image"),
+        ("audio/ogg; codecs=opus", "audio"),
+        ("application/pdf", "document"),
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "document"),
+        ("text/plain", "document"),
+        ("video/mp4", "file"),
+        ("", "file"),
+    ])
+    def test_declared_message_type(self, media_type, expected):
+        assert declared_message_type(media_type) == expected
+
+
+class TestTranscription:
+    """Transcription des notes vocales (modèle simulé)."""
+
+    def _receiver(self, tmp_path, *transcriptions, **overrides):
+        llm = FakeLLMClient(transcribe=transcriptions)
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS, **overrides), llm=llm)
+        audio = tmp_path / "audio.ogg"
+        audio.write_bytes(b"OggS" + b"0" * 500)
+        return receiver, llm, str(audio)
+
+    def test_automatic_language_detection_by_default(self, tmp_path):
+        receiver, llm, audio = self._receiver(tmp_path, "bghit 3000 sachet")
+        with patch.object(receiver, "download_media", return_value=audio) as download:
+            result = receiver.process_incoming_message(_media_message("audio/ogg; codecs=opus"))
+        assert result["type"] == "audio"
+        assert result["media_type"] == "audio/ogg"
+        assert result["transcription"] == "bghit 3000 sachet"
+        assert result["content"] == "bghit 3000 sachet"
+        call = llm.calls_to("transcribe")[0]
+        assert call["model"] == "whisper-1"
+        assert call["language"] is None
+        assert call["prompt"] == TRANSCRIPTION_HINT
+        assert download.call_args.args[1].endswith(".ogg")
+
+    def test_configured_model_and_language_are_sent(self, tmp_path):
+        receiver, llm, audio = self._receiver(tmp_path, "texte", transcription_language="ar",
+                                              model_transcription="transcription-test")
+        with patch.object(receiver, "download_media", return_value=audio):
+            receiver.process_incoming_message(_media_message("audio/ogg"))
+        call = llm.calls_to("transcribe")[0]
+        assert call["language"] == "ar"
+        assert call["model"] == "transcription-test"
+
+    def test_empty_audio_is_ignored(self, tmp_path):
+        receiver, llm, audio = self._receiver(tmp_path, "texte")
+        with open(audio, "wb") as f:
+            f.write(b"0")
+        with patch.object(receiver, "download_media", return_value=audio):
+            result = receiver.process_incoming_message(_media_message("audio/ogg"))
+        assert result["transcription"] is None
+        assert result["media_error"]
+        assert llm.calls_to("transcribe") == []
+
+    def test_text_is_kept_when_transcription_fails(self, tmp_path):
+        receiver, _llm, audio = self._receiver(tmp_path)
+        with patch.object(receiver, "download_media", return_value=audio):
+            result = receiver.process_incoming_message(_media_message("audio/ogg", Body="voir le vocal"))
+        assert result["type"] == "audio"
+        assert result["transcription"] is None
+        assert result["content"] == "voir le vocal"
+
+
+class TestImageReading:
+    """Lecture du texte des images (modèle simulé)."""
+
+    def test_image_text_uses_vision_model(self, tmp_path):
+        llm = FakeLLMClient(image_to_text=["2000 sachets"])
+        settings = Settings.for_tests(tmp_path, model_vision="vision-test", **TWILIO_CREDENTIALS)
+        receiver = WhatsAppReceiver(settings, llm=llm)
+        image = tmp_path / "photo.jpg"
+        Image.new("RGB", (10, 10), "white").save(image, "JPEG")
+
+        with patch.object(receiver, "download_media", return_value=str(image)) as download:
+            result = receiver.process_incoming_message(_media_message("image/jpeg"))
+
+        assert result["type"] == "image"
+        assert result["extracted_text"] == "2000 sachets"
+        call = llm.calls_to("image_to_text")[0]
+        assert call["model"] == "vision-test"
+        assert call["mime_type"] == "image/jpeg"
+        assert download.call_args.args[1].endswith(".jpg")
+
+    def test_unreadable_image_is_reported(self, tmp_path):
+        llm = FakeLLMClient(image_to_text=["texte"])
+        receiver = WhatsAppReceiver(Settings.for_tests(tmp_path, **TWILIO_CREDENTIALS), llm=llm)
+        image = tmp_path / "photo.jpg"
+        image.write_bytes(b"\xff\xd8\xff")
+        with patch.object(receiver, "download_media", return_value=str(image)):
+            result = receiver.process_incoming_message(_media_message("image/jpeg"))
+        assert result["type"] == "image"
+        assert result["extracted_text"] is None
+        assert result["media_error"]
+        assert llm.calls_to("image_to_text") == []
+
+
+class TestSendReply:
+    """Envoi de messages par l'API Twilio (simulée)."""
+
+    def test_send_reply_formats_number(self, receiver):
+        receiver.twilio_client = MagicMock()
+        receiver.twilio_client.messages.create.return_value = Mock(sid="SM123")
+
+        assert receiver.send_reply("212612345678", "Bonjour") == "SM123"
+        kwargs = receiver.twilio_client.messages.create.call_args.kwargs
+        assert kwargs["to"] == "whatsapp:+212612345678"
+        assert kwargs["from_"] == "whatsapp:+14155238886"
+
+    def test_send_reply_without_credentials_raises(self, tmp_path):
+        with pytest.raises(RuntimeError):
+            WhatsAppReceiver(Settings.for_tests(tmp_path)).send_reply("+212600000000", "x")

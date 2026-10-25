@@ -1,0 +1,252 @@
+{% extends 'base.html' %}
+
+{% block title %}Base de connaissances - TECPAP{% endblock %}
+{% block page_title %}Base de connaissances{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Base de connaissances</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    {% include '_flash_messages.html' %}
+
+    <p class="text-slate-500">Documents rédigés par l'équipe commerciale, découpés en extraits (passages d'une section, unité de la recherche). L'assistant WhatsApp répond aux questions sur les produits uniquement à partir de ces extraits.</p>
+
+    {% if not rag_enabled %}
+    <div class="card p-4 border-l-4 border-l-amber-500 flex items-start gap-3" id="ragDisabled">
+        <i class="fas fa-exclamation-triangle text-amber-500 mt-0.5"></i>
+        <p class="text-sm text-slate-700">La recherche dans la base de connaissances est désactivée (RAG_ENABLED=false) : l'assistant ne s'en sert pas pour répondre.</p>
+    </div>
+    {% endif %}
+    {% if not chatbot_enabled %}
+    <div class="card p-4 border-l-4 border-l-amber-500 flex items-start gap-3" id="chatbotDisabled">
+        <i class="fas fa-exclamation-triangle text-amber-500 mt-0.5"></i>
+        <p class="text-sm text-slate-700">L'assistant WhatsApp est désactivé (CHATBOT_ENABLED=false) : les questions des clients ne reçoivent pas de réponse automatique.</p>
+    </div>
+    {% endif %}
+
+    <!-- Indicateurs -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase font-medium">Documents indexés</p>
+            <p class="text-2xl font-bold text-brand-600 mt-1" id="documentCount">{{ documents|length }}</p>
+        </div>
+        <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase font-medium">Extraits indexés</p>
+            <p class="text-2xl font-bold text-brand-600 mt-1" id="chunkCount">{{ chunk_count }}</p>
+        </div>
+        <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase font-medium">Calcul des plongements</p>
+            <p class="text-sm font-bold text-slate-800 mt-2 font-mono break-all" id="embedderName">{{ embedder_name }}</p>
+            <p class="text-xs text-slate-400 mt-1">RAG_EMBEDDER={{ embedder_setting }}</p>
+        </div>
+        <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase font-medium">Seuil de réponse</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1" id="minScore">{{ "%.2f"|format(min_score) }}</p>
+            <p class="text-xs text-slate-400 mt-1">{{ top_k }} extraits au plus par question</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Recherche de test -->
+        <div class="lg:col-span-2 card">
+            <div class="p-5 border-b border-slate-100">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fas fa-search text-brand-500"></i>
+                    Tester une question
+                </h3>
+                <p class="text-sm text-slate-500 mt-1">Recherche hybride : classement par mots-clés (Okapi BM25) et classement par similarité des plongements (vecteurs numériques qui représentent les textes), fusionnés par Reciprocal Rank Fusion (RRF, fusion des deux classements par leurs rangs). Aucun modèle de langue n'est appelé.</p>
+            </div>
+            <div class="p-5 space-y-5">
+                <form method="get" action="{{ url_for('assistant.knowledge') }}" class="flex flex-col md:flex-row gap-3" id="searchForm">
+                    <input type="search" name="q" aria-label="Question d'un client" value="{{ query }}" maxlength="1000" class="input-pro" dir="auto" placeholder="Question d'un client, par exemple : vous avez des sacs avec poignées torsadées ?">
+                    <button type="submit" class="btn-primary justify-center"><i class="fas fa-search"></i>Rechercher</button>
+                </form>
+
+                {% if search %}
+                {% set positive = search.would_answer and rag_enabled %}
+                <div class="p-4 rounded-lg border {% if positive %}bg-emerald-50 border-emerald-200{% else %}bg-amber-50 border-amber-200{% endif %}" id="answerDecision" data-would-answer="{{ 1 if positive else 0 }}">
+                    {% if positive %}
+                    <p class="font-semibold text-emerald-800 flex items-center gap-2"><i class="fas fa-check-circle"></i>L'assistant répondrait</p>
+                    {% else %}
+                    <p class="font-semibold text-amber-800 flex items-center gap-2"><i class="fas fa-exclamation-circle"></i>L'assistant ne répondrait pas à partir de la base</p>
+                    {% endif %}
+                    <p class="text-sm text-slate-700 mt-1">{{ search.explanation }}</p>
+                    {% if not rag_enabled %}
+                    <p class="text-sm text-slate-700 mt-1">La recherche est désactivée (RAG_ENABLED=false) : la base n'est pas consultée.</p>
+                    {% endif %}
+                    <p class="text-xs text-slate-500 mt-2">Meilleur score de pertinence : <strong>{{ "%.3f"|format(search.best) }}</strong> · seuil : <strong>{{ "%.2f"|format(min_score) }}</strong> · langue de réponse : {{ language_label(search.language) }}</p>
+                    {% if search.answer and search.answer.reason == 'excerpt' %}
+                    <div class="mt-3 text-sm">
+                        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Réponse sans modèle de langue (citation de l'extrait le plus pertinent)</p>
+                        <p class="mt-1 p-3 bg-white rounded border border-emerald-100 text-slate-700 whitespace-pre-wrap" dir="auto" id="answerPreview">{{ search.answer.text }}</p>
+                        <p class="text-xs text-slate-400 mt-1">Avec un modèle de langue configuré, la réponse est rédigée par le modèle à partir des mêmes extraits.</p>
+                    </div>
+                    {% endif %}
+                </div>
+
+                {% if search.failed %}
+                <p class="text-sm text-red-600">La recherche a échoué. Le détail est consigné dans le journal du serveur.</p>
+                {% endif %}
+
+                <div class="overflow-x-auto">
+                    <table class="w-full table-pro" id="searchResults">
+                        <thead>
+                            <tr>
+                                <th>Rang</th>
+                                <th>Extrait</th>
+                                <th>Pertinence</th>
+                                <th>Couverture BM25</th>
+                                <th>Similarité lexicale</th>
+                                <th>Similarité dense</th>
+                                <th>BM25</th>
+                                <th>RRF</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for hit in search.hits %}
+                            <tr>
+                                <td class="text-slate-500">{{ loop.index }}</td>
+                                <td class="max-w-sm">
+                                    <p class="font-medium text-slate-800">{{ hit.chunk.title }}</p>
+                                    <p class="text-xs text-slate-500">{{ hit.chunk.section }} · <span class="font-mono">{{ hit.chunk.source_path }}</span></p>
+                                    <p class="text-xs text-slate-400 mt-1 line-clamp-3" dir="auto">{{ hit.chunk.text|truncate(220) }}</p>
+                                </td>
+                                <td>
+                                    {% if hit.score >= min_score %}
+                                    <span class="badge badge-validated" title="Atteint le seuil">{{ "%.3f"|format(hit.score) }}</span>
+                                    {% else %}
+                                    <span class="badge bg-slate-100 text-slate-600" title="Sous le seuil">{{ "%.3f"|format(hit.score) }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-slate-600">{{ "%.3f"|format(hit.coverage) }}</td>
+                                <td class="text-slate-600">{{ "%.3f"|format(hit.lexical_score) }}</td>
+                                <td class="text-slate-600">{{ "%.3f"|format(hit.dense_score) }}</td>
+                                <td class="text-slate-600">{{ "%.2f"|format(hit.bm25_score) }}</td>
+                                <td class="text-slate-600">{{ "%.4f"|format(hit.rrf_score) }}</td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center py-8 text-slate-400 text-sm">Aucun extrait trouvé</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="text-xs text-slate-500 space-y-1 bg-slate-50 rounded-lg p-4">
+                    <p class="font-semibold text-slate-600">Lecture des scores</p>
+                    <p><strong>Pertinence</strong> : moyenne de la couverture BM25 et de la similarité lexicale, entre 0 et 1 ; c'est elle qui est comparée au seuil de réponse.</p>
+                    <p><strong>Couverture BM25</strong> : part du poids des mots de la question (mots rares plus lourds que les mots courants) présents dans l'extrait.</p>
+                    <p><strong>Similarité lexicale</strong> : similarité cosinus entre les suites de 3 à 5 caractères de la question et de l'extrait ; elle tolère les variantes d'écriture.</p>
+                    <p><strong>Similarité dense</strong> : similarité cosinus entre le plongement de la question et celui de l'extrait.</p>
+                    <p><strong>BM25</strong> : score Okapi BM25 brut de la recherche par mots-clés. <strong>RRF</strong> : score de la fusion des deux classements, qui ordonne les résultats.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- État de l'index -->
+        <div class="space-y-6">
+            <div class="card">
+                <div class="p-5 border-b border-slate-100">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fas fa-sync-alt text-brand-500"></i>
+                        Index
+                    </h3>
+                </div>
+                <div class="p-5 space-y-4" id="indexStatus">
+                    {% if not status.readable %}
+                    <p class="text-sm text-amber-700"><i class="fas fa-exclamation-triangle mr-1"></i>État inconnu : {{ status.problem }} (<span class="font-mono">{{ knowledge_dir }}</span>).</p>
+                    {% elif status.up_to_date %}
+                    <p class="text-sm text-emerald-700" data-up-to-date="1"><i class="fas fa-check-circle mr-1"></i>Index à jour : il correspond aux documents du dossier.</p>
+                    {% else %}
+                    <div class="text-sm text-amber-700" data-up-to-date="0">
+                        <p><i class="fas fa-exclamation-triangle mr-1"></i>Index à mettre à jour :</p>
+                        <ul class="list-disc ml-6 mt-1 space-y-0.5">
+                            {% if status.changed %}<li>{{ status.changed }} extrait(s) nouveau(x) ou modifié(s)</li>{% endif %}
+                            {% if status.removed %}<li>{{ status.removed }} extrait(s) supprimé(s) du dossier</li>{% endif %}
+                            {% if status.other_space %}<li>{{ status.other_space }} extrait(s) calculé(s) avec un autre calcul des plongements</li>{% endif %}
+                        </ul>
+                    </div>
+                    {% endif %}
+
+                    {% if spaces %}
+                    <div class="text-xs text-slate-500">
+                        <p class="font-semibold text-slate-600">Espace vectoriel des extraits indexés</p>
+                        {% for space, count in spaces|dictsort %}
+                        <p><span class="font-mono">{{ space }}</span> : {{ count }} extrait(s)</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <div class="text-xs text-slate-500" id="lastIndex">
+                        <p class="font-semibold text-slate-600">Dernière réindexation depuis le tableau de bord</p>
+                        {% if last_index %}
+                        <p>{{ last_index.at|timestamp }} (UTC){% if last_index.user %}, par {{ last_index.user }}{% endif %}{% if last_index.force %}, vecteurs recalculés{% endif %}</p>
+                        <p>{{ last_index.stats.total }} extraits indexés : {{ last_index.stats.added }} ajouté(s), {{ last_index.stats.updated }} mis à jour, {{ last_index.stats.removed }} supprimé(s), {{ last_index.stats.unchanged }} inchangé(s).</p>
+                        {% else %}
+                        <p>Aucune depuis le démarrage du serveur (l'index est mis à jour à chaque démarrage).</p>
+                        {% endif %}
+                    </div>
+
+                    <form method="post" action="{{ url_for('assistant.reindex_knowledge') }}" class="space-y-3" id="reindexForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <label class="flex items-center gap-2 text-sm text-slate-600">
+                            <input type="checkbox" name="force" value="1" class="rounded border-slate-300">
+                            Recalculer tous les vecteurs
+                        </label>
+                        <button type="submit" class="btn-primary w-full justify-center"><i class="fas fa-sync-alt"></i>Réindexer</button>
+                        <p class="text-xs text-slate-400">Seuls les extraits nouveaux ou modifiés sont recalculés, sauf si la case est cochée.</p>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Documents indexés -->
+    <div class="card overflow-hidden">
+        <div class="p-5 border-b border-slate-100">
+            <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i class="fas fa-book-open text-brand-500"></i>
+                Documents et sections indexés
+            </h3>
+            <p class="text-sm text-slate-500 mt-1">Dossier : <span class="font-mono">{{ knowledge_dir }}</span>. Les fichiers dont le nom commence par « _ » (guides de rédaction) ne sont pas indexés.</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full table-pro" id="documentsTable">
+                <thead>
+                    <tr>
+                        <th>Document</th>
+                        <th>Fichier</th>
+                        <th>Extraits</th>
+                        <th>Sections</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for document in documents %}
+                    <tr>
+                        <td class="font-medium text-slate-800">{{ document.title }}</td>
+                        <td class="font-mono text-xs text-slate-500">{{ document.source_path }}</td>
+                        <td class="text-slate-600">{{ document.chunks }}</td>
+                        <td>
+                            <div class="flex flex-wrap gap-1">
+                                {% for section in document.sections %}
+                                <span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs">{{ section }}</span>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center py-12 text-slate-400">
+                            <i class="fas fa-book-open text-4xl mb-3"></i>
+                            <p class="font-medium">Aucun document indexé</p>
+                            <p class="text-sm mt-1">Ajoutez des fichiers Markdown dans le dossier de la base de connaissances, puis réindexez.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

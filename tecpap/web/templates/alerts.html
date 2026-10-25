@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+
+{% block title %}Alertes - TECPAP{% endblock %}
+{% block page_title %}Centre d'Alertes{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Alertes</span>{% endblock %}
+
+{% block content %}
+{# Gravité des alertes calculées par AlertSystem : « high » (critique) ou « medium » (avertissement). #}
+{% set critical_alerts = alerts|selectattr('severity', 'equalto', 'high')|list %}
+{% set warning_alerts = alerts|selectattr('severity', 'equalto', 'medium')|list %}
+<div class="space-y-6">
+    <!-- Compteurs -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
+                    <i class="fas fa-exclamation-triangle text-red-600" aria-hidden="true"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500">Critiques</p>
+                    <p class="text-2xl font-bold text-red-600" id="criticalCount">{{ critical_alerts|length }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+                    <i class="fas fa-exclamation-circle text-amber-600" aria-hidden="true"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500">Avertissements</p>
+                    <p class="text-2xl font-bold text-amber-600" id="warningCount">{{ warning_alerts|length }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="card p-5">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <i class="fas fa-info-circle text-blue-600" aria-hidden="true"></i>
+                </div>
+                <div>
+                    <p class="text-sm text-slate-500">Informations</p>
+                    <p class="text-2xl font-bold text-blue-600" id="infoCount">{{ alerts|length - critical_alerts|length - warning_alerts|length }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Liste des alertes -->
+    <div class="card">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div>
+                <h3 class="font-bold text-slate-800">Toutes les alertes</h3>
+                <p class="text-sm text-slate-500">Recalculées à chaque affichage à partir des commandes en attente&nbsp;: une alerte disparaît quand sa commande est validée ou rejetée.</p>
+            </div>
+            <button type="button" onclick="refreshAlerts()" class="btn-secondary text-sm">
+                <i class="fas fa-sync-alt" aria-hidden="true"></i>Actualiser
+            </button>
+        </div>
+        <div class="divide-y divide-slate-100" id="alertList">
+            {% for alert in alerts %}
+            <div class="p-5 hover:bg-slate-50 transition" data-severity="{{ alert.severity }}" data-type="{{ alert.type }}">
+                <div class="flex items-start gap-4">
+                    {% if alert.severity == 'high' %}
+                    <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-exclamation-triangle text-red-600" aria-hidden="true"></i>
+                    </div>
+                    {% elif alert.severity == 'medium' %}
+                    <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-exclamation-circle text-amber-600" aria-hidden="true"></i>
+                    </div>
+                    {% else %}
+                    <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-info-circle text-blue-600" aria-hidden="true"></i>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <h4 class="font-semibold text-slate-800">{{ alert.label }}</h4>
+                            {% if alert.severity == 'high' %}
+                            <span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium">Critique</span>
+                            {% elif alert.severity == 'medium' %}
+                            <span class="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">Attention</span>
+                            {% endif %}
+                        </div>
+                        <p class="text-sm text-slate-600">{{ alert.message }}</p>
+                    </div>
+                    {% if alert.order_id %}
+                    <a href="{{ url_for('pages.order_detail', order_id=alert.order_id) }}" class="text-brand-600 hover:text-brand-700 font-medium text-sm whitespace-nowrap p-2">
+                        <i class="fas fa-eye mr-1" aria-hidden="true"></i>Voir la commande
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="p-12 text-center">
+                <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-bell-slash text-slate-400 text-2xl" aria-hidden="true"></i>
+                </div>
+                <p class="font-medium text-slate-600">Aucune alerte</p>
+                <p class="text-sm text-slate-400 mt-1">Aucune commande en attente ne déclenche de règle d'alerte</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function refreshAlerts() {
+    location.reload();
+}
+</script>
+{% endblock %}

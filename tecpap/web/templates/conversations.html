@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+
+{% block title %}Conversations WhatsApp - TECPAP{% endblock %}
+{% block page_title %}Conversations WhatsApp{% endblock %}
+{% block breadcrumb %}<span class="mx-2">/</span><span>Conversations</span>{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    {% include '_flash_messages.html' %}
+
+    <!-- En-tête -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <p class="text-slate-500">Échanges entre les clients et l'assistant WhatsApp. Une conversation « à reprendre » a été transférée à l'équipe commerciale : l'assistant n'y répond plus jusqu'à la fin de la prise en charge.</p>
+    </div>
+
+    {% if inbox_counts and (inbox_counts.pending or inbox_counts.processing or inbox_counts.failed) %}
+    <!-- File des messages reçus -->
+    <div id="inboxStatus" class="card p-4 border-l-4 {% if inbox_counts.failed %}border-l-red-500{% else %}border-l-blue-500{% endif %}">
+        <p class="text-sm text-slate-700">
+            <i class="fas fa-inbox mr-1 {% if inbox_counts.failed %}text-red-600{% else %}text-blue-600{% endif %}"></i>
+            Messages WhatsApp reçus :
+            {{ inbox_counts.pending + inbox_counts.processing }} en attente ou en cours de traitement{% if inbox_counts.failed %},
+            <strong class="text-red-700">{{ inbox_counts.failed }} en échec</strong> (le client a reçu au plus le message
+            d'erreur générique : consultez le journal du serveur et répondez-lui depuis sa conversation){% endif %}.
+        </p>
+    </div>
+    {% endif %}
+
+    <!-- Indicateurs -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="card p-4 border-l-4 border-l-amber-500">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase font-medium">À reprendre</p>
+                    <p class="text-2xl font-bold text-amber-600 mt-1" id="handoffTotal">{{ handoff_total }}</p>
+                </div>
+                <div class="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-headset text-amber-600"></i>
+                </div>
+            </div>
+        </div>
+        <div class="card p-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase font-medium">Conversations affichées</p>
+                    <p class="text-2xl font-bold text-brand-600 mt-1">{{ conversations|length }}</p>
+                </div>
+                <div class="w-10 h-10 bg-brand-50 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-comments text-brand-600"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtres -->
+    <div class="card p-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <span class="text-sm font-medium text-slate-600">Afficher :</span>
+            <a href="/conversations" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if not handoff_only %}bg-brand-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                Toutes
+            </a>
+            <a href="/conversations?handoff=1" class="px-4 py-2 rounded-lg text-sm font-medium transition {% if handoff_only %}bg-amber-500 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                <i class="fas fa-headset mr-1"></i>À reprendre ({{ handoff_total }})
+            </a>
+            {% if not handoff_only %}
+            <span class="text-xs text-slate-400">Conversations à reprendre d'abord, puis les {{ list_limit }} plus récentes.</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Liste des conversations -->
+    <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full table-pro" id="conversationsTable">
+                <thead>
+                    <tr>
+                        <th>Client</th>
+                        <th>Dernier message</th>
+                        <th>Langue</th>
+                        <th>État</th>
+                        <th>Transfert</th>
+                        <th>Mise à jour (UTC)</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for conversation in conversations %}
+                    <tr data-conversation-id="{{ conversation.id }}">
+                        <td>
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                    <i class="fab fa-whatsapp text-green-600 text-sm"></i>
+                                </div>
+                                <div>
+                                    <p class="font-medium text-slate-800 font-mono text-sm">{{ conversation.phone }}</p>
+                                    {% if conversation.clients %}
+                                    <p class="text-xs text-slate-400">{{ conversation.clients|map(attribute='nom')|join(', ') }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                        <td class="max-w-md">
+                            {% if conversation.last_message %}
+                            <p class="text-slate-600 text-sm truncate" dir="auto" title="{{ conversation.last_message }}">
+                                {% if conversation.last_direction == 'in' %}<i class="fas fa-arrow-down text-slate-400 mr-1" title="Reçu du client"></i>{% else %}<i class="fas fa-arrow-up text-brand-400 mr-1" title="Envoyé au client"></i>{% endif %}{{ conversation.last_message }}
+                            </p>
+                            {% else %}
+                            <p class="text-slate-400 text-sm">Aucun message</p>
+                            {% endif %}
+                            <p class="text-xs text-slate-400 mt-0.5">{{ conversation.message_count }} message(s){% if conversation.blocked_count %} · <span class="text-red-500">{{ conversation.blocked_count }} bloqué(s)</span>{% endif %}</p>
+                        </td>
+                        <td>
+                            <span class="inline-flex items-center px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium">{{ language_label(conversation.language) }}</span>
+                        </td>
+                        <td class="text-sm text-slate-600">{{ state_label(conversation.state) }}</td>
+                        <td>
+                            {% if conversation.handoff %}
+                            <span class="badge badge-pending"><i class="fas fa-headset mr-1.5 text-xs"></i>À reprendre</span>
+                            {% else %}
+                            <span class="text-slate-400 text-sm">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <p class="text-slate-600 text-sm">{{ conversation.updated_at|timestamp }}</p>
+                        </td>
+                        <td>
+                            <a href="/conversations/{{ conversation.id }}" class="p-2 text-brand-600 hover:bg-brand-50 rounded-lg transition" title="Ouvrir la conversation">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center py-16">
+                            <div class="text-slate-400">
+                                <i class="fas fa-comments text-5xl mb-4"></i>
+                                <p class="font-medium text-lg">Aucune conversation</p>
+                                <p class="text-sm mt-1">{% if handoff_only %}Aucune conversation n'attend l'équipe commerciale{% else %}Les messages WhatsApp reçus apparaîtront ici{% endif %}</p>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
